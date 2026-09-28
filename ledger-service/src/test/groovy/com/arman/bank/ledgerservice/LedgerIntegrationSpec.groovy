@@ -40,8 +40,8 @@ class LedgerIntegrationSpec extends Specification {
 
         when:
         insert(payment, a, b, 123L)
-        def statement = connection.createStatement()
-        def result = statement.executeQuery('select count(*), sum(amount_minor) from postings')
+        def query = connection.createStatement()
+        def result = query.executeQuery('select count(*), sum(amount_minor) from postings')
         result.next()
 
         then:
@@ -69,18 +69,18 @@ class LedgerIntegrationSpec extends Specification {
         thrown(SQLException)
 
         when:
-        statement.executeUpdate('update transfers set amount_minor = 99')
+        query.executeUpdate('update transfers set amount_minor = 99')
         then:
         thrown(SQLException)
 
         when:
-        statement.executeUpdate('delete from transfers')
+        query.executeUpdate('delete from transfers')
         then:
         thrown(SQLException)
 
         cleanup:
         result?.close()
-        statement?.close()
+        query?.close()
         connection?.close()
         database?.close()
         postgres?.stop()
