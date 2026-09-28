@@ -1,0 +1,35 @@
+plugins { id 'base' }
+allprojects {
+    group = 'com.arman.bank'
+    version = '0.1.0'
+    repositories { mavenCentral() }
+}
+subprojects {
+    apply plugin: 'java-library'
+    apply plugin: 'groovy'
+    java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+    tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
+    dependencies {
+        testImplementation platform('org.spockframework:spock-bom:2.4-groovy-4.0')
+        testImplementation 'org.spockframework:spock-core'
+        testImplementation 'com.tngtech.archunit:archunit:1.4.1'
+        testImplementation 'org.testcontainers:postgresql:1.21.3'
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    }
+    tasks.withType(Test).configureEach { useJUnitPlatform() }
+    tasks.register('integrationTest', Test) {
+        description = 'Runs PostgreSQL integration specifications; requires Docker.'
+        group = 'verification'
+        testClassesDirs = sourceSets.test.output.classesDirs
+        classpath = sourceSets.test.runtimeClasspath
+        include '**/*IntegrationSpec.class'
+        shouldRunAfter tasks.test
+    }
+    test { exclude '**/*IntegrationSpec.class' }
+    check { dependsOn integrationTest }
+}
+configure(subprojects.findAll { it.name != 'platform-runtime' }) {
+    apply plugin: 'application'
+    dependencies { implementation project(':platform-runtime') }
+    application { mainClass = 'com.arman.bank.' + project.name.replace('-', '') + '.Main' }
+}

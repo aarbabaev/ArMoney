@@ -1,0 +1,2 @@
+rootProject.name = 'arman-bank'
+include 'platform-runtime', 'app-gateway', 'auth-service', 'user-service', 'wallet-service', 'payment-service', 'ledger-service'

@@ -1,0 +1,51 @@
+openapi: 3.0.3
+info:
+  title: wallet-service
+  version: 0.1.0
+  description: Bootstrap operational API. Business endpoints are not implemented.
+paths:
+  /health/live:
+    get:
+      operationId: liveness
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /health/ready:
+    get:
+      operationId: readiness
+      responses:
+        '200':
+          description: Service can access its database (gateway has no database)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: Database unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /openapi.yaml:
+    get:
+      operationId: openApi
+      responses:
+        '200':
+          description: This API contract
+          content:
+            application/yaml:
+              schema:
+                type: string
+components:
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN]
