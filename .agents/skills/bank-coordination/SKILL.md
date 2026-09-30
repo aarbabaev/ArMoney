@@ -35,3 +35,8 @@ the authorized private project. At a session boundary, record open work and exac
 revisions. On resume, recheck source and CI and recreate runtime agent mappings;
 do not assume old agents are alive. A configuration file does not deliver messages
 or run a background queue. If interrupted, report pending work honestly.
+
+Assess ARCHITECTURE.md impact for every assignment. Collect owner documentation
+deltas, update affected diagrams and linked contracts in the same PR, and ask the
+independent reviewer to check them against the integrated revision. Record a
+reason when documented behavior is unaffected; no cosmetic date-only updates.

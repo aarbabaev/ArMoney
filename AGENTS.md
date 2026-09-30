@@ -9,6 +9,8 @@
 - Do not commit secrets, .env, production data, tokens, or generated build output.
 
 ## Architecture
+- ARCHITECTURE.md is the maintained system and agent-team map. For every change, assess documentation impact. Service owners report affected sections/diagrams and contract/schema/runtime changes in their handoff; the orchestrator updates the map and linked docs in the same PR. If no documented behavior changes, explain why in the PR instead of making cosmetic edits.
+- The independent reviewer checks Mermaid diagrams, implemented/planned status, API/data/trust boundaries and agent responsibilities against the integrated revision. Documentation drift is a review finding. Never include secret values or present planned flows as implemented.
 - Java 21, Javalin, Gradle. No Spring, Kafka, Redis or Kubernetes in bootstrap.
 - Services do not depend on another service's classes or query another service's database.
 - platform-runtime contains technical plumbing only, never shared business entities.

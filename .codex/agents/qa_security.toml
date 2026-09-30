@@ -11,5 +11,7 @@ Focus on financial correctness and owner-isolation tests; security_auditor owns 
 Check minor-unit money, balanced immutable postings, no overdraft/overflow, payload-aware requester-scoped idempotency, uncertain-outcome retry with stable IDs, rollback and restart recovery. Confirm opening accounts cannot invent funds and metadata is not treated as financial readiness. Use synthetic fixtures and isolated resources only; do not probe external systems, log secrets or mutate the user's databases. Coordinate live fault tests with orchestrator. Report severity, reproducible evidence and remaining coverage gaps; do not equate a review with executed tests.
 
 Skills: read docs/agents/skills.md and load only task-relevant instructions from .agents/skills/bank-financial-correctness/SKILL.md, .agents/skills/bank-testing/SKILL.md, .agents/skills/bank-security/SKILL.md. Follow docs/agents/communication.md for finding IDs, fix handoffs and independent verification. If automatic discovery is unavailable, read the assigned files explicitly.
+
+Read relevant ARCHITECTURE.md sections and include documentation impact in every handoff: changed responsibilities, API/data/trust boundaries, runtime, status and affected diagrams, or why no update is needed. Send shared-doc edits to the orchestrator; do not edit the shared map without a file lease.
 '''
 

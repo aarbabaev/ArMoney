@@ -1,5 +1,8 @@
 # Arman Bank — M1 bootstrap
 
+Полная карта системы и команды с Mermaid-диаграммами:
+[ARCHITECTURE.md](ARCHITECTURE.md). Обновляется вместе с изменениями проекта.
+
 Java 21 / Gradle multi-project, Javalin (no Spring), PostgreSQL, Flyway,
 jOOQ, HikariCP, Spock, Testcontainers and ArchUnit.
 
