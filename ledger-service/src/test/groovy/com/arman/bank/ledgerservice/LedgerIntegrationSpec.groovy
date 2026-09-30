@@ -18,7 +18,7 @@ class LedgerIntegrationSpec extends Specification {
         def c = UUID.randomUUID()
         def payment = UUID.randomUUID()
         [a, b, c].each { id ->
-            def statement = connection.prepareStatement('insert into accounts(id, wallet_id, currency, account_kind) values (?, ?, ?, 'CLEARING')')
+            def statement = connection.prepareStatement("insert into accounts(id, wallet_id, currency, account_kind) values (?, ?, ?, 'CLEARING')")
             try {
                 statement.setObject(1, id)
                 statement.setObject(2, UUID.randomUUID())
