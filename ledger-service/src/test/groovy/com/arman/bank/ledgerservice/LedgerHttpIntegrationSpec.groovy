@@ -20,12 +20,12 @@ class LedgerHttpIntegrationSpec extends Specification {
         def client = HttpClient.newHttpClient()
         def alice = UUID.randomUUID()
         def bob = UUID.randomUUID()
-        def call = { method, path, body, owner, credential ->
+        def call = { method, path, payload, owner, credential ->
             def builder = HttpRequest.newBuilder(URI.create("http://localhost:${runtime.port()}" + path)).timeout(Duration.ofSeconds(10))
             if (credential != null) builder.header('X-Service-Key', credential)
             if (owner != null) builder.header('X-Identity-Id', owner.toString())
-            if (body != null) builder.header('Content-Type', 'application/json')
-            builder.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(InternalHttp.JSON.writeValueAsString(body)))
+            if (payload != null) builder.header('Content-Type', 'application/json')
+            builder.method(method, payload == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(InternalHttp.JSON.writeValueAsString(payload)))
             client.send(builder.build(), HttpResponse.BodyHandlers.ofString())
         }
         def body = [wallet_id: UUID.randomUUID().toString(), currency: 'EUR']
