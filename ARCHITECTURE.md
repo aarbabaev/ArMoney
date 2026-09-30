@@ -265,7 +265,7 @@ reconciliation; затем публичный P2P с полными acceptance t
 Модели/разрешения наследуются от сессии, инструкции не являются security sandbox.
 
 ```mermaid
-flowchart TB
+flowchart LR
     H["Пользователь"] --> O["bank_orchestrator"]
     O --> G["gateway_owner"]
     O --> A["auth_owner"]
@@ -420,3 +420,4 @@ project name недостаточно для изолированного пар
 в [AGENTS.md](AGENTS.md), role instructions и PR template.
 Дополнительно: [README](README.md), [IDEA и ручные тесты](docs/onboarding.md),
 [ledger](docs/ledger.md), [M1](docs/m1.md), [ADRs](docs/adr/0001-bootstrap.md).
+
