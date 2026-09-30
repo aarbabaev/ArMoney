@@ -1,7 +1,7 @@
 # Arman Bank — System and Agent Team Architecture
 
 > The main project map. Checked against source code on **2026-09-30**, source revision
-> `63eee63d695cec0a06108c9dce74ef8a86c97ba7` on `bootstrap/m1-p2p-backend`.
+> `760ab2e011aec23a2d2e69d4ebdcf27a9a143365` on `main`, plus the wallet provisioning changes in this PR.
 > Describes the source code, not the guaranteed state of running containers.
 
 ## Navigation
@@ -27,8 +27,8 @@ alone does not complete M1.
 | --- | --- | --- |
 | Auth | Register/login/me/logout, opaque sessions | Production identity controls, MFA, email verification |
 | User | Profile for the current identity | Further development as requirements emerge |
-| Wallet | Owner/currency metadata, ACTIVE/CLOSED | Reliable ledger account provisioning |
-| Ledger | Private accounts, balances, atomic postings, durable outcomes | Wallet/payment integration |
+| Wallet | Metadata, ACTIVE/CLOSED, durable PENDING/READY ledger provisioning | Payment integration |
+| Ledger | Private accounts, balances, atomic postings, wallet integration | Payment integration |
 | Payment | Schema and operational endpoints | P2P orchestration and PENDING recovery |
 | Gateway | Auth, profile, wallets | Public P2P endpoints |
 
@@ -40,8 +40,8 @@ Spring, Kafka, Redis, Kubernetes, and iOS are not implemented.
 
 ## Services and runtime
 
-**Only existing HTTP connections are shown.** No other service currently acts as an
-application client of the ledger. Payment does not call ledger, and wallet does not yet create ledger accounts.
+**Only existing HTTP connections are shown.** Wallet provisions accounts through the
+private ledger API. Payment does not call ledger yet.
 
 ```mermaid
 flowchart TB
@@ -52,6 +52,7 @@ flowchart TB
         G -->|"Wallets"| W["wallet-service"]
         P["payment-service: scaffold"]
         L["ledger-service: private API"]
+        W -->|"Durable account provisioning"| L
         A --> AD[("auth-db")]
         U --> UD[("user-db")]
         W --> WD[("wallet-db")]
@@ -65,7 +66,7 @@ flowchart TB
 | app-gateway | External routes, session validation, header sanitization | No database or financial logic |
 | auth-service | Credentials, sessions, limits | Does not own profiles |
 | user-service | Profile for an auth identity | Does not issue tokens |
-| wallet-service | Owner, currency, lifecycle | Not the source of balances |
+| wallet-service | Owner, currency, lifecycle and durable ledger mapping | Not the source of balances |
 | payment-service | Planned transfer workflow/client idempotency | Business operations are not implemented yet |
 | ledger-service | Accounts, balances, immutable paired postings | No public funding API |
 | platform-runtime | HTTP lifecycle, DB wiring, migrations, health | A library, not a separate service; no shared business entities |
@@ -173,7 +174,7 @@ flowchart LR
     ID["Auth identity"] -. "identity_id" .-> PROFILE["User profile"]
     ID -. "owner_id" .-> W["Wallet"]
     ID -. "owner_id" .-> A["Ledger account"]
-    W -. "wallet_id, no automatic provisioning yet" .-> A
+    W -. "wallet_id and confirmed ledger_account_id" .-> A
     P["Payment: schema only"] -. "Planned payment_id" .-> R["Transfer request"]
     R -->|"POSTED"| T["Immutable transfer"]
     T --> D["Debit account"]
@@ -185,7 +186,7 @@ flowchart LR
 | --- | --- |
 | auth-db | `identities`: unique email, password_hash; `sessions`: token_hash PK, FK identity_id, expires_at; `auth_attempts`: persistent limits |
 | user-db | `profiles`: unique identity_id, display_name |
-| wallet-db | `wallets`: unique(owner_id,currency), EUR/USD/GBP, ACTIVE/CLOSED; no balance |
+| wallet-db | `wallets`: unique(owner_id,currency), EUR/USD/GBP, ACTIVE/CLOSED, PENDING/READY, unique ledger_account_id, durable retry lease; no balance |
 | payment-db | `payments`: unique(requester_id,idempotency_key), request_hash, wallet IDs, amount/currency, PENDING/COMPLETED/REJECTED; schema only |
 | ledger-db | `accounts`: unique wallet_id, owner, CUSTOMER/CLEARING, balance_minor; `transfers`: payment_id PK and account/currency FKs; `transfer_requests`: durable payload/outcome; `postings`: view |
 | Every database | `flyway_schema_history`: technical record of applied migrations |
@@ -237,6 +238,53 @@ POST: 200 POSTED, 409 rejection/conflict; outcome GET: 200 even for a persisted 
 There is no funding API; CLEARING fixtures are used only in isolated tests.
 Details: [ledger](docs/ledger.md), [ADR 0005](docs/adr/0005-atomic-ledger.md).
 
+### Durable wallet provisioning — implemented
+
+POST /v1/wallets commits intent and returns 202 for ACTIVE/PENDING, or 200 for READY
+and existing CLOSED wallets. GET includes provisioning_status and nullable
+ledger_account_id. ACTIVE alone is not readiness: future payments require READY.
+Wallet requires LEDGER_BASE_URL (Compose supplies http://ledger-service:8080).
+
+```mermaid
+sequenceDiagram
+    participant C as Client via gateway
+    participant W as Wallet API
+    participant DB as Wallet PostgreSQL
+    participant JOB as Wallet background worker
+    participant L as Ledger
+    C->>W: Create wallet
+    W->>DB: Commit metadata and PENDING intent
+    W-->>C: 202 PENDING
+    JOB->>DB: Claim one due ACTIVE wallet with a fenced lease
+    JOB->>L: Idempotent account request using stable wallet UUID
+    alt Valid matching response
+        L-->>JOB: Existing or new account UUID
+        JOB->>DB: Save READY mapping if claim is still current
+    else Timeout, outage or invalid mapping
+        JOB->>DB: Schedule durable bounded retry
+    end
+    C->>W: Poll own wallets
+    W-->>C: READY with ledger_account_id after confirmation
+```
+
+The worker processes up to ten sequential claims per tick with no transaction held
+across HTTP. Each claim has a 30-second lease; stale workers are fenced by a token.
+The scheduler ticks after a one-second fixed delay. Failed attempts back off through
+2/4/8/16/32/60 seconds; pending work is retained, not silently abandoned. HTTP has
+2-second connect, 5-second request and 6-second whole-response deadlines and a 4 KiB
+response bound. Worker database operations use a 2-second lock timeout and a
+5-second statement timeout. Shutdown waits up to 10 seconds for the worker before
+closing resources. If it cannot stop, shutdown reports an explicit error and leaves
+resources open until process termination; the durable lease permits recovery.
+
+V3 initializes existing wallets as PENDING. Existing ACTIVE wallets reconcile;
+CLOSED wallets are neither reopened nor claimed. An administrative close after a
+claim cannot cancel an in-flight ledger call atomically and may leave an unmapped
+zero-balance account; no public close endpoint exists. A ledger commit followed by a lost
+response or wallet crash is recovered with the same wallet UUID. A valid replay may
+return a nonzero ledger balance; wallet only owns the mapping. Mismatched owner,
+wallet or currency never becomes READY. See [ADR 0007](docs/adr/0007-wallet-ledger-provisioning.md).
+
 ## Planned P2P
 
 **A plan, not an implemented flow.** Dashed connections remain to be built.
@@ -246,14 +294,14 @@ flowchart LR
     C["Client"] -.-> G["Gateway P2P"]
     G -.-> P["Payment: requester + idempotency key"]
     P -. "Wallet mapping" .-> W["Wallet"]
-    W -. "Durable provisioning" .-> L["Ledger"]
+    W -->|"Implemented provisioning"| L["Ledger"]
     P -. "Stable payment_id" .-> L
     L -. "POSTED / rejection" .-> P
     P -. "Recovery after timeout/restart" .-> L
 ```
 
-First, wallet-to-ledger provisioning and recovery; then payment orchestration and
-reconciliation; then public P2P with full acceptance tests. An `ACTIVE` wallet currently
+Wallet-to-ledger provisioning and recovery are implemented. Next: payment orchestration,
+reconciliation and public P2P with full acceptance tests. An `ACTIVE` wallet alone
 does not establish ledger readiness. There is no shared distributed transaction:
 durable state and idempotent commands are needed, not a promise of exactly-once HTTP.
 See [M1](docs/m1.md) and the [provisioning mission](docs/agents/missions/wallet-ledger.md).
@@ -292,7 +340,7 @@ flowchart LR
 | gateway_owner | app-gateway: routes, public contract, identity |
 | auth_owner | auth-service: credentials, sessions, limits |
 | user_owner | user-service: profiles |
-| wallet_owner | wallet-service: metadata/lifecycle, planned provisioning |
+| wallet_owner | wallet-service: metadata/lifecycle, durable provisioning |
 | payment_owner | payment-service: planned orchestration/idempotency |
 | ledger_owner | ledger-service: accounts, balances, posting correctness |
 | qa_integration | End-to-end contracts, outages/recovery; only assigned test files |
@@ -394,6 +442,7 @@ flowchart LR
 | `./gradlew installDist` | Runnable distributions |
 | `scripts/smoke.py` | Readiness of six services, not business correctness |
 | Auth/onboarding smoke in CI | Auth, profile, wallets through HTTP |
+| Provisioning smoke in CI | Concurrent retries, ledger outage, wallet restart and unique zero-balance account mapping |
 | Ledger smoke in CI | Private posting with synthetic funds |
 
 On Windows, use `.\gradlew.bat`. CI: [.github/workflows/ci.yml](.github/workflows/ci.yml).

@@ -72,6 +72,7 @@ services:
       args:
         SERVICE: wallet-service
     environment:
+      LEDGER_BASE_URL: http://ledger-service:8080
       INTERNAL_AUTH_KEY: ${INTERNAL_AUTH_KEY:?Set INTERNAL_AUTH_KEY in .env}
       DB_URL: jdbc:postgresql://wallet-db:5432/bank
       DB_USER: bank

@@ -1,1 +1,2 @@
 // Application conventions are configured in the root build.
+dependencies { testImplementation 'org.flywaydb:flyway-core:11.13.2' }

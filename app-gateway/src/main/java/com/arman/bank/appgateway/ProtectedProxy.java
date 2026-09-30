@@ -64,7 +64,8 @@ public final class ProtectedProxy implements AutoCloseable {
                 HttpResponse.BodyHandlers.ofString());
             int status = response.statusCode();
             // Downstream authentication failures indicate a service configuration problem, not a valid caller.
-            if (status != 200 && status != 400 && status != 404 && status != 413) { error(ctx, 503); return; }
+            boolean pendingWallet = status == 202 && path.equals("/v1/wallets") && ctx.method().name().equals("POST");
+            if (status != 200 && !pendingWallet && status != 400 && status != 404 && status != 413) { error(ctx, 503); return; }
             ctx.status(status).contentType("application/json").result(response.body());
         } catch (java.io.IOException e) { error(ctx, 503); }
         catch (InterruptedException e) { Thread.currentThread().interrupt(); error(ctx, 503); }

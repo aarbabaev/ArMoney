@@ -8,7 +8,7 @@ jOOQ, HikariCP, Spock, Testcontainers and ArchUnit.
 
 A banking backend with explicit service ownership and a PostgreSQL-backed ledger.
 Identity registration, login, current identity and logout now work through gateway.
-Current-user profiles and wallet metadata are implemented. P2P execution remains a future slice.
+Current-user profiles, wallet provisioning and private ledger posting are implemented. Public P2P execution remains a future slice.
 
 ## Run
 
@@ -100,7 +100,7 @@ credentials in tests. See [auth ADR](docs/adr/0003-auth-sessions.md) for limits.
 ## Profiles and wallets
 
 See [Postman walkthrough and IDEA settings](docs/onboarding.md) and [ADR 0004](docs/adr/0004-profiles-wallets.md).
-Profile and wallet routes require a valid session through gateway. Wallets contain metadata only, not balances.
+Profile and wallet routes require a valid session through gateway. Wallets store metadata and a confirmed ledger account mapping; balances remain in ledger.
 Gateway also requires USER_BASE_URL and WALLET_BASE_URL (provided by Compose).
 Run `python3 scripts/onboarding-smoke.py` after updating the containers.
 
@@ -108,7 +108,21 @@ Run `python3 scripts/onboarding-smoke.py` after updating the containers.
 
 Ledger now supports zero-balance accounts, owner-scoped balance reads and atomic,
 retry-safe transfer commands for trusted internal callers. It is not exposed by
-gateway; wallet account provisioning and payment orchestration are next.
+gateway; payment orchestration and public P2P remain next.
 See [ledger guide](docs/ledger.md) and [ADR 0005](docs/adr/0005-atomic-ledger.md).
 Existing INTERNAL_AUTH_KEY also configures ledger; no new secret is required.
 
+
+## Wallet account provisioning
+
+POST /v1/wallets returns 202 while an ACTIVE wallet is PENDING and 200 when READY
+(or when returning an existing CLOSED wallet). Poll GET /v1/wallets for
+provisioning_status and ledger_account_id. Repeating creation uses the same wallet
+and ledger account. An unavailable ledger leaves durable pending work that resumes
+after restart; no funds are created.
+
+Wallet now requires LEDGER_BASE_URL; Compose sets http://ledger-service:8080.
+V3 migrates existing ACTIVE wallets to pending provisioning without changing IDs;
+CLOSED wallets stay closed and are excluded. Preserve existing .env and volumes.
+See [ADR 0007](docs/adr/0007-wallet-ledger-provisioning.md).
+The disruptive scripts/provisioning-smoke.py runs only in disposable CI.

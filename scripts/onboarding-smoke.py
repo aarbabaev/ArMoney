@@ -24,6 +24,13 @@ def expect(status, result):
     assert result[0] == status, f"Expected {status}, got {result[0]}"
     return result[1]
 
+def wallet_result(result):
+    assert result[0] in (200, 202), f"Expected wallet status, got {result[0]}"
+    wallet = result[1]
+    assert wallet["provisioning_status"] in ("PENDING", "READY")
+    assert (wallet["ledger_account_id"] is not None) == (wallet["provisioning_status"] == "READY")
+    return wallet
+
 def identity():
     body = {"email": str(uuid.uuid4()) + "@example.test", "password": "synthetic onboarding password"}
     expect(202, request("POST", "/v1/auth/register", body))
@@ -40,10 +47,10 @@ updated = expect(200, request("PUT", "/v1/users/me", {"display_name": "Alice Upd
 assert profile["id"] == updated["id"]
 assert updated["identity_id"] == owner_a
 expect(404, request("GET", "/v1/users/me", token=b))
-wallet = expect(200, request("POST", "/v1/wallets", {"currency": "EUR"}, a,
+wallet = wallet_result(request("POST", "/v1/wallets", {"currency": "EUR"}, a,
     {"X-Identity-Id": owner_b, "X-User-Id": owner_b, "X-Service-Key": "forged"}))
 assert wallet["owner_id"] == owner_a
-retry = expect(200, request("POST", "/v1/wallets", {"currency": "EUR"}, a))
+retry = wallet_result(request("POST", "/v1/wallets", {"currency": "EUR"}, a))
 assert retry["id"] == wallet["id"]
 assert len(expect(200, request("GET", "/v1/wallets", token=a))["wallets"]) == 1
 assert expect(200, request("GET", "/v1/wallets", token=b))["wallets"] == []
