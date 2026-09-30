@@ -1,0 +1,4 @@
+// Use the exact hostname covered by the trusted Caddy certificate and Keycloak issuer.
+BANK_ORIGIN = https:$(SLASH)$(SLASH)your-bank-host.local:8443
+// Set your own team only for a physical device; the simulator needs no paid membership.
+// DEVELOPMENT_TEAM = YOUR_TEAM_ID

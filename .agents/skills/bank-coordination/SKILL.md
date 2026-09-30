@@ -1,6 +1,6 @@
 ---
 name: bank-coordination
-description: Coordinate Arman Bank service owners, route review findings to developers, and track independent verification through PR delivery.
+description: Coordinate ArMoney service owners, route review findings to developers, and track independent verification through PR delivery.
 ---
 
 # Team coordination
@@ -9,6 +9,8 @@ Use docs/agents/workflow.md for assignments and build/file leases, and
 docs/agents/communication.md for findings. Determine the latest remote base and
 preserve user edits before dispatch. Read only the task-relevant skills from
 docs/agents/skills.md; include their exact paths in the task assignment.
+
+Use fresh-context dispatch by default (fork_turns="none" where available), with the exact task contract and file/build lease. Read docs/agents/context-efficiency.md for bounded reads, waits and handoffs. Do not include the full conversation when local source pointers and an explicit contract suffice.
 
 Keep an explicit mapping of task ID to runtime agent ID, role, directory, revision,
 writable files, skill paths, dependencies and state in the chat. Reserve one of

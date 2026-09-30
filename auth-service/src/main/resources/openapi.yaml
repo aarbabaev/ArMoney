@@ -92,6 +92,40 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '503':
           $ref: '#/components/responses/Unavailable'
+  /v1/auth/sso:
+    post:
+      operationId: exchangeSsoToken
+      description: Validates a Keycloak access token and creates an independent 30-minute opaque local session. No email account linking.
+      security: [{ServiceKey: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [access_token]
+              properties:
+                access_token:
+                  type: string
+                  minLength: 1
+                  maxLength: 8192
+                  writeOnly: true
+      responses:
+        '200':
+          description: New local opaque session; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '503':
+          $ref: '#/components/responses/Unavailable'
   /v1/auth/me:
     get:
       operationId: currentIdentity
@@ -149,6 +183,8 @@ components:
           format: uuid
         email:
           type: string
+          nullable: true
+          description: Null for SSO identities; never used to link accounts.
           format: email
     Session:
       type: object
@@ -220,7 +256,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     TooLarge:
-      description: Request body exceeds 4096 bytes
+      description: Request body exceeds 4096 bytes (12288 for SSO exchange)
       content:
         application/json:
           schema:

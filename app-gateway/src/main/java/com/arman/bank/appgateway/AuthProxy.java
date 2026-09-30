@@ -34,13 +34,18 @@ public final class AuthProxy implements AutoCloseable {
     }
 
     public void configure(JavalinConfig config) {
-        config.http.maxRequestSize = 4096;
+        config.http.maxRequestSize = 12288;
         config.routes.before(ctx -> {
-            if (ctx.path().startsWith("/v1/")) ctx.header("Cache-Control", "no-store");
+            if (ctx.path().startsWith("/v1/")) {
+                ctx.header("Cache-Control", "no-store");
+                if (!ctx.path().equals("/v1/auth/sso") && ctx.bodyAsBytes().length > 4096)
+                    throw new io.javalin.http.HttpResponseException(413, "Request too large");
+            }
         });
         config.routes.exception(HttpResponseException.class, (error, ctx) -> error(ctx, error.getStatus(), "request_rejected"));
         config.routes.exception(Exception.class, (exception, ctx) -> error(ctx, 503, "service_unavailable"));
         config.routes.post("/v1/auth/register", ctx -> forward(ctx, "/v1/auth/register", true));
+        config.routes.post("/v1/auth/sso", ctx -> forward(ctx, "/v1/auth/sso", true));
         config.routes.post("/v1/auth/login", ctx -> forward(ctx, "/v1/auth/login", true));
         config.routes.get("/v1/auth/me", ctx -> forward(ctx, "/v1/auth/me", false));
         config.routes.post("/v1/auth/logout", ctx -> forward(ctx, "/v1/auth/logout", false));

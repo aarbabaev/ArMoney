@@ -5,6 +5,41 @@ info:
   description: Operational API and authenticated profiles and wallets with durable ledger-account provisioning.
     No balances or transfers are exposed.
 paths:
+  /v1/auth/sso:
+    post:
+      operationId: exchangeSsoToken
+      description: Exchange a verified Keycloak access token for an ArMoney session; never links accounts by email.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [access_token]
+              properties:
+                access_token:
+                  type: string
+                  minLength: 1
+                  maxLength: 8192
+                  writeOnly: true
+      responses:
+        '200':
+          description: Local opaque session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          description: Invalid request
+        '401':
+          description: Invalid or expired provider access token
+        '413':
+          description: Body exceeds 12288 bytes
+        '429':
+          description: Attempt or concurrency limit
+        '503':
+          description: SSO disabled or unavailable
   /health/live:
     get:
       operationId: liveness
@@ -379,6 +414,7 @@ components:
         email:
           type: string
           format: email
+          nullable: true
     Session:
       type: object
       required:

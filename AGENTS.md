@@ -2,7 +2,6 @@
 
 ## Delivery
 - Target main for this integration PR and all subsequent PRs. Start future feature branches from the latest main unless the user explicitly specifies another starting point. Do not use bootstrap/m1-p2p-backend as an ongoing integration branch. Never push directly to main or merge without explicit owner authorization.
-- Use feature branches and PRs. Never push directly to main or merge without explicit owner authorization.
 - Keep the change minimal and describe limitations honestly.
 - Run ./gradlew check and the Compose smoke test for runtime/schema changes.
 - Do not report completion while required CI is failing or pending. Report blocked checks explicitly.
@@ -10,6 +9,7 @@
 - Do not commit secrets, .env, production data, tokens, or generated build output.
 
 ## Architecture
+- Product name: ArMoney. Existing package names, Compose project/volume names and repository paths remain compatibility identifiers; do not rename persistent data resources as a branding edit.
 - Write and maintain repository documentation, including Mermaid labels, in English. Use neutral product-focused descriptions without personal motivation or employer affiliation. Preserve factual implementation limits and test-safety guidance.
 - ARCHITECTURE.md is the maintained system and agent-team map. For every change, assess documentation impact. Service owners report affected sections/diagrams and contract/schema/runtime changes in their handoff; the orchestrator updates the map and linked docs in the same PR. If no documented behavior changes, explain why in the PR instead of making cosmetic edits.
 - The independent reviewer checks Mermaid diagrams, implemented/planned status, API/data/trust boundaries and agent responsibilities against the integrated revision. Documentation drift is a review finding. Never include secret values or present planned flows as implemented.
@@ -39,3 +39,8 @@
 - Require independent review of the integrated revision and actual test evidence. Role instructions are not filesystem security boundaries or a background execution service.
 - Route task-relevant project skills using docs/agents/skills.md and include their exact paths in assignments. Read the skill before using it; unavailable automatic discovery is handled by explicit file reads.
 - Use security_auditor for independent system-security review. Follow docs/agents/communication.md to route findings, assign fixes and independently retest; never equate a developer's fix report with a closed finding.
+
+## Context efficiency
+- Use docs/agents/context-map.md to select relevant references. Read each applicable instruction once per context, then use source for current facts.
+- Give workers scoped briefs without the full conversation when sufficient. Reuse a worker for fixes; avoid duplicate research and unbounded tool output.
+- Preserve independent security/financial validation; instruction character counts are not measured token or billing savings.

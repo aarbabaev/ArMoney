@@ -6,6 +6,5 @@ import java.util.UUID;
 public record Identity(UUID id, String email) {
     public Identity {
         Objects.requireNonNull(id);
-        Objects.requireNonNull(email);
     }
 }

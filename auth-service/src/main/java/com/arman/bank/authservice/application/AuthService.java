@@ -45,12 +45,24 @@ public final class AuthService {
         var credentials = store.findByEmail(email);
         boolean valid = passwords.verify(password, credentials.map(AuthStore.Credentials::passwordHash).orElse(dummyHash));
         if (!valid || credentials.isEmpty()) throw new AuthFailure(UNAUTHORIZED);
+        return createSession(credentials.get().identity().id());
+    }
+
+    public Session sso(String token, SsoTokens provider) {
+        if (token == null || token.isBlank() || token.length() > 8192 || !token.matches("[A-Za-z0-9._~+/-]+=*"))
+            throw new AuthFailure(BAD_INPUT);
+        var principal = provider.verify(token);
+        var identity = store.externalIdentity(principal.issuer(), principal.subject());
+        return createSession(identity.id());
+    }
+
+    private Session createSession(UUID identityId) {
         byte[] bytes = new byte[32];
         random.nextBytes(bytes);
         var token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
         var now = clock.instant();
         var expiry = now.plus(Duration.ofMinutes(30));
-        store.saveSession(digest(token), credentials.get().identity().id(), now, expiry);
+        store.saveSession(digest(token), identityId, now, expiry);
         return new Session(token, expiry);
     }
 

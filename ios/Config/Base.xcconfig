@@ -1,0 +1,5 @@
+// Override on your Mac by copying Local.xcconfig.example to Local.xcconfig.
+// The slash variable prevents xcconfig from interpreting // as a comment.
+SLASH = /
+BANK_ORIGIN = https:$(SLASH)$(SLASH)bank.example.invalid:8443
+#include? "Local.xcconfig"

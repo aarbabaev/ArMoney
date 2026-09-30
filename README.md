@@ -7,6 +7,8 @@ Java 21 / Gradle multi-project, Javalin (no Spring), PostgreSQL, Flyway,
 jOOQ, HikariCP, Spock, Testcontainers and ArchUnit.
 
 A banking backend with explicit service ownership and a PostgreSQL-backed ledger.
+The native SwiftUI client lives in [ios/](ios/README.md); optional Keycloak SSO and
+local HTTPS setup are documented in [docs/sso-and-ios.md](docs/sso-and-ios.md).
 Identity registration, login, current identity and logout now work through gateway.
 Current-user profiles, wallet provisioning and private ledger posting are implemented. Public P2P execution remains a future slice.
 

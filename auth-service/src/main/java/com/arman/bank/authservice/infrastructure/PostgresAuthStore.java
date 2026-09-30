@@ -14,6 +14,23 @@ public final class PostgresAuthStore implements AuthStore {
     public PostgresAuthStore(Database database) { this.database = database; }
     private static OffsetDateTime time(Instant value) { return value.atOffset(ZoneOffset.UTC); }
 
+    @Override public Identity externalIdentity(String issuer, String subject) {
+        return database.transaction(sql -> {
+            var existing = sql.fetchOne("select identity_id from external_identities where issuer = ? and subject = ?", issuer, subject);
+            if (existing != null) return new Identity(existing.get("identity_id", UUID.class), null);
+            var candidate = UUID.randomUUID();
+            sql.execute("insert into identities(id) values (?)", candidate);
+            var inserted = sql.fetchOne("""
+                insert into external_identities(issuer, subject, identity_id) values (?, ?, ?)
+                on conflict (issuer, subject) do nothing returning identity_id
+                """, issuer, subject, candidate);
+            if (inserted != null) return new Identity(candidate, null);
+            sql.execute("delete from identities where id = ?", candidate);
+            var winner = sql.fetchOne("select identity_id from external_identities where issuer = ? and subject = ?", issuer, subject);
+            return new Identity(winner.get("identity_id", UUID.class), null);
+        });
+    }
+
     @Override public void register(Identity identity, String passwordHash) {
         database.transaction(sql -> sql.execute(
             "insert into identities(id, email, password_hash) values (?, ?, ?) on conflict (email) do nothing",

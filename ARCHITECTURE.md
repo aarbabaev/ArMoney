@@ -1,7 +1,7 @@
-# Arman Bank — System and Agent Team Architecture
+# ArMoney â€” System and Agent Team Architecture
 
 > The main project map. Checked against source code on **2026-09-30**, source revision
-> `760ab2e011aec23a2d2e69d4ebdcf27a9a143365` on `main`, plus the wallet provisioning changes in this PR.
+> `4ef94d8018de8594055d174750b776b8163c5a56` on `main`, plus the native iOS and SSO changes in this PR.
 > Describes the source code, not the guaranteed state of running containers.
 
 ## Navigation
@@ -25,7 +25,9 @@ alone does not complete M1.
 
 | Area | Current state | Next steps |
 | --- | --- | --- |
-| Auth | Register/login/me/logout, opaque sessions | Production identity controls, MFA, email verification |
+| Auth | Password login and Keycloak exchange, stable local identities, opaque sessions | Global provider logout/revocation integration |
+| SSO | Optional Keycloak realm, browser authorization code + PKCE | Production identity controls, MFA, email verification |
+| iOS | Native SwiftUI login, profile and wallets (iOS 18+) | Physical iPhone validation, P2P screens when API exists |
 | User | Profile for the current identity | Further development as requirements emerge |
 | Wallet | Metadata, ACTIVE/CLOSED, durable PENDING/READY ledger provisioning | Payment integration |
 | Ledger | Private accounts, balances, atomic postings, wallet integration | Payment integration |
@@ -36,11 +38,12 @@ Java 21, Gradle multi-project, Javalin, PostgreSQL, Flyway, jOOQ, HikariCP;
 Spock, Testcontainers, ArchUnit; REST/OpenAPI; Docker Compose, GitHub Actions.
 Exact versions: [build.gradle](build.gradle), [runtime build](platform-runtime/build.gradle),
 [Gradle wrapper](gradle/wrapper/gradle-wrapper.properties), [Compose](compose.yaml).
-Spring, Kafka, Redis, Kubernetes, and iOS are not implemented.
+Spring, Kafka, Redis and Kubernetes are not implemented. Native iOS uses SwiftUI;
+Keycloak and Caddy are optional container services, configured by compose.sso.yaml.
 
 ## Services and runtime
 
-**Only existing HTTP connections are shown.** Wallet provisions accounts through the
+**Base backend connections are shown below; the optional SSO/iOS edge is described separately.** Wallet provisions accounts through the
 private ledger API. Payment does not call ledger yet.
 
 ```mermaid
@@ -116,6 +119,55 @@ The user's local `compose.override.yaml` exposes databases to DataGrip on
 **5437**. This is not guaranteed configuration for a fresh clone: check your own
 override. All database containers use `bank` as the database and user name; the password is local.
 Restarting does not require deleting volumes. See [README](README.md) and [IDEA](docs/onboarding.md).
+
+## Native iOS and SSO
+
+The optional overlay adds an HTTPS edge and a Keycloak-owned PostgreSQL database.
+Only the edge is bound to the selected LAN interface; the existing gateway binding
+remains loopback. Keycloak administration and management paths are not exposed.
+
+```mermaid
+flowchart LR
+    I["ArMoney SwiftUI / iPhone"] --> E["HTTPS edge :8443"]
+    B["System authentication browser"] --> E
+    E -->|"/v1 APIs"| G["App gateway"]
+    E -->|"Allowlisted /sso routes"| K["Keycloak"]
+    K --> KD[("SSO PostgreSQL")]
+    G -->|"SSO access-token exchange"| A["Auth service"]
+    A -->|"Private introspection"| K
+    A --> AD[("Identity mapping / opaque sessions")]
+```
+
+```mermaid
+sequenceDiagram
+    participant I as Native app
+    participant B as System browser
+    participant K as Keycloak
+    participant G as Gateway
+    participant A as Auth
+    I->>B: Authorization code request with S256 PKCE and state
+    B->>K: Login or reuse SSO cookie
+    K-->>I: Exact callback with code and state
+    I->>K: Code plus original verifier
+    K-->>I: Provider access token
+    I->>G: POST /v1/auth/sso
+    G->>A: Bounded exchange with service key
+    A->>K: Introspect at pinned internal endpoint
+    K-->>A: Active token and claims
+    A->>A: Validate claims, map issuer/subject to local UUID
+    A-->>I: Opaque ArMoney session through gateway
+    I->>I: Device-only Keychain storage
+```
+
+No identity is linked by email. Existing password identities and their wallet UUIDs
+remain unchanged; SSO-only /auth/me responses have email=null. The client consumes
+no ID-token claims or refresh tokens. Local sessions expire after 30 minutes;
+provider logout/disablement does not immediately revoke issued local sessions.
+Local logout and browser logout are separate operations, not global single logout.
+The app supports profile onboarding and actual wallet PENDING/READY states, with
+no fabricated balances or transfer success. TLS trust must be configured on each
+Mac/iPhone; native code never bypasses certificate validation. See
+[setup](docs/sso-and-ios.md), [iOS](ios/README.md) and [ADR 0008](docs/adr/0008-native-ios-and-keycloak-sso.md).
 
 ## API and authentication
 
@@ -197,7 +249,7 @@ Exact columns, indexes, and constraints are defined in service migrations; publi
 migrations are append-only. The current DB owner has administrative capabilities:
 triggers do not protect against an administrator. A restricted runtime DB role is future work.
 
-### Atomic posting — implemented
+### Atomic posting â€” implemented
 
 ```mermaid
 sequenceDiagram
@@ -238,7 +290,7 @@ POST: 200 POSTED, 409 rejection/conflict; outcome GET: 200 even for a persisted 
 There is no funding API; CLEARING fixtures are used only in isolated tests.
 Details: [ledger](docs/ledger.md), [ADR 0005](docs/adr/0005-atomic-ledger.md).
 
-### Durable wallet provisioning — implemented
+### Durable wallet provisioning â€” implemented
 
 POST /v1/wallets commits intent and returns 202 for ACTIVE/PENDING, or 200 for READY
 and existing CLOSED wallets. GET includes provisioning_status and nullable
@@ -477,3 +529,13 @@ External changes are reconciled the next time work resumes on the repository. Th
 is established in [AGENTS.md](AGENTS.md), role instructions, and the PR template.
 Further reading: [README](README.md), [IDEA and manual testing](docs/onboarding.md),
 [ledger](docs/ledger.md), [M1](docs/m1.md), [ADRs](docs/adr/0001-bootstrap.md).
+
+### Context-efficient agent routing
+
+Dedicated ios_owner and sso_owner roles own the native client and SSO integration.
+They load bank-ios and bank-sso skills only for relevant tasks. Shared instructions
+remain in AGENTS.md/workflow; [context-map](docs/agents/context-map.md) points to
+contracts on demand. [Audit](docs/agents/context-efficiency.md) records measured
+text reductions, not estimated billing savings. Fresh scoped worker contexts and
+bounded evidence replace full-history copies for independent tasks. macOS CI
+compiles/tests Swift; disposable browser CI verifies Keycloak code/PKCE and SSO.
