@@ -6,3 +6,8 @@
 
 .env.*
 !.env.example
+
+# Local Apple signing state and exported development certificates
+**/xcuserdata/
+**/DerivedData/
+local-certs/

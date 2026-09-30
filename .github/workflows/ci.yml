@@ -43,6 +43,34 @@ jobs:
         run: docker compose logs --no-color
         env:
           LOCAL_DB_PASSWORD: ci-only-password
+      - name: Browser SSO against disposable Keycloak and HTTPS edge
+        env:
+          COMPOSE_FILE: compose.yaml:compose.sso.yaml:compose.sso-ci.yaml
+          LOCAL_DB_PASSWORD: ci-only-password
+          SSO_DB_PASSWORD: ci-only-keycloak-database-password
+          SSO_ADMIN_PASSWORD: ci-only-keycloak-admin-password
+          SSO_CLIENT_SECRET: ci-only-introspection-client-secret-32-chars
+          SSO_CA_FILE: /tmp/armoney-ci-root.crt
+        run: |
+          python3 -m pip install playwright==1.55.0
+          python3 -m playwright install --with-deps chromium
+          docker compose up -d
+          for i in $(seq 1 60); do
+            if docker compose cp edge:/data/caddy/pki/authorities/local/root.crt "$SSO_CA_FILE"; then break; fi
+            sleep 2
+          done
+          python3 scripts/sso-smoke.py
+      - name: SSO diagnostics and cleanup
+        if: always()
+        env:
+          COMPOSE_FILE: compose.yaml:compose.sso.yaml:compose.sso-ci.yaml
+          LOCAL_DB_PASSWORD: ci-only-password
+          SSO_DB_PASSWORD: ci-only-keycloak-database-password
+          SSO_ADMIN_PASSWORD: ci-only-keycloak-admin-password
+          SSO_CLIENT_SECRET: ci-only-introspection-client-secret-32-chars
+        run: |
+          docker compose logs --no-color --tail=100 sso-service edge
+          docker compose down --volumes
       - name: Stop containers
         if: always()
         run: docker compose down --volumes
@@ -53,3 +81,10 @@ jobs:
         with:
           name: test-reports
           path: '**/build/reports/tests/'
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Native Swift build and simulator tests
+        run: bash scripts/test-ios.sh

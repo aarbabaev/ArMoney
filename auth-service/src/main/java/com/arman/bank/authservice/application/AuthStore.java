@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface AuthStore {
+    Identity externalIdentity(String issuer, String subject);
     record Credentials(Identity identity, String passwordHash) {}
     void register(Identity identity, String passwordHash);
     Optional<Credentials> findByEmail(String email);

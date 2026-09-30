@@ -15,6 +15,8 @@ discovery is unavailable, the worker reads those files explicitly. See the
 | bank_orchestrator | bank-coordination; bank-api for contracts; bank-java/bank-postgres for shared implementation; bank-testing for validation |
 | gateway_owner | bank-java, bank-api, bank-testing; bank-security for trust-boundary changes |
 | auth_owner | bank-java, bank-postgres, bank-api, bank-testing, bank-security |
+| ios_owner | bank-ios; bank-api for gateway contracts; bank-sso for login |
+| sso_owner | bank-sso; bank-security and bank-testing for identity verification; bank-java/bank-postgres only for assigned adapter changes |
 | user_owner | bank-java, bank-postgres, bank-api, bank-testing; bank-security for authorization changes |
 | wallet_owner | bank-java, bank-postgres, bank-api, bank-testing, bank-financial-correctness |
 | payment_owner | bank-java, bank-postgres, bank-api, bank-testing, bank-financial-correctness |
@@ -28,6 +30,13 @@ discovery is unavailable, the worker reads those files explicitly. See the
 financial and owner-isolation acceptance. `security_auditor` owns independent
 system-security review across services, deployment and dependencies. They share
 finding IDs through the orchestrator when coverage overlaps.
+
+Skills encode project-specific decisions and failure modes, not general language
+manuals. Begin with the assigned capability, then load another skill only when
+the changed behavior needs it; this table is a menu, not a mandatory reading list.
+The [context map](context-map.md) points to authoritative source and design facts.
+The [context audit](context-efficiency.md) records measured instruction sizes and
+orchestration improvements. Neither skill files nor roles activate workers.
 
 ## Stack rationale
 

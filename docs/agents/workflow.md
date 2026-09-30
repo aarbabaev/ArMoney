@@ -37,6 +37,8 @@ Format reference: [official OpenAI documentation](https://learn.chatgpt.com/docs
 | bank_orchestrator | Shared files outside service modules | Contracts, integration, platform-runtime, build, CI, Compose, docs, PR |
 | gateway_owner | app-gateway/ | Public API, routing and identity checks |
 | auth_owner | auth-service/ | Credentials, sessions and revocation |
+| sso_owner | sso-service/; explicitly leased auth adapter files | Keycloak/OIDC and identity mapping |
+| ios_owner | ios/ | Native SwiftUI app, browser authentication and secure session storage |
 | user_owner | user-service/ | Owner-scoped profiles |
 | wallet_owner | wallet-service/ | Wallet lifecycle and provisioning |
 | payment_owner | payment-service/ | Durable orchestration and client idempotency |
@@ -127,3 +129,12 @@ moves the completed slices from the former bootstrap branch into main for owner
 review. Start future feature branches from the latest main unless the user
 explicitly chooses a different starting point; do not continue using the bootstrap
 branch as the default integration target. PR creation never authorizes a merge.
+
+## Focused context
+
+Use [context map](context-map.md) to load relevant knowledge on demand. Prefer a fresh
+worker context with an exact contract, revision and file lease over inheriting the
+entire conversation. Reuse that worker for corrections. Read selected instructions
+in full once, return bounded evidence, and avoid repeated polling of unchanged work.
+See the measured [context audit](context-efficiency.md); do not interpret character
+reductions as measured token savings.

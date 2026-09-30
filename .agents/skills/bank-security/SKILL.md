@@ -1,6 +1,6 @@
 ---
 name: bank-security
-description: Review or fix Arman Bank API, identity, secret, dependency and deployment security issues with reproducible evidence and independent retesting.
+description: Review or fix ArMoney API, identity, secret, dependency and deployment security issues with reproducible evidence and independent retesting.
 ---
 
 # Banking security review

@@ -27,7 +27,7 @@ class AuthIntegrationSpec extends Specification {
         database = new Database(postgres.jdbcUrl, postgres.username, postgres.password)
         clock = new TestClock(Instant.parse('2026-01-01T00:00:00Z'))
         service = new AuthService(new PostgresAuthStore(database), new Argon2Passwords(), clock)
-        def routes = new AuthRoutes(service, KEY)
+        def routes = new AuthRoutes(service, KEY, { token -> new SsoTokens.Principal('https://issuer.example/realm', token) } as SsoTokens)
         runtime = ServiceRuntime.start('auth-service', 0, database, routes::configure)
         client = HttpClient.newHttpClient()
     }
@@ -133,6 +133,48 @@ class AuthIntegrationSpec extends Specification {
 
         cleanup:
         executor?.shutdownNow()
+    }
+
+    def "SSO subjects preserve identity across concurrent exchanges without linking legacy email"() {
+        given:
+        service.register('same@example.com', PASSWORD)
+        def legacy = service.me('Bearer ' + service.login('same@example.com', PASSWORD).accessToken()).id()
+        def executor = Executors.newFixedThreadPool(6)
+        def store = new PostgresAuthStore(database)
+
+        when:
+        def ids = (1..12).collect {
+            executor.submit({ store.externalIdentity('https://issuer.example/realm', 'subject-A').id() } as Callable<UUID>)
+        }.collect { it.get(15, TimeUnit.SECONDS) }
+        def response = request('POST', '/v1/auth/sso', JsonOutput.toJson([access_token:'subject-A']))
+        def token = parsed(response).access_token as String
+        def me = parsed(request('GET', '/v1/auth/me', null, token))
+
+        then:
+        ids.toSet().size() == 1
+        response.statusCode() == 200
+        me.id == ids.first().toString()
+        me.email == null
+        ids.first() != legacy
+        store.externalIdentity('https://issuer.example/realm', 'subject-B').id() != ids.first()
+        store.externalIdentity('https://other.example/realm', 'subject-A').id() != ids.first()
+        new PostgresAuthStore(database).externalIdentity('https://issuer.example/realm', 'subject-A').id() == ids.first()
+        database.transaction { sql -> sql.fetchOne('select count(*) from identities').get(0, Long) } == 4
+        request('POST', '/v1/auth/logout', null, token).statusCode() == 204
+        request('GET', '/v1/auth/me', null, token).statusCode() == 401
+
+        cleanup:
+        executor?.shutdownNow()
+    }
+
+    def "SSO input shape and service trust boundary fail closed"() {
+        expect:
+        request('POST', '/v1/auth/sso', '{"access_token":"token"}', null, null).statusCode() == 401
+        request('POST', '/v1/auth/sso', '{"access_token":123}').statusCode() == 400
+        request('POST', '/v1/auth/sso', '{"access_token":""}').statusCode() == 400
+        request('POST', '/v1/auth/sso', '{"access_token":"token","issuer":"evil"}').statusCode() == 400
+        request('POST', '/v1/auth/sso', JsonOutput.toJson([access_token:('x' * 8193)])).statusCode() == 400
+        request('POST', '/v1/auth/sso', JsonOutput.toJson([access_token:('x' * 13000)])).statusCode() == 413
     }
 
     static class TestClock extends Clock {

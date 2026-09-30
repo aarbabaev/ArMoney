@@ -3,3 +3,4 @@ dependencies {
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.20.1'
 }
 dependencies { testImplementation 'org.apache.groovy:groovy-json:4.0.29' }
+dependencies { testImplementation 'org.flywaydb:flyway-core:11.13.2' }

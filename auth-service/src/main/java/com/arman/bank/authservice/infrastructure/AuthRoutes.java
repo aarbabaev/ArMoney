@@ -19,17 +19,23 @@ public final class AuthRoutes {
             .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
             .enable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private final AuthService service;
+    private final com.arman.bank.authservice.application.SsoTokens sso;
     private final byte[] serviceKey;
     private final Semaphore hashingSlots = new Semaphore(2);
 
     public AuthRoutes(AuthService service, String serviceKey) {
+        this(service, serviceKey, token -> { throw new AuthFailure(AuthFailure.Kind.UNAVAILABLE); });
+    }
+
+    public AuthRoutes(AuthService service, String serviceKey, com.arman.bank.authservice.application.SsoTokens sso) {
+        this.sso = sso;
         if (serviceKey == null || serviceKey.length() < 32) throw new IllegalArgumentException("INTERNAL_AUTH_KEY must have at least 32 characters");
         this.service = service;
         this.serviceKey = serviceKey.getBytes(StandardCharsets.UTF_8);
     }
 
     public void configure(JavalinConfig config) {
-        config.http.maxRequestSize = 4096;
+        config.http.maxRequestSize = 12288;
         config.routes.before(ctx -> {
             if (ctx.path().startsWith("/v1/")) {
                 ctx.header("Cache-Control", "no-store");
@@ -44,11 +50,13 @@ public final class AuthRoutes {
                 case BAD_INPUT -> 400;
                 case UNAUTHORIZED -> 401;
                 case RATE_LIMITED -> 429;
+                case UNAVAILABLE -> 503;
             };
             if (status == 429) ctx.header("Retry-After", "900");
             respond(ctx, status, Map.of("error", switch (status) {
                 case 400 -> "invalid_request";
                 case 429 -> "too_many_attempts";
+                case 503 -> "service_unavailable";
                 default -> "invalid_credentials";
             }));
         });
@@ -67,9 +75,18 @@ public final class AuthRoutes {
             respond(ctx, 200, Map.of("access_token", session.accessToken(), "token_type", "Bearer",
                     "expires_in", 1800, "expires_at", session.expiresAt().toString()));
         }));
+        config.routes.post("/v1/auth/sso", ctx -> {
+            var body = com.arman.bank.runtime.InternalHttp.body(ctx, "access_token");
+            var session = service.sso(body.get("access_token").textValue(), sso);
+            respond(ctx, 200, Map.of("access_token", session.accessToken(), "token_type", "Bearer",
+                    "expires_in", 1800, "expires_at", session.expiresAt().toString()));
+        });
         config.routes.get("/v1/auth/me", ctx -> {
             var identity = service.me(ctx.header("Authorization"));
-            respond(ctx, 200, Map.of("id", identity.id().toString(), "email", identity.email()));
+            var response = new java.util.LinkedHashMap<String, Object>();
+            response.put("id", identity.id().toString());
+            response.put("email", identity.email());
+            respond(ctx, 200, response);
         });
         config.routes.post("/v1/auth/logout", ctx -> {
             service.logout(ctx.header("Authorization"));
@@ -87,6 +104,7 @@ public final class AuthRoutes {
     }
 
     private static JsonNode credentials(Context ctx) {
+        if (ctx.bodyAsBytes().length > 4096) throw new io.javalin.http.HttpResponseException(413, "Request too large");
         var type = ctx.contentType();
         if (type == null || !type.split(";", 2)[0].strip().equalsIgnoreCase("application/json"))
             throw new AuthFailure(BAD_INPUT);

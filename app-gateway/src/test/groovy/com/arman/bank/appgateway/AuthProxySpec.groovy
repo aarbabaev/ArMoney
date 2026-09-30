@@ -63,4 +63,37 @@ class AuthProxySpec extends Specification {
         then:
         thrown(IllegalArgumentException)
     }
+
+    def "SSO exchange admits bounded provider token but preserves legacy body limit"() {
+        given:
+        def captured = new AtomicReference()
+        def backend = HttpServer.create(new InetSocketAddress('127.0.0.1', 0), 0)
+        backend.createContext('/v1/auth/sso') { ex ->
+            captured.set([body: ex.requestBody.text, key: ex.requestHeaders.getFirst('X-Service-Key'),
+                          owner: ex.requestHeaders.getFirst('X-Identity-Id')])
+            byte[] bytes = '{"access_token":"session"}'.bytes
+            ex.sendResponseHeaders(200, bytes.length)
+            ex.responseBody.withCloseable { it.write(bytes) }
+        }
+        backend.start()
+        def key = 'expected-service-key-at-least-32-chars'
+        def proxy = new AuthProxy(URI.create("http://localhost:${backend.address.port}"), key, Clock.systemUTC())
+        def runtime = ServiceRuntime.start('app-gateway', 0, null, proxy::configure)
+        def client = HttpClient.newHttpClient()
+        def send = { path, payload -> client.send(HttpRequest.newBuilder(URI.create("http://localhost:${runtime.port()}" + path))
+            .header('Content-Type', 'application/json').header('X-Service-Key', 'forged')
+            .header('X-Identity-Id', UUID.randomUUID().toString())
+            .POST(HttpRequest.BodyPublishers.ofString(payload)).build(), HttpResponse.BodyHandlers.ofString()) }
+        def body = '{"access_token":"' + ('a' * 6000) + '"}'
+
+        expect:
+        send('/v1/auth/sso', body).statusCode() == 200
+        captured.get() == [body: body, key: key, owner: null]
+        send('/v1/auth/login', body).statusCode() == 413
+        send('/v1/wallets', body).statusCode() == 413
+        send('/v1/auth/sso', 'a' * 12289).statusCode() == 413
+
+        cleanup:
+        client?.close(); runtime?.close(); proxy?.close(); backend?.stop(0)
+    }
 }
