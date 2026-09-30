@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: auth-service
   version: 0.1.0
-  description: Bootstrap operational API. Business endpoints are not implemented.
+  description: Operational API and identity registration/session API. Email ownership is not yet verified.
 paths:
   /health/live:
     get:
@@ -40,6 +40,97 @@ paths:
             application/yaml:
               schema:
                 type: string
+  /v1/auth/register:
+    post:
+      operationId: register
+      description: Registers an identity; duplicates return the same response without changing the password.
+      security: [{ServiceKey: []}]
+      requestBody:
+        $ref: '#/components/requestBodies/Credentials'
+      responses:
+        '202':
+          description: Registration processed (also returned for an existing email)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: string
+                    enum: [registration_processed]
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/auth/login:
+    post:
+      operationId: login
+      security: [{ServiceKey: []}]
+      requestBody:
+        $ref: '#/components/requestBodies/Credentials'
+      responses:
+        '200':
+          description: New 30-minute opaque session; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/auth/me:
+    get:
+      operationId: currentIdentity
+      security: [{ServiceKey: [], BearerAuth: []}]
+      responses:
+        '200':
+          description: Identity from the session, never from a client-supplied user ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Identity'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/auth/logout:
+    post:
+      operationId: logout
+      description: Revokes the presented session; repeat requests with the same well-formed token are harmless.
+      security: [{ServiceKey: [], BearerAuth: []}]
+      responses:
+        '204':
+          description: Session removed, or already absent
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
 components:
   schemas:
     Health:
@@ -49,3 +140,104 @@ components:
         status:
           type: string
           enum: [UP, DOWN]
+    Identity:
+      type: object
+      required: [id, email]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+    Session:
+      type: object
+      required: [access_token, token_type, expires_in, expires_at]
+      properties:
+        access_token:
+          type: string
+          minLength: 43
+          maxLength: 43
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          enum: [1800]
+        expires_at:
+          type: string
+          format: date-time
+    Credentials:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: Trimmed and lowercased; ASCII email addresses only in this version.
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 15
+          maxLength: 128
+          description: At least 15 Unicode code points, at most 128 UTF-16 code units; never trimmed.
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Opaque random session token
+    ServiceKey:
+      type: apiKey
+      in: header
+      name: X-Service-Key
+  requestBodies:
+    Credentials:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Credentials'
+  responses:
+    BadRequest:
+      description: Malformed JSON, invalid email or password
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing service identity or invalid session/credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooLarge:
+      description: Request body exceeds 4096 bytes
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RateLimited:
+      description: Attempt or concurrency limit reached; Retry-After specifies seconds
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unavailable:
+      description: Authentication dependency unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

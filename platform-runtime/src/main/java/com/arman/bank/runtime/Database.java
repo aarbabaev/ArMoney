@@ -35,5 +35,10 @@ public final class Database implements AutoCloseable {
         }
     }
 
+    public <T> T transaction(java.util.function.Function<org.jooq.DSLContext, T> operation) {
+        return DSL.using(pool, SQLDialect.POSTGRES).transactionResult(configuration ->
+                operation.apply(DSL.using(configuration)));
+    }
+
     @Override public void close() { pool.close(); }
 }
