@@ -25,7 +25,9 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "fullScopeAllowed": false,
-      "redirectUris": ["com.armoney.ios:/oauth/callback"],
+      "redirectUris": [
+        "com.armoney.ios:/oauth/callback"
+      ],
       "webOrigins": [],
       "attributes": {
         "pkce.code.challenge.method": "S256",
@@ -33,7 +35,11 @@
         "oauth2.device.authorization.grant.enabled": "false",
         "oidc.ciba.grant.enabled": "false"
       },
-      "defaultClientScopes": ["basic", "profile", "email"],
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "email"
+      ],
       "optionalClientScopes": [],
       "protocolMappers": [
         {
@@ -43,6 +49,18 @@
           "consentRequired": false,
           "config": {
             "included.custom.audience": "armoney-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "armoney-auth-introspection-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "armoney-auth",
             "id.token.claim": "false",
             "access.token.claim": "true",
             "introspection.token.claim": "true"

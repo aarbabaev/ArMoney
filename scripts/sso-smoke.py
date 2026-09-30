@@ -53,7 +53,7 @@ for attempt in range(120):
         time.sleep(2)
 else:
     raise AssertionError("SSO did not start")
-assert discovery["issuer"] == REALM
+assert discovery["issuer"] == REALM, "Provider issuer does not match the configured public realm URL"
 spoofed = expect(200, request("GET", REALM + "/.well-known/openid-configuration", extra_headers={
     "X-Forwarded-Host": "attacker.invalid", "X-Forwarded-Proto": "http", "X-Forwarded-Port": "80"}))
 assert spoofed["issuer"] == REALM and spoofed["authorization_endpoint"].startswith(REALM + "/")

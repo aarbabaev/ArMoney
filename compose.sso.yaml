@@ -16,7 +16,7 @@ services:
       KC_DB_PASSWORD: ${SSO_DB_PASSWORD:?Set a random SSO_DB_PASSWORD}
       KC_HTTP_ENABLED: "true"
       KC_HTTP_RELATIVE_PATH: /sso
-      KC_HOSTNAME: https://${ARMONEY_HOST:-localhost}:8443
+      KC_HOSTNAME: https://${ARMONEY_HOST:-localhost}:8443/sso
       KC_PROXY_HEADERS: xforwarded
       KC_HEALTH_ENABLED: "true"
       KC_BOOTSTRAP_ADMIN_USERNAME: ${SSO_ADMIN_USERNAME:-admin}
