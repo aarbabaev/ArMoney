@@ -2,7 +2,8 @@ openapi: 3.0.3
 info:
   title: ledger-service
   version: 0.1.0
-  description: Bootstrap operational API. Business endpoints are not implemented.
+  description: Private ledger API for trusted services. Not exposed by gateway. Positive
+    integer minor units; no top-up endpoint.
 paths:
   /health/live:
     get:
@@ -40,12 +41,238 @@ paths:
             application/yaml:
               schema:
                 type: string
+  /v1/ledger/accounts:
+    post:
+      operationId: openAccount
+      security:
+      - ServiceKey: []
+        VerifiedIdentity: []
+      responses:
+        '200':
+          description: Persisted resource or result
+          content:
+            application/json:
+              schema: &id003
+                type: object
+                required:
+                - id
+                - wallet_id
+                - owner_id
+                - currency
+                - balance_minor
+                additionalProperties: false
+                properties:
+                  id: &id001
+                    type: string
+                    format: uuid
+                  wallet_id: *id001
+                  owner_id: *id001
+                  currency: &id002
+                    type: string
+                    enum:
+                    - EUR
+                    - USD
+                    - GBP
+                  balance_minor:
+                    type: integer
+                    format: int64
+                    minimum: 0
+        '400':
+          description: Invalid UUID, currency, JSON or integer amount
+        '401':
+          description: Missing trusted service identity
+        '404':
+          description: Not found or not owned
+        '409':
+          description: Idempotency conflict or rejected transfer; transfer rejection
+            returns its stored outcome
+        '413':
+          description: Body exceeds 4096 bytes
+        '503':
+          description: Database unavailable; outcome may be uncertain, retry same
+            payment_id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - wallet_id
+              - currency
+              additionalProperties: false
+              properties:
+                wallet_id: *id001
+                currency: *id002
+  /v1/ledger/accounts/{id}:
+    get:
+      operationId: getAccount
+      security:
+      - ServiceKey: []
+        VerifiedIdentity: []
+      responses:
+        '200':
+          description: Persisted resource or result
+          content:
+            application/json:
+              schema: *id003
+        '400':
+          description: Invalid UUID, currency, JSON or integer amount
+        '401':
+          description: Missing trusted service identity
+        '404':
+          description: Not found or not owned
+        '409':
+          description: Idempotency conflict or rejected transfer; transfer rejection
+            returns its stored outcome
+        '413':
+          description: Body exceeds 4096 bytes
+        '503':
+          description: Database unavailable; outcome may be uncertain, retry same
+            payment_id
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id001
+  /v1/ledger/transfers:
+    post:
+      operationId: postTransfer
+      security:
+      - ServiceKey: []
+        VerifiedIdentity: []
+      responses:
+        '200':
+          description: Persisted resource or result
+          content:
+            application/json:
+              schema: &id004
+                type: object
+                required:
+                - payment_id
+                - debit_account_id
+                - credit_account_id
+                - currency
+                - amount_minor
+                - outcome
+                additionalProperties: false
+                properties:
+                  payment_id: *id001
+                  debit_account_id: *id001
+                  credit_account_id: *id001
+                  currency: *id002
+                  amount_minor: &id005
+                    type: integer
+                    format: int64
+                    minimum: 1
+                    maximum: 9223372036854775807
+                  outcome:
+                    type: string
+                    enum:
+                    - POSTED
+                    - INSUFFICIENT_FUNDS
+                    - INVALID_ACCOUNT
+                    - BALANCE_LIMIT
+        '400':
+          description: Invalid UUID, currency, JSON or integer amount
+        '401':
+          description: Missing trusted service identity
+        '404':
+          description: Not found or not owned
+        '409':
+          description: Idempotency conflict or rejected transfer; transfer rejection
+            returns its stored outcome
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - *id004
+                - type: object
+                  required:
+                  - error
+                  additionalProperties: false
+                  properties:
+                    error:
+                      type: string
+        '413':
+          description: Body exceeds 4096 bytes
+        '503':
+          description: Database unavailable; outcome may be uncertain, retry same
+            payment_id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - payment_id
+              - debit_account_id
+              - credit_account_id
+              - currency
+              - amount_minor
+              additionalProperties: false
+              properties:
+                payment_id: *id001
+                debit_account_id: *id001
+                credit_account_id: *id001
+                currency: *id002
+                amount_minor: *id005
+      description: Same payment_id and requester/payload replay original outcome;
+        changed payload conflicts. Source account must belong to verified identity.
+        Do not use a new payment_id after an uncertain response.
+  /v1/ledger/transfers/{id}:
+    get:
+      operationId: getTransferResult
+      security:
+      - ServiceKey: []
+        VerifiedIdentity: []
+      responses:
+        '200':
+          description: Persisted resource or result
+          content:
+            application/json:
+              schema: *id004
+        '400':
+          description: Invalid UUID, currency, JSON or integer amount
+        '401':
+          description: Missing trusted service identity
+        '404':
+          description: Not found or not owned
+        '409':
+          description: Idempotency conflict or rejected transfer; transfer rejection
+            returns its stored outcome
+        '413':
+          description: Body exceeds 4096 bytes
+        '503':
+          description: Database unavailable; outcome may be uncertain, retry same
+            payment_id
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id001
 components:
   schemas:
     Health:
       type: object
-      required: [status]
+      required:
+      - status
       properties:
         status:
           type: string
-          enum: [UP, DOWN]
+          enum:
+          - UP
+          - DOWN
+  securitySchemes:
+    ServiceKey:
+      type: apiKey
+      in: header
+      name: X-Service-Key
+    VerifiedIdentity:
+      type: apiKey
+      in: header
+      name: X-Identity-Id
+      description: Verified auth identity UUID asserted by trusted service caller,
+        not public clients
+

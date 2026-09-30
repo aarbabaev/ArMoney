@@ -2,7 +2,8 @@ openapi: 3.0.3
 info:
   title: wallet-service
   version: 0.1.0
-  description: Bootstrap operational API. Business endpoints are not implemented.
+  description: Operational API and authenticated profile/wallet metadata. No balances
+    or transfers.
 paths:
   /health/live:
     get:
@@ -40,12 +41,139 @@ paths:
             application/yaml:
               schema:
                 type: string
+  /v1/wallets:
+    get:
+      operationId: listWallets
+      responses:
+        '200':
+          description: Only current identity wallets, sorted by currency
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - wallets
+                properties:
+                  wallets:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - id
+                      - owner_id
+                      - currency
+                      - status
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        owner_id:
+                          type: string
+                          format: uuid
+                        currency:
+                          type: string
+                          enum:
+                          - EUR
+                          - USD
+                          - GBP
+                        status:
+                          type: string
+                          enum:
+                          - ACTIVE
+                          - CLOSED
+        '400':
+          description: Invalid JSON or field values
+        '401':
+          description: Missing or invalid identity
+        '413':
+          description: Body exceeds 4096 bytes
+        '503':
+          description: Dependency unavailable
+      security:
+      - ServiceKey: []
+        VerifiedIdentity: []
+    post:
+      operationId: openWallet
+      description: Returns a new or existing wallet for this owner and currency. Retrying
+        never creates duplicates or reopens a closed wallet. Metadata only; no balance
+        or ledger account provisioned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - currency
+              properties:
+                currency:
+                  type: string
+                  enum:
+                  - EUR
+                  - USD
+                  - GBP
+      responses:
+        '200':
+          description: New or existing wallet
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - id
+                - owner_id
+                - currency
+                - status
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  owner_id:
+                    type: string
+                    format: uuid
+                  currency:
+                    type: string
+                    enum:
+                    - EUR
+                    - USD
+                    - GBP
+                  status:
+                    type: string
+                    enum:
+                    - ACTIVE
+                    - CLOSED
+        '400':
+          description: Invalid JSON or field values
+        '401':
+          description: Missing or invalid identity
+        '413':
+          description: Body exceeds 4096 bytes
+        '503':
+          description: Dependency unavailable
+      security:
+      - ServiceKey: []
+        VerifiedIdentity: []
 components:
   schemas:
     Health:
       type: object
-      required: [status]
+      required:
+      - status
       properties:
         status:
           type: string
-          enum: [UP, DOWN]
+          enum:
+          - UP
+          - DOWN
+  securitySchemes:
+    ServiceKey:
+      type: apiKey
+      in: header
+      name: X-Service-Key
+    VerifiedIdentity:
+      type: apiKey
+      in: header
+      name: X-Identity-Id
+      description: Gateway-verified auth identity UUID
+

@@ -1,0 +1,39 @@
+# Ledger slice
+
+Ledger implements zero-balance account creation, owner-scoped balances, atomic
+same-currency posting and durable payment results. These routes are internal:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| POST | /v1/ledger/accounts | Create or retrieve an account by wallet_id and currency |
+| GET | /v1/ledger/accounts/{id} | Read the verified owner's account and balance_minor |
+| POST | /v1/ledger/transfers | Post or replay a payment_id |
+| GET | /v1/ledger/transfers/{id} | Read the verified requester's stored result |
+
+Both X-Service-Key and X-Identity-Id are required. Only trusted service callers
+may supply identity headers. There is no gateway route and no public P2P yet.
+OpenAPI is available on ledger-service's own /openapi.yaml.
+
+An account request contains wallet_id (UUID) and currency (EUR/USD/GBP).
+A transfer contains payment_id, debit_account_id, credit_account_id (UUIDs),
+currency and amount_minor (positive int64; 100 means one unit for these currencies).
+POST returns 200 for POSTED, 409 with a durable outcome for rejection,
+or 409 idempotency_conflict if the ID's payload/requester changes.
+GET result returns 200 even for a stored rejection, 404 when absent/not owned.
+Lookup/retry the SAME payment_id after a timeout.
+
+Balances start at zero. Existing wallet metadata is not automatically provisioned.
+No funding API exists. Synthetic funding happens only in isolated tests, with a
+real opposite posting against a test clearing account.
+
+## Local update / IDEA
+docker compose up --build -d applies V2 without deleting volumes.
+Existing INTERNAL_AUTH_KEY also configures ledger. No new secret is needed.
+For IDEA use Java 21, PORT=8084, DB_URL=jdbc:postgresql://127.0.0.1:5437/bank,
+DB_USER=bank, DB_PASSWORD from LOCAL_DB_PASSWORD, INTERNAL_AUTH_KEY from .env.
+Keep these in an ignored .env file. Docker gateway does not forward to this port.
+
+Run ./gradlew :ledger-service:check with Docker to run the real PostgreSQL suite.
+scripts/ledger-smoke.py is intentionally CI-only: it inserts synthetic clearing
+funding into disposable databases. It must not be used as a real top-up tool.
+See ADR 0005 for locking, trust boundaries, migration and recovery semantics.

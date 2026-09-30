@@ -2,7 +2,8 @@ openapi: 3.0.3
 info:
   title: user-service
   version: 0.1.0
-  description: Bootstrap operational API. Business endpoints are not implemented.
+  description: Operational API and authenticated profile/wallet metadata. No balances
+    or transfers.
 paths:
   /health/live:
     get:
@@ -40,12 +41,116 @@ paths:
             application/yaml:
               schema:
                 type: string
+  /v1/users/me:
+    get:
+      operationId: getProfile
+      responses:
+        '200':
+          description: Current identity profile
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - id
+                - identity_id
+                - display_name
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  identity_id:
+                    type: string
+                    format: uuid
+                  display_name:
+                    type: string
+                    minLength: 1
+                    maxLength: 100
+        '404':
+          description: No profile yet
+        '400':
+          description: Invalid JSON or field values
+        '401':
+          description: Missing or invalid identity
+        '413':
+          description: Body exceeds 4096 bytes
+        '503':
+          description: Dependency unavailable
+      security:
+      - ServiceKey: []
+        VerifiedIdentity: []
+    put:
+      operationId: saveProfile
+      description: Create or update the current identity profile. Stable profile ID;
+        last committed write wins.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - display_name
+              properties:
+                display_name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                  description: Trimmed; nonblank; no control characters
+      responses:
+        '200':
+          description: Saved profile
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - id
+                - identity_id
+                - display_name
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  identity_id:
+                    type: string
+                    format: uuid
+                  display_name:
+                    type: string
+                    minLength: 1
+                    maxLength: 100
+        '400':
+          description: Invalid JSON or field values
+        '401':
+          description: Missing or invalid identity
+        '413':
+          description: Body exceeds 4096 bytes
+        '503':
+          description: Dependency unavailable
+      security:
+      - ServiceKey: []
+        VerifiedIdentity: []
 components:
   schemas:
     Health:
       type: object
-      required: [status]
+      required:
+      - status
       properties:
         status:
           type: string
-          enum: [UP, DOWN]
+          enum:
+          - UP
+          - DOWN
+  securitySchemes:
+    ServiceKey:
+      type: apiKey
+      in: header
+      name: X-Service-Key
+    VerifiedIdentity:
+      type: apiKey
+      in: header
+      name: X-Identity-Id
+      description: Gateway-verified auth identity UUID
+

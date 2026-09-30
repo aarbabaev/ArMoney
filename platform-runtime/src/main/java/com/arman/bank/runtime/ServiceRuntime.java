@@ -15,12 +15,18 @@ public final class ServiceRuntime implements AutoCloseable {
     }
 
     public static ServiceRuntime start(String service, int port, Database database) throws IOException {
+        return start(service, port, database, config -> {});
+    }
+
+    public static ServiceRuntime start(String service, int port, Database database,
+            java.util.function.Consumer<io.javalin.config.JavalinConfig> routes) throws IOException {
         String contract;
         try (var input = Objects.requireNonNull(
                 ServiceRuntime.class.getResourceAsStream("/openapi.yaml"), "Missing OpenAPI contract")) {
             contract = new String(input.readAllBytes(), StandardCharsets.UTF_8);
         }
         var app = Javalin.create(config -> {
+            routes.accept(config);
             config.routes.get("/health/live", ctx -> ctx.contentType("application/json")
                     .result("{\"status\":\"UP\"}"));
             config.routes.get("/health/ready", ctx -> {
@@ -45,7 +51,7 @@ public final class ServiceRuntime implements AutoCloseable {
         }
     }
 
-    private static String required(String name) {
+    public static String required(String name) {
         var value = System.getenv(name);
         if (value == null || value.isBlank()) throw new IllegalArgumentException("Missing environment variable: " + name);
         return value;
