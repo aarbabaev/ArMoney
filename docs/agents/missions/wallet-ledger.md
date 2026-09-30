@@ -25,7 +25,10 @@ No funding endpoint, P2P payment execution, broker or new infrastructure.
    without duplicate accounts, and migration of existing/closed wallets.
 6. QA security: verify owner isolation, forged identity rejection, mapping
    mismatch rejection, zero opening balance and no fabricated success.
-7. Independent reviewer: inspect the integrated diff and test evidence.
+7. Security auditor: review cross-service trust and ensure provisioning cannot
+   attach another owner's ledger account. Route findings through the communication
+   protocol and independently verify developer fixes.
+8. Independent reviewer: inspect the integrated diff and test evidence.
 
 Auth, user and payment owners remain idle unless an actual dependency emerges.
 Order: contract -> ledger validation + wallet implementation -> gateway contract

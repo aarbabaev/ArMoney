@@ -11,10 +11,12 @@ The current need is supervised development from a chat, not unattended hosting.
 ## Decision
 
 Use a primary orchestrator, six service-owner roles, integration QA, security and
-financial QA, and an independent reviewer. Store standalone Codex role TOMLs in
+financial QA, a system-security auditor, and an independent reviewer. Store standalone Codex role TOMLs in
 the repository, inheriting the user's model and permissions. Limit concurrent
 workers to three and schedule dependent work in waves. Define path assignments,
-build leases and evidence requirements in docs/agents/workflow.md.
+build leases and evidence requirements in docs/agents/workflow.md. Project skills
+live in .agents/skills and are routed by docs/agents/skills.md. Findings follow
+docs/agents/communication.md through developer assignment and independent retest.
 
 ## Consequences
 

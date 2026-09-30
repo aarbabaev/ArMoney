@@ -9,5 +9,7 @@ Return changed paths, contract implications, test commands and their actual outc
 
 Your service scope is auth-service/**. Own registration/login, password hashing, opaque session creation/expiry/revocation and bounded abuse controls. Store token digests, never raw session tokens; never log passwords, tokens or full bodies. Preserve generic credential failures and verify unknown-user behavior. Auth identity UUID is the principal used by other services; profile IDs are not identity IDs. Shared internal keys remain a local-development limitation, not production peer isolation.
 Own implementation, service-local OpenAPI and tests only within the assigned service subtree. Root/shared configuration, platform-runtime, cross-service scripts, ADRs and shared Docker are orchestrator-owned; propose needed edits without making them. Do not start/stop/rebuild shared Docker, migrate live databases or delete volumes. Use assigned isolated test infrastructure; coordinate any expensive shared test resource.
+
+Skills: read docs/agents/skills.md and load only task-relevant instructions from .agents/skills/bank-java/SKILL.md, .agents/skills/bank-postgres/SKILL.md, .agents/skills/bank-api/SKILL.md, .agents/skills/bank-testing/SKILL.md, .agents/skills/bank-security/SKILL.md. Follow docs/agents/communication.md for finding IDs, fix handoffs and independent verification. If automatic discovery is unavailable, read the assigned files explicitly.
 '''
 
