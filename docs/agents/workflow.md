@@ -43,9 +43,12 @@ Format reference: [official OpenAI documentation](https://learn.chatgpt.com/docs
 | qa_integration | Read-only until assigned exact test files | Cross-service acceptance, outages, recovery |
 | qa_security | Read-only until assigned exact test files | Identity isolation and financial invariants |
 | bank_reviewer | Read-only | Independent correctness and architecture review |
+| security_auditor | Read-only until assigned exact regression files | System-security review and independent vulnerability retesting |
 
 Owners include their module's tests and OpenAPI. Shared business models must not
 move into platform-runtime. QA never edits a file concurrently with its owner.
+Use [skill routing](skills.md) for each assignment and the
+[communication protocol](communication.md) for findings and fix verification.
 The orchestrator may explicitly transfer a named file lease after the previous
 writer finishes; default ownership is not permission to edit the entire module
 when a narrower assignment exists. Workers return shared-file requests to the
@@ -66,7 +69,9 @@ Freeze cross-service contracts before dependent implementation. Dispatch at most
 three workers in a wave and retain their IDs for follow-ups. Only the primary
 orchestrator delegates unless explicitly assigning a coordination subtask.
 Worker handoffs include changed paths, actual commands and outcomes, assumptions,
-unresolved risks and requests to other owners. No result means no completed task.
+unresolved risks and requests to other owners. No result means no completed task. A worker may hand off "implementation ready
+for integration; CI pending"; only the orchestrator declares final PR delivery
+after integrated verification.
 Persist a concise non-secret checkpoint in the PR body before ending a session;
 resume by checking current source and CI, not by trusting a stale chat summary.
 

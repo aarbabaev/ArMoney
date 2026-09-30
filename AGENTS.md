@@ -33,3 +33,5 @@
 - The orchestrator assigns disjoint writable paths and owns shared files. Workers must not modify other services, publish branches, merge, or delegate recursively without an explicit coordination assignment.
 - Serialize builds in a shared directory. Only the orchestrator may operate the user's persistent Docker stack. CI-only funding fixtures must never run on it.
 - Require independent review of the integrated revision and actual test evidence. Role instructions are not filesystem security boundaries or a background execution service.
+- Route task-relevant project skills using docs/agents/skills.md and include their exact paths in assignments. Read the skill before using it; unavailable automatic discovery is handled by explicit file reads.
+- Use security_auditor for independent system-security review. Follow docs/agents/communication.md to route findings, assign fixes and independently retest; never equate a developer's fix report with a closed finding.
