@@ -4,8 +4,8 @@
 
 | Service | Owns | Bootstrap |
 | --- | --- | --- |
-| app-gateway | External routing and request policy | Operational API only, no proxy |
-| auth-service | Credentials and authentication | Identity schema; no login endpoint |
+| app-gateway | External routing and request policy | Operational API and allowlisted auth proxy |
+| auth-service | Credentials and authentication | Registration, login, session lookup and logout |
 | user-service | Customer profile | Profile schema |
 | wallet-service | Wallet identity, owner, currency, lifecycle | Wallet schema, no stored balance |
 | payment-service | P2P request state and client idempotency | Payment schema |
