@@ -16,7 +16,8 @@ Open the repository folder in Codex (the folder containing `settings.gradle` and
 > docs/agents/missions/wallet-ledger.md. Deliver a tested PR; do not merge.
 
 For a planning-only rehearsal, replace "implement" with "plan only, no writes or
-deployment". The mission file is a proposed next slice, not a completed feature.
+deployment". The mission file records the provisioning slice and its acceptance criteria;
+choose the next concrete slice from the current architecture map.
 
 Custom role definitions live in `.codex/agents/*.toml`; the primary chat performs
 the orchestrator role. If the host's delegation tool supports named roles, select

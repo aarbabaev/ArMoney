@@ -22,7 +22,8 @@ or 409 idempotency_conflict if the ID's payload/requester changes.
 GET result returns 200 even for a stored rejection, 404 when absent/not owned.
 Lookup/retry the SAME payment_id after a timeout.
 
-Balances start at zero. Existing wallet metadata is not automatically provisioned.
+Balances start at zero. Wallet-service automatically provisions ACTIVE/PENDING wallets
+through this private API and persists the confirmed mapping; see ADR 0007.
 No funding API exists. Synthetic funding happens only in isolated tests, with a
 real opposite posting against a test clearing account.
 

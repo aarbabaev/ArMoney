@@ -45,12 +45,14 @@ class WalletIntegrationSpec extends Specification {
         def response = req('POST', '/v1/wallets', alice, '{"currency":"EUR"}')
         then:
         wallets*.id().unique().size() == 1
-        response.statusCode() == 200
+        response.statusCode() == 202
+        json(response).get('provisioning_status').asText() == 'PENDING'
+        json(response).get('ledger_account_id').isNull()
         json(response).get('id').asText() == wallets.first().id().toString()
         json(req('GET', '/v1/wallets')).get('wallets').size() == 1
         json(req('GET', '/v1/wallets', bob)).get('wallets').size() == 0
-        req('POST', '/v1/wallets', bob, '{"currency":"EUR"}').statusCode() == 200
-        req('POST', '/v1/wallets', alice, '{"currency":"USD"}').statusCode() == 200
+        req('POST', '/v1/wallets', bob, '{"currency":"EUR"}').statusCode() == 202
+        req('POST', '/v1/wallets', alice, '{"currency":"USD"}').statusCode() == 202
         service.list(alice)*.currency() == ['EUR', 'USD']
         db.transaction { it.fetchCount(org.jooq.impl.DSL.table('wallets')) } == 3
         when:
@@ -69,6 +71,23 @@ class WalletIntegrationSpec extends Specification {
         expect:
         service.open(alice, 'EUR').status() == 'CLOSED'
         service.open(alice, 'EUR').id() == wallet.id()
+        req('POST', '/v1/wallets', alice, '{"currency":"EUR"}').statusCode() == 200
+    }
+    def "confirmed wallet returns 200 and stable account mapping without exposing a balance"() {
+        given:
+        def store = new PostgresWallets(db)
+        def wallet = new WalletService(store).open(alice, 'EUR')
+        def account = UUID.randomUUID()
+        store.complete(store.claim().orElseThrow(), account)
+        when:
+        def response = req('POST', '/v1/wallets', alice, '{"currency":"EUR"}')
+        then:
+        response.statusCode() == 200
+        json(response).get('id').asText() == wallet.id().toString()
+        json(response).get('provisioning_status').asText() == 'READY'
+        json(response).get('ledger_account_id').asText() == account.toString()
+        !json(response).has('balance_minor')
+        req('GET', '/health/ready', null, null, null).statusCode() == 200
     }
     def "wallet rejects untrusted owners and invalid currency without writes"() {
         expect:

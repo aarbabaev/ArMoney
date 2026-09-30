@@ -2,8 +2,7 @@ openapi: 3.0.3
 info:
   title: wallet-service
   version: 0.1.0
-  description: Operational API and authenticated profile/wallet metadata. No balances
-    or transfers.
+  description: Wallet lifecycle and durable asynchronous ledger provisioning. Balances belong to ledger.
 paths:
   /health/live:
     get:
@@ -44,59 +43,37 @@ paths:
   /v1/wallets:
     get:
       operationId: listWallets
+      security:
+      - ServiceKey: []
+        VerifiedIdentity: []
       responses:
         '200':
-          description: Only current identity wallets, sorted by currency
+          description: Current identity wallets including provisioning state, sorted by currency
           content:
             application/json:
               schema:
                 type: object
-                required:
-                - wallets
+                required: [wallets]
                 properties:
                   wallets:
                     type: array
                     items:
-                      type: object
-                      required:
-                      - id
-                      - owner_id
-                      - currency
-                      - status
-                      properties:
-                        id:
-                          type: string
-                          format: uuid
-                        owner_id:
-                          type: string
-                          format: uuid
-                        currency:
-                          type: string
-                          enum:
-                          - EUR
-                          - USD
-                          - GBP
-                        status:
-                          type: string
-                          enum:
-                          - ACTIVE
-                          - CLOSED
-        '400':
-          description: Invalid JSON or field values
+                      $ref: '#/components/schemas/Wallet'
         '401':
           description: Missing or invalid identity
-        '413':
-          description: Body exceeds 4096 bytes
         '503':
-          description: Dependency unavailable
+          description: Wallet database unavailable
+    post:
+      operationId: openWallet
+      description: >-
+        Creates durable provisioning intent and returns immediately. ACTIVE PENDING returns
+        202; READY or existing CLOSED returns 200. Poll GET for readiness. Retries preserve
+        wallet identity and never reopen CLOSED wallets. A background worker retries ledger
+        with the stable wallet ID. Ledger outage leaves PENDING. Existing ACTIVE wallets
+        are reconciled after migration. No balances are held in wallet-service.
       security:
       - ServiceKey: []
         VerifiedIdentity: []
-    post:
-      operationId: openWallet
-      description: Returns a new or existing wallet for this owner and currency. Retrying
-        never creates duplicates or reopens a closed wallet. Metadata only; no balance
-        or ledger account provisioned.
       requestBody:
         required: true
         content:
@@ -104,45 +81,24 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required:
-              - currency
+              required: [currency]
               properties:
                 currency:
                   type: string
-                  enum:
-                  - EUR
-                  - USD
-                  - GBP
+                  enum: [EUR, USD, GBP]
       responses:
         '200':
-          description: New or existing wallet
+          description: Confirmed READY wallet or existing CLOSED wallet
           content:
             application/json:
               schema:
-                type: object
-                required:
-                - id
-                - owner_id
-                - currency
-                - status
-                properties:
-                  id:
-                    type: string
-                    format: uuid
-                  owner_id:
-                    type: string
-                    format: uuid
-                  currency:
-                    type: string
-                    enum:
-                    - EUR
-                    - USD
-                    - GBP
-                  status:
-                    type: string
-                    enum:
-                    - ACTIVE
-                    - CLOSED
+                $ref: '#/components/schemas/Wallet'
+        '202':
+          description: ACTIVE wallet with durable PENDING ledger provisioning
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
         '400':
           description: Invalid JSON or field values
         '401':
@@ -150,12 +106,34 @@ paths:
         '413':
           description: Body exceeds 4096 bytes
         '503':
-          description: Dependency unavailable
-      security:
-      - ServiceKey: []
-        VerifiedIdentity: []
+          description: Wallet database unavailable
 components:
   schemas:
+    Wallet:
+      type: object
+      required: [id, owner_id, currency, status, provisioning_status, ledger_account_id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_id:
+          type: string
+          format: uuid
+        currency:
+          type: string
+          enum: [EUR, USD, GBP]
+        status:
+          type: string
+          enum: [ACTIVE, CLOSED]
+        provisioning_status:
+          type: string
+          enum: [PENDING, READY]
+          description: READY proves a confirmed ledger mapping, not funding.
+        ledger_account_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Null while PENDING; immutable once READY.
     Health:
       type: object
       required:
@@ -176,4 +154,3 @@ components:
       in: header
       name: X-Identity-Id
       description: Gateway-verified auth identity UUID
-

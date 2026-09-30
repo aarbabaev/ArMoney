@@ -40,7 +40,16 @@ class LedgerHttpIntegrationSpec extends Specification {
                        currency:'EUR', amount_minor: 10]
         then:
         opened.statusCode() == 200
+        InternalHttp.JSON.readTree(opened.body()).with {
+            assert get('wallet_id').asText() == body.wallet_id
+            assert get('owner_id').asText() == alice.toString()
+            assert get('currency').asText() == 'EUR'
+            assert get('balance_minor').longValue() == 0L
+            true
+        }
         call('POST', '/v1/ledger/accounts', body, alice, key).body() == opened.body()
+        call('POST', '/v1/ledger/accounts', body, bob, key).statusCode() == 409
+        call('POST', '/v1/ledger/accounts', body + [currency:'USD'], alice, key).statusCode() == 409
         call('GET', '/v1/ledger/accounts/' + id, null, bob, key).statusCode() == 404
         call('GET', '/v1/ledger/accounts/' + id, null, alice, key).statusCode() == 200
         call('POST', '/v1/ledger/transfers', command, alice, key).statusCode() == 409
@@ -52,6 +61,23 @@ class LedgerHttpIntegrationSpec extends Specification {
         }
         call('POST', '/v1/ledger/transfers', command + [owner_id:bob.toString()], alice, key).statusCode() == 400
         call('POST', '/v1/ledger/accounts', body + [balance_minor:100], alice, key).statusCode() == 400
+
+        when: 'the HTTP server and connection pool restart with the same durable database'
+        runtime.close()
+        db = new Database(pg.jdbcUrl, pg.username, pg.password)
+        routes = new LedgerRoutes(new LedgerService(new PostgresLedger(db)), key)
+        runtime = ServiceRuntime.start('ledger-service', 0, db, routes::configure)
+        def replay = call('POST', '/v1/ledger/accounts', body, alice, key)
+
+        then: 'a lost provisioning response can be recovered without a second account or remapping'
+        replay.statusCode() == 200
+        InternalHttp.JSON.readTree(replay.body()) == InternalHttp.JSON.readTree(opened.body())
+        call('POST', '/v1/ledger/accounts', body, bob, key).statusCode() == 409
+        call('POST', '/v1/ledger/accounts', body + [currency:'USD'], alice, key).statusCode() == 409
+        call('GET', '/v1/ledger/accounts/' + id, null, bob, key).statusCode() == 404
+        db.transaction {
+            it.fetchOne('select count(*) from accounts where wallet_id = ?', UUID.fromString(body.wallet_id)).get(0, Integer)
+        } == 1
         cleanup:
         client?.close(); runtime?.close(); db?.close(); pg?.stop()
     }

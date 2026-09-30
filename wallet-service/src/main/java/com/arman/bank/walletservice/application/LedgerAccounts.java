@@ -1,0 +1,6 @@
+package com.arman.bank.walletservice.application;
+import com.arman.bank.walletservice.domain.Wallet;
+import java.util.UUID;
+public interface LedgerAccounts {
+    UUID provision(Wallet wallet) throws Exception;
+}

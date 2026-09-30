@@ -1,6 +1,7 @@
-# Proposed mission: durable wallet-to-ledger provisioning
+# Mission: durable wallet-to-ledger provisioning
 
-Status: ready for contract design, not implemented by the agent-team setup.
+Status: implemented by the wallet provisioning slice; final delivery requires its
+focused and full integration checks plus CI. Decision: docs/adr/0007-wallet-ledger-provisioning.md.
 
 Goal: every usable wallet converges to exactly one matching zero-opening-balance
 ledger account despite duplicate requests, timeouts and service restarts.

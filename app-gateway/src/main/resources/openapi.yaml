@@ -2,8 +2,8 @@ openapi: 3.0.3
 info:
   title: app-gateway
   version: 0.1.0
-  description: Operational API and authenticated profile/wallet metadata. No balances
-    or transfers.
+  description: Operational API and authenticated profiles and wallets with durable ledger-account provisioning.
+    No balances or transfers are exposed.
 paths:
   /health/live:
     get:
@@ -255,30 +255,7 @@ paths:
                   wallets:
                     type: array
                     items:
-                      type: object
-                      required:
-                      - id
-                      - owner_id
-                      - currency
-                      - status
-                      properties:
-                        id:
-                          type: string
-                          format: uuid
-                        owner_id:
-                          type: string
-                          format: uuid
-                        currency:
-                          type: string
-                          enum:
-                          - EUR
-                          - USD
-                          - GBP
-                        status:
-                          type: string
-                          enum:
-                          - ACTIVE
-                          - CLOSED
+                      $ref: '#/components/schemas/Wallet'
         '400':
           description: Invalid JSON or field values
         '401':
@@ -298,8 +275,9 @@ paths:
     post:
       operationId: openWallet
       description: Returns a new or existing wallet for this owner and currency. Retrying
-        never creates duplicates or reopens a closed wallet. Metadata only; no balance
-        or ledger account provisioned.
+        never creates duplicates or reopens a closed wallet. Active wallets remain PENDING
+        until their ledger account is confirmed. Background retries recover provisioning
+        after outages; poll GET /v1/wallets to observe READY. No funds are created.
       requestBody:
         required: true
         content:
@@ -318,34 +296,17 @@ paths:
                   - GBP
       responses:
         '200':
-          description: New or existing wallet
+          description: Provisioned wallet (READY), or an existing CLOSED wallet that is not reopened
           content:
             application/json:
               schema:
-                type: object
-                required:
-                - id
-                - owner_id
-                - currency
-                - status
-                properties:
-                  id:
-                    type: string
-                    format: uuid
-                  owner_id:
-                    type: string
-                    format: uuid
-                  currency:
-                    type: string
-                    enum:
-                    - EUR
-                    - USD
-                    - GBP
-                  status:
-                    type: string
-                    enum:
-                    - ACTIVE
-                    - CLOSED
+                $ref: '#/components/schemas/Wallet'
+        '202':
+          description: Active wallet saved; ledger-account provisioning is PENDING
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
         '400':
           description: Invalid JSON or field values
         '401':
@@ -364,6 +325,38 @@ paths:
       - BearerAuth: []
 components:
   schemas:
+    Wallet:
+      type: object
+      required:
+      - id
+      - owner_id
+      - currency
+      - status
+      - provisioning_status
+      - ledger_account_id
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_id:
+          type: string
+          format: uuid
+        currency:
+          type: string
+          enum: [EUR, USD, GBP]
+        status:
+          type: string
+          enum: [ACTIVE, CLOSED]
+          description: Wallet lifecycle; ACTIVE does not by itself imply ledger readiness
+        provisioning_status:
+          type: string
+          enum: [PENDING, READY]
+          description: READY means the owning identity and currency were confirmed by ledger
+        ledger_account_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Null while PENDING; confirmed ledger account ID when READY
     Health:
       type: object
       required:
@@ -483,4 +476,3 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
-
