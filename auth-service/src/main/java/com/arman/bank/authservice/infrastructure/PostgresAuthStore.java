@@ -31,9 +31,9 @@ public final class PostgresAuthStore implements AuthStore {
     @Override public boolean allowAttempt(String subjectHash, Instant now) {
         return database.transaction(sql -> {
             var cutoff = time(now.minusSeconds(900));
-            sql.execute("delete from auth_attempts where window_start <= ?", cutoff);
+            sql.execute("delete from auth_attempts where window_start <= cast(? as timestamptz)", cutoff);
             var row = sql.fetchOne("""
-                insert into auth_attempts(subject_hash, window_start, attempts) values (?, ?, 1)
+                insert into auth_attempts(subject_hash, window_start, attempts) values (?, cast(? as timestamptz), 1)
                 on conflict(subject_hash) do update set attempts = least(auth_attempts.attempts + 1, 11)
                 returning attempts
                 """, subjectHash, time(now));
@@ -43,8 +43,8 @@ public final class PostgresAuthStore implements AuthStore {
 
     @Override public void saveSession(String tokenHash, UUID identityId, Instant now, Instant expiresAt) {
         database.transaction(sql -> {
-            sql.execute("delete from sessions where expires_at <= ?", time(now));
-            return sql.execute("insert into sessions(token_hash, identity_id, created_at, expires_at) values (?, ?, ?, ?)",
+            sql.execute("delete from sessions where expires_at <= cast(? as timestamptz)", time(now));
+            return sql.execute("insert into sessions(token_hash, identity_id, created_at, expires_at) values (?, ?, cast(? as timestamptz), cast(? as timestamptz))",
                 tokenHash, identityId, time(now), time(expiresAt));
         });
     }
@@ -53,7 +53,7 @@ public final class PostgresAuthStore implements AuthStore {
         return database.transaction(sql -> {
             var row = sql.fetchOne("""
                 select i.id, i.email from identities i join sessions s on s.identity_id = i.id
-                where s.token_hash = ? and s.expires_at > ?
+                where s.token_hash = ? and s.expires_at > cast(? as timestamptz)
                 """, tokenHash, time(now));
             return row == null ? Optional.empty() : Optional.of(new Identity(row.get("id", UUID.class), row.get("email", String.class)));
         });
