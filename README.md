@@ -97,3 +97,12 @@ See [Postman walkthrough and IDEA settings](docs/onboarding.md) and [ADR 0004](d
 Profile and wallet routes require a valid session through gateway. Wallets contain metadata only, not balances.
 Gateway also requires USER_BASE_URL and WALLET_BASE_URL (provided by Compose).
 Run `python3 scripts/onboarding-smoke.py` after updating the containers.
+
+## Private ledger
+
+Ledger now supports zero-balance accounts, owner-scoped balance reads and atomic,
+retry-safe transfer commands for trusted internal callers. It is not exposed by
+gateway; wallet account provisioning and payment orchestration are next.
+See [ledger guide](docs/ledger.md) and [ADR 0005](docs/adr/0005-atomic-ledger.md).
+Existing INTERNAL_AUTH_KEY also configures ledger; no new secret is required.
+
