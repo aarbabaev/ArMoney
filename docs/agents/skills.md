@@ -31,11 +31,9 @@ finding IDs through the orchestrator when coverage overlaps.
 
 ## Stack rationale
 
-Revolut's public [Java engineering vacancy](https://www.revolut.com/en-LU/careers/position/backend-software-engineer-java-530d3bfd-bdca-4390-8f8a-bc88ddc1eb51/)
-lists Java 17/21, PostgreSQL, jOOQ, Flyway and Spock, and discusses lean frameworks,
-TDD and DDD (checked 2026-09-30). We select relevant practices for this Java 21
-project; these skills do not reproduce confidential Revolut standards. Gradle,
-Javalin, HikariCP, Testcontainers and ArchUnit remain this repository's choices.
-Redis, Kubernetes and cloud infrastructure mentioned in that vacancy do not
-expand our current scope. Observability checks cover safe diagnostics and useful
-failure evidence without introducing a new monitoring stack.
+The skills support Java 21, PostgreSQL, jOOQ, Flyway and Spock, with focused
+frameworks, TDD and explicit domain boundaries. Gradle, Javalin, HikariCP,
+Testcontainers and ArchUnit provide build, HTTP, pooling and verification.
+Redis, Kubernetes and a message broker remain outside the current scope.
+Observability guidance covers safe diagnostics and useful failure evidence
+without introducing a separate monitoring stack.

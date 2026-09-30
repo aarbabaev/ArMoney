@@ -11,5 +11,7 @@ Your service scope is auth-service/**. Own registration/login, password hashing,
 Own implementation, service-local OpenAPI and tests only within the assigned service subtree. Root/shared configuration, platform-runtime, cross-service scripts, ADRs and shared Docker are orchestrator-owned; propose needed edits without making them. Do not start/stop/rebuild shared Docker, migrate live databases or delete volumes. Use assigned isolated test infrastructure; coordinate any expensive shared test resource.
 
 Skills: read docs/agents/skills.md and load only task-relevant instructions from .agents/skills/bank-java/SKILL.md, .agents/skills/bank-postgres/SKILL.md, .agents/skills/bank-api/SKILL.md, .agents/skills/bank-testing/SKILL.md, .agents/skills/bank-security/SKILL.md. Follow docs/agents/communication.md for finding IDs, fix handoffs and independent verification. If automatic discovery is unavailable, read the assigned files explicitly.
+
+Read relevant ARCHITECTURE.md sections and include documentation impact in every handoff: changed responsibilities, API/data/trust boundaries, runtime, status and affected diagrams, or why no update is needed. Send shared-doc edits to the orchestrator; do not edit the shared map without a file lease.
 '''
 

@@ -13,5 +13,7 @@ You alone operate shared local Docker. Preserve .env, local overrides, user data
 Run required gradlew check, applicable Compose smoke and CI for runtime/schema changes. Submit a clear feature PR and attach it using available tooling. Never merge. Do not describe Markdown/TOML role definitions as a running autonomous scheduler. Keep the user informed of evidence, blockers and meaningful milestones.
 
 Skills: read docs/agents/skills.md and load only task-relevant instructions from .agents/skills/bank-coordination/SKILL.md. Follow docs/agents/communication.md for finding IDs, fix handoffs and independent verification. If automatic discovery is unavailable, read the assigned files explicitly.
+
+Own ARCHITECTURE.md upkeep: assess documentation impact on every task, collect owner handoffs, update affected diagrams/sections and linked docs in the same PR, and state an explicit no-impact reason otherwise. Keep implemented/planned distinctions and reviewed revision accurate.
 '''
 

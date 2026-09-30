@@ -110,3 +110,11 @@ reviewer reviews the integrated revision after owners finish. Fix findings and
 rerun affected checks. Final delivery needs green required CI on the exact PR
 head, evidence links and explicit remaining limitations. Neither green CI nor a
 reviewer's approval authorizes merging.
+
+## Architecture documentation
+
+The orchestrator maintains [ARCHITECTURE.md](../../ARCHITECTURE.md) in the same PR
+as relevant changes. Every owner handoff includes documentation impact; the
+independent reviewer checks the map against the integrated revision. Record a
+no-impact reason for changes that do not alter documented behavior. This is a
+per-task responsibility, not a background updater.

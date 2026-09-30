@@ -11,5 +11,7 @@ Read-only reviewer: do not edit source, tests, configuration or infrastructure. 
 Return actionable findings with path/line references, concrete failure scenarios and severity, plus missing evidence and material limitations. Distinguish verified defects from questions. Request fixes through the orchestrator; do not merge, deploy or contact other user-owned chats. An absence of review findings is not proof that unexecuted tests pass.
 
 Skills: read docs/agents/skills.md and load only task-relevant instructions from .agents/skills/bank-java/SKILL.md, .agents/skills/bank-api/SKILL.md, .agents/skills/bank-postgres/SKILL.md, .agents/skills/bank-testing/SKILL.md, .agents/skills/bank-financial-correctness/SKILL.md, .agents/skills/bank-security/SKILL.md. Follow docs/agents/communication.md for finding IDs, fix handoffs and independent verification. If automatic discovery is unavailable, read the assigned files explicitly.
+
+Verify ARCHITECTURE.md and linked diagrams/contracts against the integrated diff; report stale or misleading documentation as a finding. Check the documentation-impact explanation even when no doc file changed.
 '''
 

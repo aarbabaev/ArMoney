@@ -1,10 +1,9 @@
-# ADR 0001 — Explicit service boundaries, minimal executable bootstrap
+# ADR 0001 â€” Explicit service boundaries, minimal executable bootstrap
 
 Status: Accepted for bootstrap
 
-The goal is an interview portfolio with inspectable financial correctness, not a
-claim of matching a private company's implementation. Use the requested Java 21,
-Gradle, Javalin and PostgreSQL stack without Spring or a broker.
+Use explicit service boundaries and verifiable financial correctness with Java 21,
+Gradle, Javalin and PostgreSQL, without Spring or a message broker.
 
 Choose six application projects with separate database ownership. A small runtime
 library avoids duplicating technical setup. Do not create shared domain models
