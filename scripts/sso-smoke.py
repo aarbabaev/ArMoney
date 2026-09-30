@@ -132,7 +132,6 @@ try:
         expect(400, redeem(code, secrets.token_urlsafe(32)))
         code, verifier = authorize(page, prompt="none")
         oidc = expect(200, redeem(code, verifier))
-        expect(400, redeem(code, verifier))  # A code is single-use.
         expect(400, request("POST", discovery["token_endpoint"], {
             "client_id": "armoney-ios", "grant_type": "password", "username": username,
             "password": password}, form=True))
@@ -163,6 +162,10 @@ try:
         second_context.close()
         expect(204, request("POST", PUBLIC + "/v1/auth/logout", token=token))
         expect(401, request("GET", PUBLIC + "/v1/auth/me", token=token))
+        # Keycloak revokes the provider session on code replay. Run this destructive
+        # negative case after valid-session acceptance, then assert fail-closed exchange.
+        expect(400, redeem(code, verifier))
+        expect(401, request("POST", PUBLIC + "/v1/auth/sso", {"access_token": oidc["access_token"]}))
         context.close()
         browser.close()
 finally:
