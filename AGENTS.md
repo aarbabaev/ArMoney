@@ -26,3 +26,10 @@
 - Scope client idempotency keys to the authenticated requester and compare payload hashes.
 - Fail closed for identity/authorization errors. Do not trust user IDs passed by a client.
 - Do not log passwords, tokens, full request bodies or personal data.
+
+## Agent team
+- For implementation tasks involving multiple services, use the primary chat as bank_orchestrator and delegate scoped work to the affected service owners plus independent QA/review. Single-module trivial edits do not require the whole team.
+- Read docs/agents/workflow.md and the relevant .codex/agents role before dispatch. Use native subagents, not separate user-owned chats. If named roles are unavailable, pass the role instructions in the task message and disclose this fallback.
+- The orchestrator assigns disjoint writable paths and owns shared files. Workers must not modify other services, publish branches, merge, or delegate recursively without an explicit coordination assignment.
+- Serialize builds in a shared directory. Only the orchestrator may operate the user's persistent Docker stack. CI-only funding fixtures must never run on it.
+- Require independent review of the integrated revision and actual test evidence. Role instructions are not filesystem security boundaries or a background execution service.
