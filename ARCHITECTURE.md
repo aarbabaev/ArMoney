@@ -371,6 +371,8 @@ flowchart LR
     H["User"] --> O["bank_orchestrator"]
     O --> G["gateway_owner"]
     O --> A["auth_owner"]
+    O --> IOS["ios_owner"]
+    O --> SSO["sso_owner"]
     O --> U["user_owner"]
     O --> W["wallet_owner"]
     O --> P["payment_owner"]
@@ -392,6 +394,8 @@ flowchart LR
 | bank_orchestrator | Assignment, integration, shared config/runtime, Compose/CI, this documentation, PR |
 | gateway_owner | app-gateway: routes, public contract, identity |
 | auth_owner | auth-service: credentials, sessions, limits |
+| ios_owner | ios: native SwiftUI client, gateway integration, browser authentication and tests |
+| sso_owner | sso-service: Keycloak/OIDC configuration; auth SSO adapter files only under an explicitly transferred lease |
 | user_owner | user-service: profiles |
 | wallet_owner | wallet-service: metadata/lifecycle, durable provisioning |
 | payment_owner | payment-service: planned orchestration/idempotency |
@@ -412,6 +416,8 @@ Roles: `.codex/agents`; skills: `.agents/skills`.
 | bank-java | Java 21, Gradle, layer boundaries, and resources |
 | bank-postgres | jOOQ/HikariCP, Flyway, transactions/locks/retries |
 | bank-api | OpenAPI, Javalin, identity, bounded HTTP |
+| bank-ios | Native SwiftUI iOS 18+, gateway integration, Keychain and device validation |
+| bank-sso | Keycloak OIDC, authorization code/PKCE, identity mapping and session migration |
 | bank-testing | Spock, Testcontainers, ArchUnit, evidence |
 | bank-financial-correctness | Postings, balances, concurrency, idempotency |
 | bank-security | Security review and fix verification |
@@ -541,3 +547,4 @@ contracts on demand. [Audit](docs/agents/context-efficiency.md) records measured
 text reductions, not estimated billing savings. Fresh scoped worker contexts and
 bounded evidence replace full-history copies for independent tasks. macOS CI
 compiles/tests Swift; disposable browser CI verifies Keycloak code/PKCE and SSO.
+
