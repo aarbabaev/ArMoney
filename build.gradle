@@ -16,7 +16,10 @@ subprojects {
         testImplementation 'org.testcontainers:postgresql:1.21.3'
         testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     }
-    tasks.withType(Test).configureEach { useJUnitPlatform() }
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+        testLogging { exceptionFormat = 'full' }
+    }
     tasks.register('integrationTest', Test) {
         description = 'Runs PostgreSQL integration specifications; requires Docker.'
         group = 'verification'
