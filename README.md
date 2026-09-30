@@ -57,6 +57,10 @@ and [M1 delivery plan](docs/m1.md).
 
 ## Verification and contribution
 
+For development with service-owner agents, an orchestrator and independent QA,
+see [the agent team workflow](docs/agents/workflow.md). Roles are on-demand Codex
+configuration; they do not start an unattended service.
+
 CI compiles on Java 21, runs unit/architecture and PostgreSQL integration tests,
 builds all images, and probes all six services on the private Compose network.
 Missing Docker is a test failure, never a silent skip. Reports are uploaded.
