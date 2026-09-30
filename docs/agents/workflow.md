@@ -118,3 +118,11 @@ as relevant changes. Every owner handoff includes documentation impact; the
 independent reviewer checks the map against the integrated revision. Record a
 no-impact reason for changes that do not alter documented behavior. This is a
 per-task responsibility, not a background updater.
+
+## Pull request base
+
+Target `main` for all subsequent pull requests. The consolidated integration PR
+moves the completed slices from the former bootstrap branch into main for owner
+review. Start future feature branches from the latest main unless the user
+explicitly chooses a different starting point; do not continue using the bootstrap
+branch as the default integration target. PR creation never authorizes a merge.

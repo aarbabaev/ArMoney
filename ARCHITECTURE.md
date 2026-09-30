@@ -369,6 +369,12 @@ Records/checkpoints: [protocol](docs/agents/communication.md).
 
 ## Verification and delivery
 
+All new PRs target `main`. The consolidated integration PR carries the completed
+slices from the former bootstrap branch into main for owner review. Future feature
+branches start from the latest main unless the user specifies otherwise; the
+bootstrap branch is no longer the default integration target. No direct pushes
+to main or automatic merges.
+
 ```mermaid
 flowchart LR
     T["Task + contract"] --> DEV["Implementation"]

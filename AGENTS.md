@@ -1,6 +1,7 @@
 # Repository instructions
 
 ## Delivery
+- Target main for this integration PR and all subsequent PRs. Start future feature branches from the latest main unless the user explicitly specifies another starting point. Do not use bootstrap/m1-p2p-backend as an ongoing integration branch. Never push directly to main or merge without explicit owner authorization.
 - Use feature branches and PRs. Never push directly to main or merge without explicit owner authorization.
 - Keep the change minimal and describe limitations honestly.
 - Run ./gradlew check and the Compose smoke test for runtime/schema changes.
