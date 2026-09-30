@@ -1,0 +1,9 @@
+dependencies {
+    api 'io.javalin:javalin:7.2.3'
+    api 'com.zaxxer:HikariCP:6.3.3'
+    api 'org.jooq:jooq:3.19.25'
+    implementation 'org.flywaydb:flyway-core:11.13.2'
+    runtimeOnly 'org.flywaydb:flyway-database-postgresql:11.13.2'
+    runtimeOnly 'org.postgresql:postgresql:42.7.8'
+    runtimeOnly 'org.slf4j:slf4j-simple:2.0.17'
+}

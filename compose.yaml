@@ -1,0 +1,147 @@
+name: arman-bank
+services:
+  app-gateway:
+    build:
+      context: .
+      args:
+        SERVICE: app-gateway
+    ports: ["127.0.0.1:8080:8080"]
+    networks: [bank]
+  auth-service:
+    build:
+      context: .
+      args:
+        SERVICE: auth-service
+    environment:
+      DB_URL: jdbc:postgresql://auth-db:5432/bank
+      DB_USER: bank
+      DB_PASSWORD: ${LOCAL_DB_PASSWORD:?Copy .env.example to .env and set LOCAL_DB_PASSWORD}
+    depends_on:
+      auth-db:
+        condition: service_healthy
+    networks: [bank]
+  auth-db:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: bank
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?Set LOCAL_DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bank -d bank"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    volumes: [auth-db:/var/lib/postgresql/data]
+    networks: [bank]
+  user-service:
+    build:
+      context: .
+      args:
+        SERVICE: user-service
+    environment:
+      DB_URL: jdbc:postgresql://user-db:5432/bank
+      DB_USER: bank
+      DB_PASSWORD: ${LOCAL_DB_PASSWORD:?Copy .env.example to .env and set LOCAL_DB_PASSWORD}
+    depends_on:
+      user-db:
+        condition: service_healthy
+    networks: [bank]
+  user-db:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: bank
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?Set LOCAL_DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bank -d bank"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    volumes: [user-db:/var/lib/postgresql/data]
+    networks: [bank]
+  wallet-service:
+    build:
+      context: .
+      args:
+        SERVICE: wallet-service
+    environment:
+      DB_URL: jdbc:postgresql://wallet-db:5432/bank
+      DB_USER: bank
+      DB_PASSWORD: ${LOCAL_DB_PASSWORD:?Copy .env.example to .env and set LOCAL_DB_PASSWORD}
+    depends_on:
+      wallet-db:
+        condition: service_healthy
+    networks: [bank]
+  wallet-db:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: bank
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?Set LOCAL_DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bank -d bank"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    volumes: [wallet-db:/var/lib/postgresql/data]
+    networks: [bank]
+  payment-service:
+    build:
+      context: .
+      args:
+        SERVICE: payment-service
+    environment:
+      DB_URL: jdbc:postgresql://payment-db:5432/bank
+      DB_USER: bank
+      DB_PASSWORD: ${LOCAL_DB_PASSWORD:?Copy .env.example to .env and set LOCAL_DB_PASSWORD}
+    depends_on:
+      payment-db:
+        condition: service_healthy
+    networks: [bank]
+  payment-db:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: bank
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?Set LOCAL_DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bank -d bank"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    volumes: [payment-db:/var/lib/postgresql/data]
+    networks: [bank]
+  ledger-service:
+    build:
+      context: .
+      args:
+        SERVICE: ledger-service
+    environment:
+      DB_URL: jdbc:postgresql://ledger-db:5432/bank
+      DB_USER: bank
+      DB_PASSWORD: ${LOCAL_DB_PASSWORD:?Copy .env.example to .env and set LOCAL_DB_PASSWORD}
+    depends_on:
+      ledger-db:
+        condition: service_healthy
+    networks: [bank]
+  ledger-db:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: bank
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?Set LOCAL_DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bank -d bank"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    volumes: [ledger-db:/var/lib/postgresql/data]
+    networks: [bank]
+networks:
+  bank:
+volumes:
+  auth-db:
+  user-db:
+  wallet-db:
+  payment-db:
+  ledger-db:

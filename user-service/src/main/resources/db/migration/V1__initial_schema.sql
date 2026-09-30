@@ -1,0 +1,6 @@
+CREATE TABLE profiles (
+    id UUID PRIMARY KEY,
+    identity_id UUID NOT NULL UNIQUE,
+    display_name VARCHAR(100) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
