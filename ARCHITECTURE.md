@@ -1,7 +1,7 @@
-# ArMoney â€” System and Agent Team Architecture
+# ArMoney  -  System and Agent Team Architecture
 
 > The main project map. Checked against source code on **2026-09-30**, source revision
-> `4ef94d8018de8594055d174750b776b8163c5a56` on `main`, plus the native iOS and SSO changes in this PR.
+> `e83d8f0325cb36c4c77507146c8a67ebbeecd441` on `main`, plus the setup fixes in this PR.
 > Describes the source code, not the guaranteed state of running containers.
 
 ## Navigation
@@ -67,7 +67,7 @@ flowchart TB
 | Module | Responsibility | Boundary |
 | --- | --- | --- |
 | app-gateway | External routes, session validation, header sanitization | No database or financial logic |
-| auth-service | Credentials, sessions, limits | Does not own profiles |
+| auth-service | Credentials, SSO identity mapping, sessions, limits | Does not own profiles |
 | user-service | Profile for an auth identity | Does not issue tokens |
 | wallet-service | Owner, currency, lifecycle and durable ledger mapping | Not the source of balances |
 | payment-service | Planned transfer workflow/client idempotency | Business operations are not implemented yet |
@@ -123,7 +123,7 @@ Restarting does not require deleting volumes. See [README](README.md) and [IDEA]
 ## Native iOS and SSO
 
 The optional overlay adds an HTTPS edge and a Keycloak-owned PostgreSQL database.
-Only the edge is bound to the selected LAN interface; the existing gateway binding
+Caddy supplies default SNI from ARMONEY_HOST for clients using numeric IP origins; certificate name and CA validation still apply. Only the edge is bound to the selected LAN interface; the existing gateway binding
 remains loopback. Keycloak administration and management paths are not exposed.
 
 ```mermaid
@@ -177,6 +177,7 @@ Contracts are in each service's `src/main/resources/openapi.yaml`.
 | Access | Method and path | Purpose |
 | --- | --- | --- |
 | Gateway | POST `/v1/auth/register`, POST `/v1/auth/login` | Registration / session |
+| Gateway | POST `/v1/auth/sso` | Provider-token exchange; requires optional SSO configuration |
 | Gateway + Bearer | GET `/v1/auth/me`, POST `/v1/auth/logout` | Identity / revocation |
 | Gateway + Bearer | GET / PUT `/v1/users/me` | Own profile |
 | Gateway + Bearer | GET / POST `/v1/wallets` | Own wallets |
@@ -236,7 +237,7 @@ flowchart LR
 
 | Database | Tables / guarantees |
 | --- | --- |
-| auth-db | `identities`: unique email, password_hash; `sessions`: token_hash PK, FK identity_id, expires_at; `auth_attempts`: persistent limits |
+| auth-db | `identities`: nullable email/password_hash pair for SSO-only principals, unique non-null email; `external_identities`: (issuer, subject) PK and unique local identity mapping; `sessions`: token_hash PK, FK identity_id, expires_at; `auth_attempts`: persistent limits |
 | user-db | `profiles`: unique identity_id, display_name |
 | wallet-db | `wallets`: unique(owner_id,currency), EUR/USD/GBP, ACTIVE/CLOSED, PENDING/READY, unique ledger_account_id, durable retry lease; no balance |
 | payment-db | `payments`: unique(requester_id,idempotency_key), request_hash, wallet IDs, amount/currency, PENDING/COMPLETED/REJECTED; schema only |
@@ -249,7 +250,7 @@ Exact columns, indexes, and constraints are defined in service migrations; publi
 migrations are append-only. The current DB owner has administrative capabilities:
 triggers do not protect against an administrator. A restricted runtime DB role is future work.
 
-### Atomic posting â€” implemented
+### Atomic posting  -  implemented
 
 ```mermaid
 sequenceDiagram
@@ -290,7 +291,7 @@ POST: 200 POSTED, 409 rejection/conflict; outcome GET: 200 even for a persisted 
 There is no funding API; CLEARING fixtures are used only in isolated tests.
 Details: [ledger](docs/ledger.md), [ADR 0005](docs/adr/0005-atomic-ledger.md).
 
-### Durable wallet provisioning â€” implemented
+### Durable wallet provisioning  -  implemented
 
 POST /v1/wallets commits intent and returns 202 for ACTIVE/PENDING, or 200 for READY
 and existing CLOSED wallets. GET includes provisioning_status and nullable
@@ -469,10 +470,9 @@ Records/checkpoints: [protocol](docs/agents/communication.md).
 
 ## Verification and delivery
 
-All new PRs target `main`. The consolidated integration PR carries the completed
-slices from the former bootstrap branch into main for owner review. Future feature
-branches start from the latest main unless the user specifies otherwise; the
-bootstrap branch is no longer the default integration target. No direct pushes
+All new PRs target `main`, which contains the integrated backend and native iOS/SSO
+slices. Feature branches start from the latest main unless the user specifies
+otherwise; the former bootstrap branch is no longer the default integration target. No direct pushes
 to main or automatic merges.
 
 ```mermaid
@@ -496,6 +496,8 @@ flowchart LR
 | Auth/onboarding smoke in CI | Auth, profile, wallets through HTTP |
 | Provisioning smoke in CI | Concurrent retries, ledger outage, wallet restart and unique zero-balance account mapping |
 | Ledger smoke in CI | Private posting with synthetic funds |
+| SSO browser smoke in CI | Disposable Keycloak authorization code/PKCE and gateway exchange |
+| macOS iOS CI | Native compilation and simulator unit tests; not physical-device acceptance |
 
 On Windows, use `.\gradlew.bat`. CI: [.github/workflows/ci.yml](.github/workflows/ci.yml).
 Fixture funding and `down --volumes` are only for disposable CI environments, never user

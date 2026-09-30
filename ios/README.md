@@ -7,7 +7,7 @@ Implemented: browser SSO, profile creation/editing, owner-scoped wallet listing 
 ## Open and configure on a Mac
 
 1. Install Xcode 16 or newer with an iOS 18+ simulator runtime. Open `ios/ArMoney.xcodeproj`, select the shared **ArMoney** scheme and **iPhone 16 Pro Max** destination.
-2. Copy `ios/Config/Local.xcconfig.example` to `ios/Config/Local.xcconfig` (ignored by Git). Set `BANK_ORIGIN` to the exact HTTPS edge origin, for example `https:$(SLASH)$(SLASH)bank-host.local:8443`. The slash substitution is necessary because xcconfig treats `//` as a comment. This one origin supplies both `/v1/*` and `/sso/realms/armoney`. It is build configuration, not an arbitrary in-app endpoint selector.
+2. Copy `ios/Config/Local.xcconfig.example` to `ios/Config/Local.xcconfig` (ignored by Git). Set `BANK_ORIGIN` to the exact HTTPS edge origin, for example `https:$(SLASH)$(SLASH)bank-host.local:8443`. The slash substitution is necessary because xcconfig treats `//` as a comment. This one origin supplies both `/v1/*` and `/sso/realms/armoney`. It is build configuration, not an arbitrary in-app endpoint selector. Keep Local.xcconfig alongside Base.xcconfig in ios/Config: Base includes it by filename. It does not need to appear in the Xcode navigator, belong to a target or be copied into app resources. Reserved .invalid example hosts are rejected with a configuration error.
 3. Make that hostname resolvable and reachable from the Mac and iPhone on the same LAN. The certificate name and the Keycloak issuer must match it. `localhost` on a physical iPhone means the iPhone itself; do not use the Windows backend's `localhost` URL. A simulator can use the Mac's network, but a backend on Windows still needs its reachable LAN hostname. Do not expose the private backend service ports directly.
 4. For Caddy's development internal CA, obtain its **public root certificate only** from the backend owner. Verify its fingerprint through a trusted channel. Trust that CA in macOS Keychain Access. Install the public root certificate on the iPhone and enable its full trust in Settings → General → About → Certificate Trust Settings. The simulator has a separate trust store: install the same root there, or use `xcrun simctl keychain booted add-root-cert /path/to/root.crt`. Never distribute the CA private key. The app uses ordinary system TLS validation; no ATS exception or certificate-validation bypass is installed.
 5. Run. Allow local network access when prompted. Sign-in opens Apple's authentication browser and can reuse its SSO cookies. Configure providers and test identities on Keycloak, not inside the app.
@@ -34,6 +34,43 @@ xcodebuild -project ios/ArMoney.xcodeproj -scheme ArMoney \
 
 Use `xcrun simctl list devices available` to find an installed iOS 18+ destination if that exact device is missing. Simulator tests do not require signing. Unit tests cover the RFC 7636 PKCE vector, secure-random shape/uniqueness, callback rejection, origin validation, expiry/JSON decoding, pending/ready wallets, bearer API requests and 401/503/offline failures through an immutable URLProtocol fixture. They do not claim real provider or device coverage.
 
-Source was authored on Windows; local Xcode build, simulator layout and physical-device SSO remain unverified until the macOS CI/device checks run. Before device acceptance, exercise: browser login cancellation; fresh provider login and browser SSO reuse; profile 404 onboarding; duplicate wallet taps and retry after offline creation; pending-to-ready refresh; expiry/401; offline retry; server plus browser logout; large Dynamic Type and VoiceOver on iPhone 16 Pro Max. The UI disables commands during an operation and uses real backend responses for wallet state. Public endpoints are unchanged apart from the agreed SSO exchange.
+The macOS CI job builds the app and runs simulator unit tests; consult the exact revision and job result before claiming it passed. Those tests do not establish interactive simulator layout, real browser SSO or physical-device acceptance. Windows-side HTTPS and discovery checks likewise do not establish device acceptance. Before device acceptance, exercise: browser login cancellation; fresh provider login and browser SSO reuse; profile 404 onboarding; duplicate wallet taps and retry after offline creation; pending-to-ready refresh; expiry/401; offline retry; server plus browser logout; large Dynamic Type and VoiceOver on iPhone 16 Pro Max. The UI disables commands during an operation and uses real backend responses for wallet state. Public endpoints are unchanged apart from the agreed SSO exchange.
 
 Reference APIs: [Apple authentication sessions](https://developer.apple.com/documentation/authenticationservices/aswebauthenticationsession), [browser cookie behavior](https://developer.apple.com/documentation/authenticationservices/aswebauthenticationsession/prefersephemeralwebbrowsersession), [Keychain accessibility](https://developer.apple.com/documentation/security/ksecattraccessiblewhenunlockedthisdeviceonly), [Keycloak logout](https://www.keycloak.org/docs/latest/server_admin/#_oidc-logout).
+
+## Configuration and simulator troubleshooting
+
+If the app asks for a valid origin, check the file on disk first. From the repository
+root on the Mac, create the local file once, then edit its BANK_ORIGIN value:
+
+```sh
+cp ios/Config/Local.xcconfig.example ios/Config/Local.xcconfig
+```
+
+Do not overwrite an existing local configuration. The value must be the same
+HTTPS origin used by the edge certificate and Keycloak issuer, with port 8443,
+without `/v1` or `/sso` appended. Keep `https:$(SLASH)$(SLASH)` in xcconfig; literal
+`https://` is parsed as a comment. Rebuild after changes: this is a bundled build
+setting, not a live setting. To inspect the effective value:
+
+```sh
+xcodebuild -project ios/ArMoney.xcodeproj -scheme ArMoney -showBuildSettings | grep BANK_ORIGIN
+```
+
+If `xcrun simctl` is unavailable, the selected developer directory may be the
+standalone Command Line Tools rather than full Xcode. Check and select the actual
+installed Xcode path, then launch Xcode to complete its first-run setup:
+
+```sh
+xcode-select -p
+sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+xcrun simctl list devices available
+```
+
+Boot the intended simulator before `xcrun simctl keychain booted add-root-cert`.
+Trusting the CA only in the Mac keychain does not trust it in the simulator. If
+several simulators are booted, use the intended device UUID instead of `booted`.
+A certificate error needs correct name/CA trust, never an app TLS bypass. A timeout
+needs LAN reachability, the Windows Private-profile firewall and edge binding
+checks in [the backend runbook](../docs/sso-and-ios.md). An API 401 requires a fresh
+login; wallet PENDING requires ledger recovery/refresh and is not financial success.

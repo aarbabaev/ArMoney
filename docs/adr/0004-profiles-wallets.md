@@ -2,6 +2,8 @@
 
 Status: Accepted for local M1
 
+Current-status note: The metadata-only scope below was extended by [ADR 0007](0007-wallet-ledger-provisioning.md): wallets now provision ledger accounts and return 202 while pending, or 200 when ready/already closed.
+
 Gateway revalidates the opaque session using auth /me on every protected request.
 It forwards only its internal key, a verified X-Identity-Id and an allowlisted JSON
 body to user/wallet. Caller-supplied identity/service headers are discarded.

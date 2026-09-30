@@ -33,6 +33,29 @@ final class ArMoneyTests: XCTestCase {
             XCTAssertThrowsError(try Configuration(origin: value))
         }
     }
+    func testConfigurationRejectsInvalidPlaceholderBeforeLogin() {
+        for origin in [
+            "https://bank.example.invalid:8443",
+            "https://BANK.EXAMPLE.INVALID:8443",
+            "https://bank.example.invalid.:8443",
+            "https://Bank.Example.InVaLiD.:8443",
+            "https://invalid", "https://INVALID."
+        ] {
+            XCTAssertThrowsError(try Configuration(origin: origin), origin) { error in
+                XCTAssertEqual(error as? AppError, .configuration)
+                XCTAssertTrue(error.localizedDescription.contains("Config/Local.xcconfig"))
+            }
+        }
+    }
+    func testConfigurationRetainsHTTPSLANOrigins() throws {
+        for origin in [
+            "https://bank.local:8443", "https://bank.local.:8443",
+            "https://bank-host:8443", "https://192.168.1.10:8443",
+            "https://[fd00::1]:8443", "https://invalid.bank.local:8443"
+        ] {
+            XCTAssertEqual(try Configuration(origin: origin).origin.absoluteString, origin)
+        }
+    }
     @MainActor func testSessionDecodingAndExpiry() throws {
         let valid = try HTTPClient.decode(BankSession.self, data: Data("""
         {"access_token":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","token_type":"Bearer","expires_in":1800,"expires_at":"2099-01-01T00:00:00.123Z"}
@@ -54,7 +77,7 @@ final class ArMoneyTests: XCTestCase {
     @MainActor func testAPIUsesOpaqueBearerAndJSONContract() async throws {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [FixtureProtocol.self]
-        let api = BankAPI(configuration: try Configuration(origin: "https://fixture.invalid"), http: HTTPClient(session: URLSession(configuration: config)))
+        let api = BankAPI(configuration: try Configuration(origin: "https://fixture.test"), http: HTTPClient(session: URLSession(configuration: config)))
         let data = try await api.request("v1/wallets", token: "opaque-test-session")
         XCTAssertEqual(try HTTPClient.decode(WalletList.self, data: data).wallets.count, 2)
         do {
