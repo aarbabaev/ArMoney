@@ -35,6 +35,7 @@ jobs:
           docker compose up --build -d
           python3 scripts/smoke.py
           python3 scripts/auth-smoke.py
+          python3 scripts/onboarding-smoke.py
       - name: Container diagnostics
         if: failure()
         run: docker compose logs --no-color

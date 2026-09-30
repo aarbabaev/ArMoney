@@ -5,7 +5,7 @@ jOOQ, HikariCP, Spock, Testcontainers and ArchUnit.
 
 This is the foundation for M1, **not a working bank**.
 Identity registration, login, current identity and logout now work through gateway.
-User profiles, wallet creation and P2P execution are future slices.
+Current-user profiles and wallet metadata are implemented. P2P execution remains a future slice.
 No real funds or customer data. No claim that this reproduces Revolut internals.
 
 ## Run
@@ -90,3 +90,10 @@ Do not delete volumes. Local DataGrip port overrides remain compatible.
 `python3 scripts/auth-smoke.py` creates a synthetic identity and tests the complete
 flow through gateway. CI runs this against disposable data. Do not use real
 credentials in tests. See [auth ADR](docs/adr/0003-auth-sessions.md) for limits.
+
+## Profiles and wallets
+
+See [Postman walkthrough and IDEA settings](docs/onboarding.md) and [ADR 0004](docs/adr/0004-profiles-wallets.md).
+Profile and wallet routes require a valid session through gateway. Wallets contain metadata only, not balances.
+Gateway also requires USER_BASE_URL and WALLET_BASE_URL (provided by Compose).
+Run `python3 scripts/onboarding-smoke.py` after updating the containers.

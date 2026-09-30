@@ -7,6 +7,8 @@ services:
         SERVICE: app-gateway
     environment:
       AUTH_BASE_URL: http://auth-service:8080
+      USER_BASE_URL: http://user-service:8080
+      WALLET_BASE_URL: http://wallet-service:8080
       INTERNAL_AUTH_KEY: ${INTERNAL_AUTH_KEY:?Set INTERNAL_AUTH_KEY in .env}
     ports: ["127.0.0.1:8080:8080"]
     networks: [bank]
@@ -43,6 +45,7 @@ services:
       args:
         SERVICE: user-service
     environment:
+      INTERNAL_AUTH_KEY: ${INTERNAL_AUTH_KEY:?Set INTERNAL_AUTH_KEY in .env}
       DB_URL: jdbc:postgresql://user-db:5432/bank
       DB_USER: bank
       DB_PASSWORD: ${LOCAL_DB_PASSWORD:?Copy .env.example to .env and set LOCAL_DB_PASSWORD}
@@ -69,6 +72,7 @@ services:
       args:
         SERVICE: wallet-service
     environment:
+      INTERNAL_AUTH_KEY: ${INTERNAL_AUTH_KEY:?Set INTERNAL_AUTH_KEY in .env}
       DB_URL: jdbc:postgresql://wallet-db:5432/bank
       DB_USER: bank
       DB_PASSWORD: ${LOCAL_DB_PASSWORD:?Copy .env.example to .env and set LOCAL_DB_PASSWORD}
