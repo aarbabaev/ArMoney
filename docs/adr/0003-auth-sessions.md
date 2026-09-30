@@ -46,7 +46,7 @@ has connect/request timeouts. Auth outages return 503, never unauthenticated acc
 
 ## Limits
 
-This is a localhost educational deployment. HTTP inside Compose and one shared
+The current deployment binds public access to localhost. HTTP inside Compose and one shared
 service key are interim choices; use TLS/mTLS or a managed workload identity
 before remote deployment. Password recovery, email verification, MFA, breached
 password checks, audit events, key rotation, production roles and session policy

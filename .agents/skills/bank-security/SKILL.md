@@ -7,7 +7,7 @@ description: Review or fix Arman Bank API, identity, secret, dependency and depl
 
 Read the assigned revision, AGENTS.md and docs/agents/workflow.md. Work on this
 repository and explicitly allocated disposable fixtures. Source review is the
-default; do not scan Revolut, public hosts, or the user's persistent stack.
+default; do not scan third-party systems, public hosts, or the user's persistent stack.
 This skill is guidance, not an installed scanner or certification.
 
 Trace the changed entry point through gateway, service and database. Record the

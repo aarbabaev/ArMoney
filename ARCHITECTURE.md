@@ -1,56 +1,56 @@
-# Arman Bank — архитектура системы и команды агентов
+# Arman Bank — System and Agent Team Architecture
 
-> Главная карта проекта. Сверка с кодом: **2026-09-30**, исходная revision
-> `63eee63d695cec0a06108c9dce74ef8a86c97ba7` в `bootstrap/m1-p2p-backend`.
-> Описывает исходники, а не гарантированное состояние запущенных контейнеров.
+> The main project map. Checked against source code on **2026-09-30**, source revision
+> `63eee63d695cec0a06108c9dce74ef8a86c97ba7` on `bootstrap/m1-p2p-backend`.
+> Describes the source code, not the guaranteed state of running containers.
 
-## Навигация
+## Navigation
 
-1. [Готовность и стек](#готовность-и-стек)
-2. [Сервисы и runtime](#сервисы-и-runtime)
-3. [API и авторизация](#api-и-авторизация)
-4. [Данные и ledger](#данные-и-ledger)
-5. [Будущий P2P](#будущий-p2p)
-6. [Команда агентов](#команда-агентов)
-7. [Коммуникация и исправления](#коммуникация-и-исправления)
-8. [Проверки и доставка](#проверки-и-доставка)
-9. [Поддержание актуальности](#поддержание-актуальности)
+1. [Readiness and stack](#readiness-and-stack)
+2. [Services and runtime](#services-and-runtime)
+3. [API and authentication](#api-and-authentication)
+4. [Data and ledger](#data-and-ledger)
+5. [Planned P2P](#planned-p2p)
+6. [Agent team](#agent-team)
+7. [Communication and remediation](#communication-and-remediation)
+8. [Verification and delivery](#verification-and-delivery)
+9. [Keeping documentation current](#keeping-documentation-current)
 
-## Готовность и стек
+## Readiness and stack
 
-Учебный banking backend для обсуждения инженерных решений на интервью.
-**M1 — первый функциональный milestone, пока не завершён:** публичные P2P должны
-корректно работать при повторах, конкуренции и сбоях. Private ledger сам по себе
-не завершает M1. Проект не заявляет соответствие внутренней архитектуре Revolut.
+A banking backend with service boundaries for identity, profiles, wallets, payments, and ledger accounting.
+**M1 is the first functional milestone and is not complete yet:** public P2P transfers
+must behave correctly under retries, concurrency, and failures. The private ledger
+alone does not complete M1.
 
-| Область | Сейчас | Дальше |
+| Area | Current state | Next steps |
 | --- | --- | --- |
-| Auth | Register/login/me/logout, непрозрачные сессии | Production identity controls, MFA, подтверждение email |
-| User | Профиль текущей identity | Развитие по требованиям |
-| Wallet | Метаданные owner/currency, ACTIVE/CLOSED | Надёжное создание ledger account |
-| Ledger | Приватные счета, балансы, атомарные проводки, устойчивые результаты | Интеграция с wallet/payment |
-| Payment | Схема и operational endpoints | P2P orchestration и PENDING recovery |
-| Gateway | Auth, профиль, кошельки | Публичные P2P endpoints |
+| Auth | Register/login/me/logout, opaque sessions | Production identity controls, MFA, email verification |
+| User | Profile for the current identity | Further development as requirements emerge |
+| Wallet | Owner/currency metadata, ACTIVE/CLOSED | Reliable ledger account provisioning |
+| Ledger | Private accounts, balances, atomic postings, durable outcomes | Wallet/payment integration |
+| Payment | Schema and operational endpoints | P2P orchestration and PENDING recovery |
+| Gateway | Auth, profile, wallets | Public P2P endpoints |
 
 Java 21, Gradle multi-project, Javalin, PostgreSQL, Flyway, jOOQ, HikariCP;
 Spock, Testcontainers, ArchUnit; REST/OpenAPI; Docker Compose, GitHub Actions.
-Точные версии: [build.gradle](build.gradle), [runtime build](platform-runtime/build.gradle),
+Exact versions: [build.gradle](build.gradle), [runtime build](platform-runtime/build.gradle),
 [Gradle wrapper](gradle/wrapper/gradle-wrapper.properties), [Compose](compose.yaml).
-Spring, Kafka, Redis, Kubernetes и iOS сейчас не реализованы.
+Spring, Kafka, Redis, Kubernetes, and iOS are not implemented.
 
-## Сервисы и runtime
+## Services and runtime
 
-**Только действующие HTTP-связи.** У ledger пока нет прикладного клиента в других
-сервисах. Payment не вызывает ledger, wallet ещё не создаёт ledger accounts.
+**Only existing HTTP connections are shown.** No other service currently acts as an
+application client of the ledger. Payment does not call ledger, and wallet does not yet create ledger accounts.
 
 ```mermaid
 flowchart TB
-    C["Postman / HTTP-клиент"] -->|"127.0.0.1:8080"| G["app-gateway"]
+    C["Postman / HTTP client"] -->|"127.0.0.1:8080"| G["app-gateway"]
     subgraph NET["Docker network: arman-bank_bank"]
-        G -->|"Auth API / проверка сессии"| A["auth-service"]
-        G -->|"Профиль"| U["user-service"]
-        G -->|"Кошельки"| W["wallet-service"]
-        P["payment-service: заготовка"]
+        G -->|"Auth API / session validation"| A["auth-service"]
+        G -->|"Profile"| U["user-service"]
+        G -->|"Wallets"| W["wallet-service"]
+        P["payment-service: scaffold"]
         L["ledger-service: private API"]
         A --> AD[("auth-db")]
         U --> UD[("user-db")]
@@ -60,22 +60,22 @@ flowchart TB
     end
 ```
 
-| Модуль | Ответственность | Граница |
+| Module | Responsibility | Boundary |
 | --- | --- | --- |
-| app-gateway | Внешние маршруты, session validation, очистка заголовков | Нет БД и финансовой логики |
-| auth-service | Credentials, сессии, limits | Не владеет профилем |
-| user-service | Профиль auth identity | Не выдаёт токены |
-| wallet-service | Владелец, валюта, lifecycle | Не источник баланса |
-| payment-service | Будущий процесс перевода/client idempotency | Бизнес-операции ещё не реализованы |
-| ledger-service | Счета, балансы, неизменяемые парные проводки | Нет публичного funding API |
-| platform-runtime | HTTP lifecycle, DB wiring, migrations, health | Библиотека, не отдельный сервис; без общих бизнес-сущностей |
+| app-gateway | External routes, session validation, header sanitization | No database or financial logic |
+| auth-service | Credentials, sessions, limits | Does not own profiles |
+| user-service | Profile for an auth identity | Does not issue tokens |
+| wallet-service | Owner, currency, lifecycle | Not the source of balances |
+| payment-service | Planned transfer workflow/client idempotency | Business operations are not implemented yet |
+| ledger-service | Accounts, balances, immutable paired postings | No public funding API |
+| platform-runtime | HTTP lifecycle, DB wiring, migrations, health | A library, not a separate service; no shared business entities |
 
-### Границы кода
+### Code boundaries
 
 ```mermaid
 flowchart LR
-    HTTP["HTTP adapters / Javalin"] --> APP["Application use cases и ports"]
-    APP --> DOMAIN["Domain: JDK и собственные типы"]
+    HTTP["HTTP adapters / Javalin"] --> APP["Application use cases and ports"]
+    APP --> DOMAIN["Domain: JDK and own types"]
     SQL["Persistence adapter / jOOQ"] --> PORTS["Application ports"]
     MAIN["Main: wiring"] --> HTTP
     MAIN --> APP
@@ -84,189 +84,190 @@ flowchart LR
     SQL --> RT
 ```
 
-Это правило организации use cases, а не обещание наличия всех слоёв в каждой
-заготовке. Порты вводятся для реальных зависимостей. Сервисы не импортируют Java-код
-друг друга и не читают чужие базы. ArchUnit проверяет архитектурные ограничения.
+This is a rule for organizing use cases, not a claim that every scaffold contains all
+layers. Ports are introduced for real dependencies. Services do not import each other's
+Java code or read each other's databases. ArchUnit checks architectural constraints.
 
-### Контейнеры и локальная среда
+### Containers and local environment
 
 ```mermaid
 flowchart LR
     SRC["Source + Gradle wrapper"] --> BUILD["Docker build: JDK 21"]
-    BUILD --> DIST["installDist сервиса"]
-    DIST --> RUN["JRE 21 / пользователь bank"]
-    RUN --> PG["PostgreSQL своего сервиса"]
+    BUILD --> DIST["Service installDist"]
+    DIST --> RUN["JRE 21 / bank user"]
+    RUN --> PG["Service-owned PostgreSQL"]
     PG --> VOL["Persistent volume"]
-    ENV["Локальная .env"] -->|"Compose подставляет значения"| RUN
+    ENV["Local .env"] -->|"Compose substitutes values"| RUN
 ```
 
-Внутри Compose сервисы слушают 8080, PostgreSQL — 5432. Базовый Compose публикует
-только gateway на loopback; пять БД имеют отдельные volumes. Flyway выполняется
-при создании DB wiring до открытия HTTP listener. Ошибка миграции блокирует старт.
+Inside Compose, services listen on 8080 and PostgreSQL on 5432. Base Compose publishes
+only the gateway on loopback; the five databases have separate volumes. Flyway runs
+while DB wiring is created, before the HTTP listener opens. Migration failure prevents startup.
 
-Переменные: `PORT`, `DB_URL`, `DB_USER`, `DB_PASSWORD`; у защищённых внутренних API —
-`INTERNAL_AUTH_KEY`; у gateway — `AUTH_BASE_URL`, `USER_BASE_URL`, `WALLET_BASE_URL`.
-Секреты берутся из локальной конфигурации, в документацию их значения не попадают.
-Обычный запуск Java **не читает `.env` автоматически**: в IDEA нужно настроить
-environment variables/env-файл; Compose использует свой механизм подстановки.
+Variables: `PORT`, `DB_URL`, `DB_USER`, `DB_PASSWORD`; protected internal APIs use
+`INTERNAL_AUTH_KEY`; the gateway uses `AUTH_BASE_URL`, `USER_BASE_URL`, `WALLET_BASE_URL`.
+Secrets come from local configuration; their values must not appear in documentation.
+A regular Java launch **does not read `.env` automatically**: configure environment
+variables/an env file in IDEA; Compose uses its own substitution mechanism.
 
-Локальный пользовательский `compose.override.yaml` открывает DataGrip на
+The user's local `compose.override.yaml` exposes databases to DataGrip on
 `127.0.0.1`: auth **5433**, user **5434**, wallet **5435**, payment **5436**, ledger
-**5437**. Это не часть гарантированной конфигурации нового clone — сверяйте свой
-override. Во всех контейнерах БД и пользователь называются `bank`; пароль локальный.
-Перезапуск не требует удаления volumes. См. [README](README.md) и [IDEA](docs/onboarding.md).
+**5437**. This is not guaranteed configuration for a fresh clone: check your own
+override. All database containers use `bank` as the database and user name; the password is local.
+Restarting does not require deleting volumes. See [README](README.md) and [IDEA](docs/onboarding.md).
 
-## API и авторизация
+## API and authentication
 
-Контракты находятся в `src/main/resources/openapi.yaml` каждого сервиса.
-`/openapi.yaml` отдаёт YAML, не Swagger UI. `/` не является пользовательским UI.
+Contracts are in each service's `src/main/resources/openapi.yaml`.
+`/openapi.yaml` serves YAML, not Swagger UI. `/` is not a user interface.
 
-| Доступ | Метод и путь | Назначение |
+| Access | Method and path | Purpose |
 | --- | --- | --- |
-| Gateway | POST `/v1/auth/register`, POST `/v1/auth/login` | Регистрация / сессия |
-| Gateway + Bearer | GET `/v1/auth/me`, POST `/v1/auth/logout` | Identity / отзыв |
-| Gateway + Bearer | GET / PUT `/v1/users/me` | Свой профиль |
-| Gateway + Bearer | GET / POST `/v1/wallets` | Свои кошельки |
-| Private ledger | POST `/v1/ledger/accounts`, GET `/v1/ledger/accounts/{id}` | Счёт и баланс |
-| Private ledger | POST `/v1/ledger/transfers`, GET `/v1/ledger/transfers/{id}` | Проводка/replay и результат |
-| Каждый сервис | GET `/health/live`, `/health/ready`, `/openapi.yaml` | Operational endpoints |
+| Gateway | POST `/v1/auth/register`, POST `/v1/auth/login` | Registration / session |
+| Gateway + Bearer | GET `/v1/auth/me`, POST `/v1/auth/logout` | Identity / revocation |
+| Gateway + Bearer | GET / PUT `/v1/users/me` | Own profile |
+| Gateway + Bearer | GET / POST `/v1/wallets` | Own wallets |
+| Private ledger | POST `/v1/ledger/accounts`, GET `/v1/ledger/accounts/{id}` | Account and balance |
+| Private ledger | POST `/v1/ledger/transfers`, GET `/v1/ledger/transfers/{id}` | Posting/replay and outcome |
+| Each service | GET `/health/live`, `/health/ready`, `/openapi.yaml` | Operational endpoints |
 
 ```mermaid
 sequenceDiagram
-    actor C as Клиент
+    actor C as Client
     participant G as Gateway
     participant A as Auth
     participant DB as Auth DB
-    participant S as User или Wallet
-    C->>G: Login с email/password
+    participant S as User or Wallet
+    C->>G: Login with email/password
     G->>A: Login + service key
-    A->>DB: Проверка credentials, запись digest сессии
-    A-->>G: access_token и срок
-    G-->>C: Ответ login
-    C->>G: Защищённый запрос + Bearer
-    G->>A: Проверка сессии через me
-    A->>DB: Digest и expires_at
-    A-->>G: Подтверждённая identity
-    G->>S: Запрос + доверенная identity + service key
-    S-->>G: Свои данные
-    G-->>C: Ответ клиенту
+    A->>DB: Verify credentials, persist session digest
+    A-->>G: access_token and expiry
+    G-->>C: Login response
+    C->>G: Protected request + Bearer
+    G->>A: Validate session through me
+    A->>DB: Digest and expires_at
+    A-->>G: Verified identity
+    G->>S: Request + trusted identity + service key
+    S-->>G: Own data
+    G-->>C: Client response
 ```
 
-Пароли защищены Argon2id. Токен — случайная непрозрачная строка, не JWT; в `sessions`
-хранится SHA-256 digest. Срок — 30 минут, logout удаляет сессию. Gateway проверяет
-каждый profile/wallet запрос через auth, заменяет клиентскую identity доверенной
-и не передаёт bearer token в user/wallet. Ошибка авторизации блокирует запрос.
+Passwords are protected with Argon2id. The token is a random opaque string, not a JWT;
+`sessions` stores its SHA-256 digest. Sessions last 30 minutes; logout deletes the session.
+The gateway validates every profile/wallet request through auth, replaces the client's
+identity with the trusted identity, and does not forward the bearer token to user/wallet.
+Authorization failure blocks the request.
 
-Ledger требует `X-Service-Key` и доверенный `X-Identity-Id`, gateway его не проксирует.
-Общий service key не изолирует скомпрометированные сервисы друг от друга.
-Readiness persistent-сервиса проверяет только его БД; readiness gateway — только
-сам gateway. `UP` не доказывает доступность downstream или корректность P2P.
+Ledger requires `X-Service-Key` and a trusted `X-Identity-Id`; the gateway does not proxy it.
+The shared service key does not isolate compromised services from one another.
+A persistent service's readiness checks only its own database; gateway readiness checks
+only the gateway itself. `UP` does not prove downstream availability or P2P correctness.
 
-## Данные и ledger
+## Data and ledger
 
-Межсервисные UUID — **логические ссылки**, не cross-database foreign keys.
-`owner_id` означает auth identity UUID, а не ID профиля.
+UUIDs shared across services are **logical references**, not cross-database foreign keys.
+`owner_id` means the auth identity UUID, not the profile ID.
 
 ```mermaid
 flowchart LR
     ID["Auth identity"] -. "identity_id" .-> PROFILE["User profile"]
     ID -. "owner_id" .-> W["Wallet"]
     ID -. "owner_id" .-> A["Ledger account"]
-    W -. "wallet_id, автоматической provisioning ещё нет" .-> A
-    P["Payment: schema only"] -. "будущий payment_id" .-> R["Transfer request"]
+    W -. "wallet_id, no automatic provisioning yet" .-> A
+    P["Payment: schema only"] -. "Planned payment_id" .-> R["Transfer request"]
     R -->|"POSTED"| T["Immutable transfer"]
     T --> D["Debit account"]
     T --> C["Credit account"]
-    T --> V["postings VIEW: debit и credit"]
+    T --> V["postings VIEW: debit and credit"]
 ```
 
-| База | Таблицы / гарантии |
+| Database | Tables / guarantees |
 | --- | --- |
 | auth-db | `identities`: unique email, password_hash; `sessions`: token_hash PK, FK identity_id, expires_at; `auth_attempts`: persistent limits |
 | user-db | `profiles`: unique identity_id, display_name |
-| wallet-db | `wallets`: unique(owner_id,currency), EUR/USD/GBP, ACTIVE/CLOSED; без баланса |
-| payment-db | `payments`: unique(requester_id,idempotency_key), request_hash, wallet IDs, amount/currency, PENDING/COMPLETED/REJECTED; только схема |
-| ledger-db | `accounts`: unique wallet_id, owner, CUSTOMER/CLEARING, balance_minor; `transfers`: payment_id PK и FK счетов/валюты; `transfer_requests`: durable payload/outcome; `postings`: представление |
-| Каждая БД | `flyway_schema_history`: технический журнал применённых миграций |
+| wallet-db | `wallets`: unique(owner_id,currency), EUR/USD/GBP, ACTIVE/CLOSED; no balance |
+| payment-db | `payments`: unique(requester_id,idempotency_key), request_hash, wallet IDs, amount/currency, PENDING/COMPLETED/REJECTED; schema only |
+| ledger-db | `accounts`: unique wallet_id, owner, CUSTOMER/CLEARING, balance_minor; `transfers`: payment_id PK and account/currency FKs; `transfer_requests`: durable payload/outcome; `postings`: view |
+| Every database | `flyway_schema_history`: technical record of applied migrations |
 
-Accounts в transfer_requests не обязаны существовать: эта таблица сохраняет и
-отказы. `accounts.wallet_id` пока не проверяется HTTP-запросом в wallet-service.
-Точные колонки/индексы/constraints — в миграциях сервисов; опубликованные миграции
-append-only. У текущего DB owner есть административные возможности: триггеры не
-являются защитой от администратора. Ограниченный runtime DB role — будущая работа.
+Accounts referenced in transfer_requests do not have to exist: this table also preserves
+rejections. `accounts.wallet_id` is not yet validated through an HTTP request to wallet-service.
+Exact columns, indexes, and constraints are defined in service migrations; published
+migrations are append-only. The current DB owner has administrative capabilities:
+triggers do not protect against an administrator. A restricted runtime DB role is future work.
 
-### Атомарная проводка — реализовано
+### Atomic posting — implemented
 
 ```mermaid
 sequenceDiagram
-    participant C as Доверенный внутренний клиент
+    participant C as Trusted internal client
     participant L as Ledger
     participant DB as Ledger PostgreSQL
-    C->>L: payment_id, счета, валюта, amount_minor
-    L->>DB: BEGIN, резервирование payment_id
-    alt Уже сохранённый запрос
-        L->>DB: Сравнить requester и весь payload
-        L-->>C: Сохранённый результат или conflict
-    else Новый запрос
-        L->>DB: Lock обоих accounts в SQL UUID-порядке
-        L->>DB: Проверить owner, currency, funds, overflow
-        alt Допустимая проводка
-            L->>DB: INSERT transfer, trigger меняет оба баланса
-            L->>DB: POSTED, COMMIT с deferred constraints
+    C->>L: payment_id, accounts, currency, amount_minor
+    L->>DB: BEGIN, reserve payment_id
+    alt Previously persisted request
+        L->>DB: Compare requester and full payload
+        L-->>C: Persisted outcome or conflict
+    else New request
+        L->>DB: Lock both accounts in SQL UUID order
+        L->>DB: Check owner, currency, funds, overflow
+        alt Valid posting
+            L->>DB: INSERT transfer, trigger updates both balances
+            L->>DB: POSTED, COMMIT with deferred constraints
             L-->>C: POSTED
-        else Бизнес-отказ
-            L->>DB: Сохранить отказ, COMMIT без движения денег
+        else Business rejection
+            L->>DB: Persist rejection, COMMIT without moving money
             L-->>C: Durable rejection
         end
     end
 ```
 
-Деньги — целые minor units и валюта: для EUR/USD/GBP `100` = одна единица.
-Сумма положительная, CUSTOMER balance неотрицательный, overflow запрещён.
-Одна immutable transfer даёт две противоположные записи в postings view.
-Проводка, балансы и terminal result фиксируются одной PostgreSQL-транзакцией.
-Deferred constraints не разрешают commit незавершённого PENDING.
+Money is represented as integer minor units and a currency: for EUR/USD/GBP, `100` equals
+one currency unit. The amount must be positive, CUSTOMER balances cannot be negative,
+and overflow is prohibited. One immutable transfer produces two opposite entries in the
+postings view. The posting, balances, and terminal result commit in one PostgreSQL transaction.
+Deferred constraints prevent committing an unfinished PENDING request.
 
-Повтор использует тот же `payment_id`, requester и payload; изменённый запрос даёт
-conflict. Durable insufficient-funds остаётся отказом даже после последующего
-пополнения. После timeout повторяется/ищется **тот же ID**: отсутствие ответа не
-означает rollback. Ошибка транзакции откатывает её изменения.
-POST: 200 POSTED, 409 rejection/conflict; GET результата: 200 даже для сохранённого
-отказа, 404 для отсутствующего/чужого результата. Счета открываются с нулём.
-Funding API нет; CLEARING fixtures используются только в изолированных тестах.
-Подробности: [ledger](docs/ledger.md), [ADR 0005](docs/adr/0005-atomic-ledger.md).
+A retry uses the same `payment_id`, requester, and payload; a changed request produces
+a conflict. A durable insufficient-funds rejection remains a rejection even after later
+funding. After a timeout, retry or look up **the same ID**: no response does not mean rollback.
+A transaction failure rolls back its changes.
+POST: 200 POSTED, 409 rejection/conflict; outcome GET: 200 even for a persisted rejection,
+404 for a missing result or one belonging to another requester. Accounts open with zero balance.
+There is no funding API; CLEARING fixtures are used only in isolated tests.
+Details: [ledger](docs/ledger.md), [ADR 0005](docs/adr/0005-atomic-ledger.md).
 
-## Будущий P2P
+## Planned P2P
 
-**План, не реализованный поток.** Пунктирные связи предстоит построить.
+**A plan, not an implemented flow.** Dashed connections remain to be built.
 
 ```mermaid
 flowchart LR
-    C["Клиент"] -.-> G["Gateway P2P"]
+    C["Client"] -.-> G["Gateway P2P"]
     G -.-> P["Payment: requester + idempotency key"]
     P -. "Wallet mapping" .-> W["Wallet"]
     W -. "Durable provisioning" .-> L["Ledger"]
-    P -. "Стабильный payment_id" .-> L
+    P -. "Stable payment_id" .-> L
     L -. "POSTED / rejection" .-> P
-    P -. "Recovery после timeout/restart" .-> L
+    P -. "Recovery after timeout/restart" .-> L
 ```
 
-Сначала wallet→ledger provisioning и её recovery; затем payment orchestration и
-reconciliation; затем публичный P2P с полными acceptance tests. `ACTIVE` wallet
-сейчас не подтверждает ledger readiness. Общей распределённой транзакции нет:
-нужны сохранённое состояние и идемпотентные команды, не обещание exactly-once HTTP.
-См. [M1](docs/m1.md), [миссию provisioning](docs/agents/missions/wallet-ledger.md).
+First, wallet-to-ledger provisioning and recovery; then payment orchestration and
+reconciliation; then public P2P with full acceptance tests. An `ACTIVE` wallet currently
+does not establish ledger readiness. There is no shared distributed transaction:
+durable state and idempotent commands are needed, not a promise of exactly-once HTTP.
+See [M1](docs/m1.md) and the [provisioning mission](docs/agents/missions/wallet-ledger.md).
 
-## Команда агентов
+## Agent team
 
-Агенты запускаются под задачу внутри Codex; это не контейнеры банка и не постоянные
-фоновые процессы. Главный чат — оркестратор. До трёх workers одновременно,
-остальные роли запускаются волнами; используются только нужные для задачи роли.
-Модели/разрешения наследуются от сессии, инструкции не являются security sandbox.
+Agents run for specific tasks inside Codex; they are not bank containers or permanent
+background processes. The main chat acts as the orchestrator. Up to three workers run
+concurrently; other roles run in waves, and only roles needed for the task are activated.
+Models/permissions are inherited from the session; instructions are not a security sandbox.
 
 ```mermaid
 flowchart LR
-    H["Пользователь"] --> O["bank_orchestrator"]
+    H["User"] --> O["bank_orchestrator"]
     O --> G["gateway_owner"]
     O --> A["auth_owner"]
     O --> U["user_owner"]
@@ -274,76 +275,77 @@ flowchart LR
     O --> P["payment_owner"]
     O --> L["ledger_owner"]
     O --> QI["qa_integration"]
-    O --> QF["qa_security: финансовый QA"]
+    O --> QF["qa_security: financial QA"]
     O --> S["security_auditor"]
     O --> R["bank_reviewer"]
-    QI -->|"Результаты / дефекты"| O
-    QF -->|"Инварианты"| O
-    S -->|"Находки / retest"| O
+    QI -->|"Results / defects"| O
+    QF -->|"Invariants"| O
+    S -->|"Findings / retest"| O
     R -->|"Review"| O
-    O --> PR["PR и доказательства"]
+    O --> PR["PR and evidence"]
     PR --> H
 ```
 
-| Агент | Ответственность / writable scope |
+| Agent | Responsibility / writable scope |
 | --- | --- |
-| bank_orchestrator | Распределение, интеграция, shared config/runtime, Compose/CI, эта документация, PR |
-| gateway_owner | app-gateway: маршруты, публичный контракт, identity |
-| auth_owner | auth-service: credentials, сессии, limits |
-| user_owner | user-service: профили |
-| wallet_owner | wallet-service: metadata/lifecycle, будущая provisioning |
-| payment_owner | payment-service: будущая orchestration/idempotency |
+| bank_orchestrator | Assignment, integration, shared config/runtime, Compose/CI, this documentation, PR |
+| gateway_owner | app-gateway: routes, public contract, identity |
+| auth_owner | auth-service: credentials, sessions, limits |
+| user_owner | user-service: profiles |
+| wallet_owner | wallet-service: metadata/lifecycle, planned provisioning |
+| payment_owner | payment-service: planned orchestration/idempotency |
 | ledger_owner | ledger-service: accounts, balances, posting correctness |
-| qa_integration | Сквозные контракты, outages/recovery; только выделенные тестовые файлы |
-| qa_security | Финансовые инварианты и owner isolation; только выделенные тесты |
-| security_auditor | Системная безопасность, trust, secrets, dependencies, Docker/CI; независимая перепроверка |
-| bank_reviewer | Независимый review интегрированного результата; read-only |
+| qa_integration | End-to-end contracts, outages/recovery; only assigned test files |
+| qa_security | Financial invariants and owner isolation; only assigned tests |
+| security_auditor | System security, trust, secrets, dependencies, Docker/CI; independent retesting |
+| bank_reviewer | Independent review of the integrated result; read-only |
 
-Владельцы также отвечают за module tests и OpenAPI. QA/security read-only, пока не
-выделены конкретные тестовые файлы. Один файл — один writer; builds общей папки
-сериализованы. Shared Docker управляет оркестратор в рамках разрешённой задачи.
+Owners also maintain module tests and OpenAPI. QA/security are read-only until specific
+test files are assigned. Each file has one writer; builds in a shared directory run
+serially. The orchestrator manages shared Docker within the authorized task scope.
 
-Роли: `.codex/agents`; skills: `.agents/skills`.
+Roles: `.codex/agents`; skills: `.agents/skills`.
 
-| Skill | Назначение |
+| Skill | Purpose |
 | --- | --- |
-| bank-java | Java 21, Gradle, границы слоёв и ресурсы |
+| bank-java | Java 21, Gradle, layer boundaries, and resources |
 | bank-postgres | jOOQ/HikariCP, Flyway, transactions/locks/retries |
 | bank-api | OpenAPI, Javalin, identity, bounded HTTP |
-| bank-testing | Spock, Testcontainers, ArchUnit, доказательства |
-| bank-financial-correctness | Проводки, остатки, конкуренция, идемпотентность |
-| bank-security | Security review и подтверждение исправлений |
-| bank-coordination | Assignments, сообщения, finding IDs, checkpoints |
+| bank-testing | Spock, Testcontainers, ArchUnit, evidence |
+| bank-financial-correctness | Postings, balances, concurrency, idempotency |
+| bank-security | Security review and fix verification |
+| bank-coordination | Assignments, messages, finding IDs, checkpoints |
 
-Подробности: [матрица skills](docs/agents/skills.md), [workflow](docs/agents/workflow.md),
-[ADR команды](docs/adr/0006-agent-team.md). При отсутствии автоматической загрузки
-роль/skill читается явно и передаётся в scoped assignment; fallback сообщается пользователю.
+Details: [skills matrix](docs/agents/skills.md), [workflow](docs/agents/workflow.md),
+[team ADR](docs/adr/0006-agent-team.md). If automatic loading is unavailable, the role/skill
+is read explicitly and passed into a scoped assignment; the fallback is disclosed to the user.
 
-## Коммуникация и исправления
+## Communication and remediation
 
-Общие файлы не означают общий контекст разговоров. Сохранённый Markdown сам по
-себе никого не уведомляет; оркестратор пересылает конкретные задания и evidence.
+Shared files do not imply shared conversation context. Saving Markdown does not notify
+anyone by itself; the orchestrator forwards concrete assignments and evidence.
 
 ```mermaid
 sequenceDiagram
     participant S as Security
-    participant O as Оркестратор
-    participant D as Разработчик сервиса
+    participant O as Orchestrator
+    participant D as Service developer
     participant Q as QA
     S->>O: SEC-ID, revision, severity, evidence, repro
     O->>D: Assignment + file lease + regression criteria
-    D-->>O: Patch/revision и результаты тестов
-    O->>S: Независимый retest интегрированного кода
-    O->>Q: Связанные acceptance tests
+    D-->>O: Patch/revision and test results
+    O->>S: Independent retest of integrated code
+    O->>Q: Related acceptance tests
     S-->>O: VERIFIED / REOPENED / BLOCKED
-    Q-->>O: Доказательства
-    O-->>D: Закрытие или дальнейшее исправление
+    Q-->>O: Evidence
+    O-->>D: Closure or further remediation
 ```
 
-Работающему агенту — `send_message`; завершившему — `followup_task` или эквивалент
-текущего клиента. Недоступный агент заменяется новым с теми же ID и контекстом.
-При возобновлении сессии assignments восстанавливаются из checkpoint и сверяются
-с исходниками/CI. Это действия оркестратора, не фоновая очередь задач.
+Use `send_message` for a running agent and `followup_task`, or the current client's
+equivalent, for an agent that has finished. An unavailable agent is replaced with a new
+one carrying the same IDs and context. On session resumption, assignments are restored
+from the checkpoint and checked against source code/CI. These are orchestrator actions,
+not a background task queue.
 
 ```mermaid
 stateDiagram-v2
@@ -351,73 +353,72 @@ stateDiagram-v2
     NEW --> TRIAGED
     TRIAGED --> ASSIGNED
     ASSIGNED --> FIX_READY
-    FIX_READY --> VERIFIED: независимый retest
-    VERIFIED --> CLOSED: принятие evidence
-    FIX_READY --> REOPENED: ошибка осталась
+    FIX_READY --> VERIFIED: independent retest
+    VERIFIED --> CLOSED: evidence accepted
+    FIX_READY --> REOPENED: issue remains
     REOPENED --> ASSIGNED
-    FIX_READY --> BLOCKED: нет кода или среды
-    BLOCKED --> FIX_READY: evidence доступно
+    FIX_READY --> BLOCKED: code or environment unavailable
+    BLOCKED --> FIX_READY: evidence available
 ```
 
-BLOCKED возможен на других этапах с сохранением предыдущего статуса и причины.
-False positive закрывается с доказательствами и независимым review.
-Подтверждённые незакрытые critical/high блокируют готовность PR; зелёный CI или
-слово «fixed» не закрывают находку. Принятие остаточного риска и merge — решения
-пользователя. Record/checkpoint: [протокол](docs/agents/communication.md).
+BLOCKED is possible at other stages, preserving the previous status and the reason.
+False positives are closed with evidence and independent review. Confirmed unresolved
+critical/high findings block PR readiness; green CI or the word "fixed" does not close
+a finding. Accepting residual risk and merging are user decisions.
+Records/checkpoints: [protocol](docs/agents/communication.md).
 
-## Проверки и доставка
+## Verification and delivery
 
 ```mermaid
 flowchart LR
-    T["Задача + контракт"] --> DEV["Реализация"]
-    DEV --> DOC["API / архитектура / ADR"]
-    DOC --> REV["Независимые QA / security / review"]
-    REV --> FIX["Исправления"]
-    FIX --> CI["CI точного PR head"]
+    T["Task + contract"] --> DEV["Implementation"]
+    DEV --> DOC["API / architecture / ADR"]
+    DOC --> REV["Independent QA / security / review"]
+    REV --> FIX["Fixes"]
+    FIX --> CI["CI for the exact PR head"]
     CI --> TEST["Java / Spock / ArchUnit / PostgreSQL"]
-    TEST --> SMOKE["Изолированный Compose + smoke"]
-    SMOKE --> READY["Готовый PR, merge пользователем"]
+    TEST --> SMOKE["Isolated Compose + smoke"]
+    SMOKE --> READY["Ready PR, user merges"]
 ```
 
-| Проверка | Что доказывает |
+| Check | What it establishes |
 | --- | --- |
-| `./gradlew test` | Unit/architecture; исключает IntegrationSpec |
-| `./gradlew check` | Также реальные PostgreSQL Testcontainers; нужен Docker |
-| `./gradlew installDist` | Запускаемые distributions |
-| `scripts/smoke.py` | Readiness шести сервисов, не бизнес-корректность |
-| auth/onboarding smoke в CI | Auth, профиль, кошельки через HTTP |
-| ledger-smoke в CI | Приватная проводка с синтетическими средствами |
+| `./gradlew test` | Unit/architecture checks; excludes IntegrationSpec |
+| `./gradlew check` | Also runs real PostgreSQL Testcontainers; requires Docker |
+| `./gradlew installDist` | Runnable distributions |
+| `scripts/smoke.py` | Readiness of six services, not business correctness |
+| Auth/onboarding smoke in CI | Auth, profile, wallets through HTTP |
+| Ledger smoke in CI | Private posting with synthetic funds |
 
-На Windows используйте `.\gradlew.bat`. CI: [.github/workflows/ci.yml](.github/workflows/ci.yml).
-Fixture funding и `down --volumes` — только для одноразового CI, не пользовательских
-БД. Smoke scripts пока ожидают порт 8080 и сеть `arman-bank_bank`; другого Compose
-project name недостаточно для изолированного параллельного теста.
+On Windows, use `.\gradlew.bat`. CI: [.github/workflows/ci.yml](.github/workflows/ci.yml).
+Fixture funding and `down --volumes` are only for disposable CI environments, never user
+databases. Smoke scripts currently expect port 8080 and the `arman-bank_bank` network;
+a different Compose project name alone does not provide an isolated parallel test.
 
-## Поддержание актуальности
+## Keeping documentation current
 
-**Владелец документа — bank_orchestrator.** Каждое изменение проходит проверку
-влияния на документацию. Владельцы сервисов передают изменения API, схем, связей,
-инвариантов и ограничений в handoff. Оркестратор обновляет этот файл и связанные
-документы **в том же PR**; bank_reviewer сверяет их с интегрированным кодом.
+**Document owner: bank_orchestrator.** Every change is assessed for documentation impact.
+Service owners report changes to APIs, schemas, connections, invariants, and limitations
+in their handoffs. The orchestrator updates this file and related documents **in the same PR**;
+bank_reviewer checks them against the integrated code.
 
-| Что изменилось | Что пересматривается |
+| Change | Documentation to review |
 | --- | --- |
-| Сервис / HTTP dependency | Карта сервисов, ответственность, sequence diagrams |
-| API / auth | Таблица API, OpenAPI, модель доверия |
-| Миграция / consistency | Данные, ledger flow, ADR |
-| Compose / env / ports | Runtime и инструкции, без секретов |
-| Агент / skill / коммуникация | Команда, skills matrix, протокол, role files |
-| CI / тесты / готовность | Проверки, ограничения, план M1 |
+| Service / HTTP dependency | Service map, responsibilities, sequence diagrams |
+| API / auth | API table, OpenAPI, trust model |
+| Migration / consistency | Data, ledger flow, ADR |
+| Compose / env / ports | Runtime and instructions, without secrets |
+| Agent / skill / communication | Team, skills matrix, protocol, role files |
+| CI / tests / readiness | Checks, limitations, M1 plan |
 
-Если описанное поведение не изменилось, PR содержит объяснение «документация не
-затронута» вместо косметической смены даты. При содержательном обновлении указываются
-дата и проверенная исходная revision. План нельзя изображать реализацией, а готовую
-функцию оставлять только в разделе «будущее». ADR сохраняют историю; новое решение
-оформляется новым ADR. Независимый reviewer считает расхождение документации дефектом.
+If documented behavior is unchanged, the PR explains why documentation is unaffected
+instead of making a cosmetic date change. A substantive update records the date and
+verified source revision. Planned behavior must not be presented as implemented, and
+completed features must not remain only in the future section. ADRs preserve history;
+a new decision gets a new ADR. The independent reviewer treats documentation drift as a defect.
 
-Это правило каждой задачи и review, **не фоновое обновление при закрытом Codex**.
-Внешние изменения сверяются при следующей работе с репозиторием. Правило закреплено
-в [AGENTS.md](AGENTS.md), role instructions и PR template.
-Дополнительно: [README](README.md), [IDEA и ручные тесты](docs/onboarding.md),
+This is a rule for every task and review, **not a background update while Codex is closed**.
+External changes are reconciled the next time work resumes on the repository. The rule
+is established in [AGENTS.md](AGENTS.md), role instructions, and the PR template.
+Further reading: [README](README.md), [IDEA and manual testing](docs/onboarding.md),
 [ledger](docs/ledger.md), [M1](docs/m1.md), [ADRs](docs/adr/0001-bootstrap.md).
-

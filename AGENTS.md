@@ -9,6 +9,7 @@
 - Do not commit secrets, .env, production data, tokens, or generated build output.
 
 ## Architecture
+- Write and maintain repository documentation, including Mermaid labels, in English. Use neutral product-focused descriptions without personal motivation or employer affiliation. Preserve factual implementation limits and test-safety guidance.
 - ARCHITECTURE.md is the maintained system and agent-team map. For every change, assess documentation impact. Service owners report affected sections/diagrams and contract/schema/runtime changes in their handoff; the orchestrator updates the map and linked docs in the same PR. If no documented behavior changes, explain why in the PR instead of making cosmetic edits.
 - The independent reviewer checks Mermaid diagrams, implemented/planned status, API/data/trust boundaries and agent responsibilities against the integrated revision. Documentation drift is a review finding. Never include secret values or present planned flows as implemented.
 - Java 21, Javalin, Gradle. No Spring, Kafka, Redis or Kubernetes in bootstrap.

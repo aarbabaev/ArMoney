@@ -1,15 +1,14 @@
 # Arman Bank — M1 bootstrap
 
-Полная карта системы и команды с Mermaid-диаграммами:
-[ARCHITECTURE.md](ARCHITECTURE.md). Обновляется вместе с изменениями проекта.
+For the complete system and agent-team map with Mermaid diagrams, see
+[ARCHITECTURE.md](ARCHITECTURE.md). It is maintained alongside project changes.
 
 Java 21 / Gradle multi-project, Javalin (no Spring), PostgreSQL, Flyway,
 jOOQ, HikariCP, Spock, Testcontainers and ArchUnit.
 
-This is the foundation for M1, **not a working bank**.
+A banking backend with explicit service ownership and a PostgreSQL-backed ledger.
 Identity registration, login, current identity and logout now work through gateway.
 Current-user profiles and wallet metadata are implemented. P2P execution remains a future slice.
-No real funds or customer data. No claim that this reproduces Revolut internals.
 
 ## Run
 
