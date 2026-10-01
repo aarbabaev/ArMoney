@@ -197,7 +197,13 @@ final class AppModel: ObservableObject {
         defer { if generation == current { busy = false } }
         do {
             guard let api else { throw AppError.configuration }
-            let result = try await api.submit(submission, token: token())
+            // Write-ahead marker: a crash at any point after this save is uncertain.
+            // Do not send if the marker cannot be persisted securely.
+            var attemptedSubmission = submission
+            attemptedSubmission.markAttempted()
+            try pendingStore().save(attemptedSubmission)
+            pending = attemptedSubmission
+            let result = try await api.submit(attemptedSubmission, token: token())
             guard generation == current else { return }
             guard submission.matches(result, identity: identity.id) else { throw AppError.invalidResponse }
             // A matching durable response establishes acceptance. History can recover its
@@ -207,9 +213,9 @@ final class AppModel: ObservableObject {
             try await load(current)
         } catch {
             guard generation == current else { return }
-            // Only a recognized payment pre-acceptance error permits explicit discard.
-            // Unknown conflicts, malformed responses and network failures stay saved.
-            if let refusal = error as? AppError, refusal.permitsDiscardingPayment { pendingRefused = true }
+            // Only a first attempt can prove non-acceptance. A known refusal from a
+            // retry says nothing about a delayed earlier attempt of the same command.
+            if let refusal = error as? AppError, submission.mayDiscardRefusalFromNextAttempt(refusal) { pendingRefused = true }
             handle(error, generation: current)
         }
     }

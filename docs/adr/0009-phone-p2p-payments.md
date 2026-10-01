@@ -5,7 +5,7 @@ Status: accepted implementation decision; deployment and exact-revision checks a
 ## Decision
 
 User-service owns an exact E.164 directory. A profile may store a pending phone,
-but only operator-attested numbers resolve. Updating a number clears its attestation;
+but only operator-attested numbers resolve. Changing a number clears its attestation; same-number retries preserve it;
 a unique partial index prevents two verified owners. Lookup has a persistent limit
 of 30 attempts per requester per 60 seconds, including misses. The result exposes
 the matched display name and identity, never email or a directory of users.

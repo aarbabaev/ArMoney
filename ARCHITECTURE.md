@@ -544,6 +544,7 @@ flowchart LR
 | Auth/onboarding smoke in CI | Auth, profile, wallets through HTTP |
 | Provisioning smoke in CI | Concurrent retries, ledger outage, wallet restart and unique zero-balance account mapping |
 | Ledger smoke in CI | Private posting with synthetic funds |
+| `scripts/p2p-smoke.py` in disposable CI | Phone resolution, public P2P, duplicate/concurrent spending, outages, post-commit recovery, notification isolation and journal reconciliation |
 | SSO browser smoke in CI | Disposable Keycloak authorization code/PKCE and gateway exchange |
 | macOS iOS CI | Native compilation and simulator unit tests; not physical-device acceptance |
 

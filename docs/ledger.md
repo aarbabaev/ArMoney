@@ -11,7 +11,8 @@ same-currency posting and durable payment results. These routes are internal:
 | GET | /v1/ledger/transfers/{id} | Read the verified requester's stored result |
 
 Both X-Service-Key and X-Identity-Id are required. Only trusted service callers
-may supply identity headers. There is no gateway route and no public P2P yet.
+may supply identity headers. There is no direct gateway ledger route. Public P2P goes through payment-service,
+which validates wallet ownership and confirmed phone recipients before posting.
 OpenAPI is available on ledger-service's own /openapi.yaml.
 
 An account request contains wallet_id (UUID) and currency (EUR/USD/GBP).

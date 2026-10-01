@@ -254,3 +254,45 @@ final class PaymentRefusalProtocol: URLProtocol {
     }
     override func stopLoading() { }
 }
+
+final class UncertainAttemptRegressionTests: XCTestCase {
+    func testLostOriginalThenKnownRetryRefusalCannotUnlockReplacement() throws {
+        let command = PaymentCommand(sourceWalletId: "source", recipientId: "recipient", recipientPhone: "+441234567890", currency: "EUR", amountMinor: 100)
+        let first = PendingSubmission(command: command)
+        XCTAssertTrue(first.mayDiscardRefusalFromNextAttempt(.response(409, "recipient_changed")))
+        // The original POST has been sent but is delayed in backend validation.
+        // Its HTTP response is lost; the durable marker was written before sending.
+        var sent = first; sent.markAttempted()
+        let durable = try JSONEncoder().encode(sent)
+        let afterRelaunch = try JSONDecoder().decode(PendingSubmission.self, from: durable)
+        XCTAssertTrue(afterRelaunch.attempted)
+        for refusal in [AppError.response(404, "not_found"), .response(409, "recipient_changed"), .response(409, "wallet_ineligible"), .response(400, "invalid_request")] {
+            // The phone/wallet has changed, so a retry refuses; the earlier request
+            // can still commit. This must not allow discarding or a fresh key.
+            XCTAssertFalse(afterRelaunch.mayDiscardRefusalFromNextAttempt(refusal))
+        }
+        XCTAssertEqual(afterRelaunch.key, first.key)
+        XCTAssertEqual(afterRelaunch.command, first.command)
+        var retried = afterRelaunch; retried.markAttempted()
+        XCTAssertEqual(try JSONDecoder().decode(PendingSubmission.self, from: JSONEncoder().encode(retried)), afterRelaunch)
+    }
+    func testLegacyPendingRecordIsConservativelyUncertain() throws {
+        let pending = try JSONDecoder().decode(PendingSubmission.self, from: Data("""
+        {"key":"original-reference","command":{"sourceWalletId":"source","recipientId":"recipient","recipientPhone":"+441234567890","currency":"EUR","amountMinor":100}}
+        """.utf8))
+        XCTAssertTrue(pending.attempted)
+        XCTAssertFalse(pending.mayDiscardRefusalFromNextAttempt(.response(409, "wallet_ineligible")))
+    }
+    func testAttemptMarkerSurvivesKeychainLogoutAndReopen() throws {
+        let origin = "https://\(UUID().uuidString.lowercased()).test"
+        let store = PendingStore(origin: origin, identity: "owner")
+        defer { try? store.clear() }
+        var pending = PendingSubmission(command: PaymentCommand(sourceWalletId: "source", recipientId: "recipient", recipientPhone: "+441234567890", currency: "EUR", amountMinor: 100))
+        pending.markAttempted(); try store.save(pending)
+        try SessionStore(origin: origin).clear()
+        let recovered = try XCTUnwrap(PendingStore(origin: origin, identity: "owner").load())
+        XCTAssertTrue(recovered.attempted)
+        XCTAssertFalse(recovered.mayDiscardRefusalFromNextAttempt(.response(404, "not_found")))
+        XCTAssertEqual(recovered.key, pending.key)
+    }
+}

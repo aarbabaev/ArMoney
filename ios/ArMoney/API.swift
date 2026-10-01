@@ -10,8 +10,8 @@ enum AppError: LocalizedError, Equatable {
         case .http(let status): return status == 429 ? "Too many requests. Please wait and retry." : "The request failed (HTTP \(status)). Please retry."
         case .response(let status, let code):
             switch (status, code) {
-            case (409, "recipient_changed"): return "This phone number now belongs to a different recipient. Discard this refused request and confirm the recipient again."
-            case (409, "wallet_ineligible"): return "A wallet is not eligible for this transfer. Discard this refused request, refresh wallets, and review a new transfer."
+            case (409, "recipient_changed"): return "The recipient has changed. Review the saved transfer before taking further action."
+            case (409, "wallet_ineligible"): return "A wallet is not eligible for this transfer. Review the saved transfer before taking further action."
             case (409, "idempotency_conflict"): return "The saved transfer reference conflicts with an existing request. Keep it saved and contact support before sending a replacement."
             default: return "The request could not be confirmed. Keep the saved transfer and review its status before retrying."
             }
@@ -161,7 +161,24 @@ struct PaymentCommand: Codable, Equatable {
 }
 struct PendingSubmission: Codable, Equatable {
     let key: String; let command: PaymentCommand
-    init(command: PaymentCommand) { key = UUID().uuidString.lowercased(); self.command = command }
+    private(set) var attempted: Bool
+    init(command: PaymentCommand) {
+        key = UUID().uuidString.lowercased(); self.command = command; attempted = false
+    }
+    private enum CodingKeys: String, CodingKey { case key, command, attempted }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        key = try values.decode(String.self, forKey: .key)
+        command = try values.decode(PaymentCommand.self, forKey: .command)
+        // Old records predate attempt tracking and must be treated as uncertain.
+        attempted = try values.decodeIfPresent(Bool.self, forKey: .attempted) ?? true
+    }
+    mutating func markAttempted() { attempted = true }
+    // Called on the pre-attempt snapshot. A retry's refusal cannot disprove that
+    // an earlier delayed request is still validating and may commit afterwards.
+    func mayDiscardRefusalFromNextAttempt(_ error: AppError) -> Bool {
+        !attempted && error.permitsDiscardingPayment
+    }
     func matches(_ payment: Payment, identity: String) -> Bool {
         UUID(uuidString: payment.id) != nil && UUID(uuidString: payment.destinationWalletId) != nil &&
         payment.requesterId == identity && payment.sourceWalletId == command.sourceWalletId &&
