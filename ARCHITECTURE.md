@@ -135,13 +135,19 @@ Restarting does not require deleting volumes. See [README](README.md) and [IDEA]
 
 The optional overlay adds an HTTPS edge and a Keycloak-owned PostgreSQL database.
 Caddy supplies default SNI from ARMONEY_HOST for clients using numeric IP origins; certificate name and CA validation still apply. Only the edge is bound to the selected LAN interface; the existing gateway binding
-remains loopback. Keycloak administration and management paths are not exposed.
+remains loopback. Keycloak administration and management paths are not exposed on
+the LAN listener. An optional workstation-only override exposes the admin console
+through Caddy at `https://localhost:9443`, bound to `127.0.0.1`; it uses a separate
+admin hostname and master-realm frontend URL, preserving the ArMoney issuer.
+See [local administration](docs/sso-and-ios.md#optional-host-only-administration).
 
 ```mermaid
 flowchart LR
     I["ArMoney SwiftUI / iPhone"] --> E["HTTPS edge :8443"]
     AND["ArMoney Kotlin / Android"] --> E
     B["System authentication browser"] --> E
+    OP["Operator on Docker host"] -.-> ADM["Optional loopback TLS :9443"]
+    ADM -.->|"Admin / master realm only"| K
     E -->|"/v1 APIs"| G["App gateway"]
     E -->|"Allowlisted /sso routes"| K["Keycloak"]
     K --> KD[("SSO PostgreSQL")]

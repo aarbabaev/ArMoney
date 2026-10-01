@@ -69,6 +69,36 @@ secret does not update an existing imported realm; apply deliberate admin change
 and update auth-service credentials together. Never delete the SSO database or
 other volumes to rotate a secret.
 
+## Optional host-only administration
+
+Local administration can use `https://localhost:9443/sso/admin/master/console/`.
+This is an opt-in workstation configuration, not a port exposed by the shipped
+Compose files. The local override binds `127.0.0.1:9443:9443` on the edge and sets
+`KC_HOSTNAME_ADMIN=https://localhost:9443/sso` on Keycloak. Its effective local
+Caddyfile adds a separate TLS listener for `localhost:9443`, proxying only
+`/sso/admin/*`, `/sso/realms/master/*` and `/sso/resources/*` to Keycloak, with
+forwarded host/protocol/port overwritten for this origin.
+
+The master realm's `attributes.frontendUrl` must also be
+`https://localhost:9443/sso`, preserving its other attributes. Otherwise the console
+login redirects to the blocked public master-realm route. Keep the ArMoney realm,
+public `KC_HOSTNAME`, both realms' SSL requirements, and existing users/secrets
+unchanged. Back up local overrides and the master's original attributes before
+changing them; restore those values together when disabling local administration.
+
+The initial administrator username defaults to `admin`; its password is the local
+`SSO_ADMIN_PASSWORD` value used during bootstrap. Later password changes are stored
+in Keycloak, so editing `.env` alone does not reset that password. Never put this
+credential into an app or commit it. Trust the existing local Caddy root CA in the
+host user's certificate store; do not disable TLS verification. Browsers may need
+restarting after a trust-store update. The address works only on the Docker host.
+
+Verify the console and master discovery over validated TLS, the unchanged ArMoney
+issuer, public admin/master routes still returning 404, and a loopback-only Docker
+port binding. A returned console HTML page is not proof of completed browser login.
+See the pinned [console URL implementation](https://github.com/keycloak/keycloak/blob/26.7.4/services/src/main/java/org/keycloak/services/resources/admin/AdminConsole.java)
+and [hostname resolution](https://github.com/keycloak/keycloak/blob/26.7.4/services/src/main/java/org/keycloak/url/HostnameV2Provider.java).
+
 ## Session behavior
 
 The native apps use the system browser and separate public clients: armoney-ios
