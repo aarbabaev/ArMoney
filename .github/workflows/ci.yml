@@ -118,6 +118,8 @@ jobs:
           api-level: 36
           target: google_apis
           arch: x86_64
+          # Keep userdata within hosted-runner capacity; the API 36 default needs ~7 GB.
+          disk-size: 2048M
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: ./gradlew -p android --no-daemon connectedDebugAndroidTest
@@ -128,3 +130,4 @@ jobs:
           path: |
             android/app/build/outputs/apk/debug/*.apk
             android/app/build/reports/
+
