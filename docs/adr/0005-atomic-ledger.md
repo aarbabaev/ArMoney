@@ -2,10 +2,11 @@
 
 Status: Accepted for local M1
 
-Current status (2026-09-30): wallet account provisioning is implemented by
+Current status (2026-10-01): wallet account provisioning is implemented by
 [ADR 0007](0007-wallet-ledger-provisioning.md). The scope below records the
 original ledger decision before that integration. Payment orchestration and
-public P2P endpoints remain planned; the ledger accounting decision is unchanged.
+public P2P are implemented by [ADR 0009](0009-phone-p2p-payments.md); the ledger
+accounting decision is unchanged.
 
 ## Scope and trust
 Ledger now exposes private /v1/ledger account, balance, transfer and result APIs.

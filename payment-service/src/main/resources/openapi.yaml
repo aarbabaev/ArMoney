@@ -1,8 +1,10 @@
 openapi: 3.0.3
 info:
-  title: payment-service
-  version: 0.1.0
-  description: Bootstrap operational API. Business endpoints are not implemented.
+  title: ArMoney payment service
+  version: 0.2.0
+  description: Private gateway-facing payment orchestration and in-app notifications.
+    All /v1 routes require an internal key and gateway-verified identity; bearer credentials
+    alone are not accepted. Ledger remains the sole financial authority.
 paths:
   /health/live:
     get:
@@ -19,7 +21,8 @@ paths:
       operationId: readiness
       responses:
         '200':
-          description: Service can access its database (gateway has no database)
+          description: Payment database is reachable; this does not establish peer
+            availability
           content:
             application/json:
               schema:
@@ -40,12 +43,396 @@ paths:
             application/yaml:
               schema:
                 type: string
+  /v1/payments:
+    post:
+      operationId: submitPayment
+      security:
+      - InternalKey: []
+        TrustedIdentity: []
+      description: Requester-scoped durable idempotency is checked before phone/wallet
+        resolution. Same payload returns its original status, even if peers later
+        change or fail. New requests confirm the current verified phone and eligible
+        wallets. Ledger calls occur only after durable acceptance; uncertain results
+        remain PENDING. No automatic wallet creation or funding.
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_-]{1,128}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentRequest'
+      responses:
+        '200':
+          description: Existing terminal result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '202':
+          description: Durable pending payment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '400':
+          description: Invalid input or missing idempotency key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Invalid internal credentials or trusted identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Recipient or wallet missing or foreign
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Idempotency conflict, recipient changed, wallet ineligible,
+            or legacy unresolved row
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Peer unavailable or malformed before acceptance, or local persistence
+            unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      operationId: paymentHistory
+      security:
+      - InternalKey: []
+        TrustedIdentity: []
+      description: Newest 100 visible payments ordered by created_at and id descending.
+        Sender sees all own statuses; recipient sees completed incoming payments only.
+        No pagination promise.
+      responses:
+        '200':
+          description: Bounded recent history
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - payments
+                properties:
+                  payments:
+                    type: array
+                    maxItems: 100
+                    items:
+                      $ref: '#/components/schemas/Payment'
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Persistence unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/payments/{id}:
+    get:
+      operationId: paymentDetails
+      security:
+      - InternalKey: []
+        TrustedIdentity: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Requester or completed-recipient view
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '400':
+          description: Invalid UUID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Missing, foreign, unresolved legacy, or non-completed incoming
+            payment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Persistence unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/notifications:
+    get:
+      operationId: notifications
+      security:
+      - InternalKey: []
+        TrustedIdentity: []
+      description: Newest 100 owner notifications, ordered by created_at and id descending.
+        Durable in-app records, no SMS or push delivery.
+      responses:
+        '200':
+          description: Bounded owner notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - notifications
+                properties:
+                  notifications:
+                    type: array
+                    maxItems: 100
+                    items:
+                      $ref: '#/components/schemas/Notification'
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Persistence unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/notifications/{id}/read:
+    post:
+      operationId: readNotification
+      security:
+      - InternalKey: []
+        TrustedIdentity: []
+      description: Requires an empty body. Repeated reads preserve the original read_at
+        timestamp.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Updated notification
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '400':
+          description: Invalid UUID or non-empty body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Missing or foreign notification
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Persistence unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 components:
+  securitySchemes:
+    InternalKey:
+      type: apiKey
+      in: header
+      name: X-Service-Key
+    TrustedIdentity:
+      type: apiKey
+      in: header
+      name: X-Identity-Id
   schemas:
     Health:
       type: object
-      required: [status]
+      required:
+      - status
       properties:
         status:
           type: string
-          enum: [UP, DOWN]
+          enum:
+          - UP
+          - DOWN
+    Error:
+      type: object
+      required:
+      - error
+      properties:
+        error:
+          type: string
+    PaymentRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - source_wallet_id
+      - recipient_id
+      - recipient_phone
+      - currency
+      - amount_minor
+      properties:
+        source_wallet_id:
+          type: string
+          format: uuid
+        recipient_id:
+          type: string
+          format: uuid
+        recipient_phone:
+          type: string
+          pattern: ^\+[1-9][0-9]{7,14}$
+        currency:
+          type: string
+          enum:
+          - EUR
+          - USD
+          - GBP
+        amount_minor:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+    Payment:
+      type: object
+      required:
+      - id
+      - requester_id
+      - recipient_id
+      - source_wallet_id
+      - destination_wallet_id
+      - recipient_phone
+      - currency
+      - amount_minor
+      - status
+      - rejection_reason
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        requester_id:
+          type: string
+          format: uuid
+        recipient_id:
+          type: string
+          format: uuid
+        source_wallet_id:
+          type: string
+          format: uuid
+        destination_wallet_id:
+          type: string
+          format: uuid
+        recipient_phone:
+          type: string
+        currency:
+          type: string
+          enum:
+          - EUR
+          - USD
+          - GBP
+        amount_minor:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+        status:
+          type: string
+          enum:
+          - PENDING
+          - COMPLETED
+          - REJECTED
+        rejection_reason:
+          type: string
+          nullable: true
+          enum:
+          - INSUFFICIENT_FUNDS
+          - INVALID_ACCOUNT
+          - BALANCE_LIMIT
+          - null
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Notification:
+      type: object
+      required:
+      - id
+      - payment_id
+      - type
+      - currency
+      - amount_minor
+      - created_at
+      - read_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        payment_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum:
+          - PAYMENT_COMPLETED
+          - PAYMENT_REJECTED
+          - PAYMENT_RECEIVED
+        currency:
+          type: string
+          enum:
+          - EUR
+          - USD
+          - GBP
+        amount_minor:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+        created_at:
+          type: string
+          format: date-time
+        read_at:
+          type: string
+          format: date-time
+          nullable: true

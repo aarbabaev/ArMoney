@@ -1,7 +1,7 @@
 # ArMoney  -  System and Agent Team Architecture
 
-> The main project map. Checked against source code on **2026-09-30**, source revision
-> `e83d8f0325cb36c4c77507146c8a67ebbeecd441` on `main`, plus the setup fixes in this PR.
+> The main project map. Checked against source code on **2026-10-01**, based on main
+> `802b2078a997cb2c17b62c42e1f7c0da0ea6b0f8` plus this P2P implementation.
 > Describes the source code, not the guaranteed state of running containers.
 
 ## Navigation
@@ -10,7 +10,7 @@
 2. [Services and runtime](#services-and-runtime)
 3. [API and authentication](#api-and-authentication)
 4. [Data and ledger](#data-and-ledger)
-5. [Planned P2P](#planned-p2p)
+5. [Phone P2P and notifications](#phone-p2p-and-notifications)
 6. [Agent team](#agent-team)
 7. [Communication and remediation](#communication-and-remediation)
 8. [Verification and delivery](#verification-and-delivery)
@@ -19,20 +19,20 @@
 ## Readiness and stack
 
 A banking backend with service boundaries for identity, profiles, wallets, payments, and ledger accounting.
-**M1 is the first functional milestone and is not complete yet:** public P2P transfers
-must behave correctly under retries, concurrency, and failures. The private ledger
-alone does not complete M1.
+**M1 is the first functional milestone:** authorized public P2P, durable recovery,
+phone recipient confirmation, and a native client. Completion requires passing
+exact-revision CI and independent review; source implementation is not deployment evidence.
 
 | Area | Current state | Next steps |
 | --- | --- | --- |
 | Auth | Password login and Keycloak exchange, stable local identities, opaque sessions | Global provider logout/revocation integration |
 | SSO | Optional Keycloak realm, browser authorization code + PKCE | Production identity controls, MFA, email verification |
-| iOS | Native SwiftUI login, profile and wallets (iOS 18+) | Physical iPhone validation, P2P screens when API exists |
-| User | Profile for the current identity | Further development as requirements emerge |
-| Wallet | Metadata, ACTIVE/CLOSED, durable PENDING/READY ledger provisioning | Payment integration |
-| Ledger | Private accounts, balances, atomic postings, wallet integration | Payment integration |
-| Payment | Schema and operational endpoints | P2P orchestration and PENDING recovery |
-| Gateway | Auth, profile, wallets | Public P2P endpoints |
+| iOS | Native SwiftUI login, wallets/balances, transfers/history, notifications and profile (iOS 18+) | Physical iPhone validation |
+| User | Profile, pending phone, operator-attested phone directory | Automated ownership proof requires a separate approved provider |
+| Wallet | Metadata, durable ledger provisioning, owner-scoped live balances | Lifecycle controls |
+| Ledger | Private accounts, balances, atomic postings, wallet/payment integration | Operational hardening |
+| Payment | Durable P2P, requester idempotency, recovery, history and notifications | Pagination and operational reconciliation tooling |
+| Gateway | Auth, profile/phone, wallets/balances, P2P and notifications | Further hardening |
 
 Java 21, Gradle multi-project, Javalin, PostgreSQL, Flyway, jOOQ, HikariCP;
 Spock, Testcontainers, ArchUnit; REST/OpenAPI; Docker Compose, GitHub Actions.
@@ -44,7 +44,7 @@ Keycloak and Caddy are optional container services, configured by compose.sso.ya
 ## Services and runtime
 
 **Base backend connections are shown below; the optional SSO/iOS edge is described separately.** Wallet provisions accounts through the
-private ledger API. Payment does not call ledger yet.
+private ledger API. Payment validates user/wallet mappings and posts through ledger.
 
 ```mermaid
 flowchart TB
@@ -52,10 +52,13 @@ flowchart TB
     subgraph NET["Docker network: arman-bank_bank"]
         G -->|"Auth API / session validation"| A["auth-service"]
         G -->|"Profile"| U["user-service"]
-        G -->|"Wallets"| W["wallet-service"]
-        P["payment-service: scaffold"]
+        G -->|"Wallets and balances"| W["wallet-service"]
+        G -->|"P2P, history, notifications"| P["payment-service"]
+        P -->|"Verified recipient"| U
+        P -->|"Private wallet mapping"| W
+        P -->|"Idempotent posting"| L
         L["ledger-service: private API"]
-        W -->|"Durable account provisioning"| L
+        W -->|"Durable account provisioning and balance reads"| L
         A --> AD[("auth-db")]
         U --> UD[("user-db")]
         W --> WD[("wallet-db")]
@@ -68,9 +71,9 @@ flowchart TB
 | --- | --- | --- |
 | app-gateway | External routes, session validation, header sanitization | No database or financial logic |
 | auth-service | Credentials, SSO identity mapping, sessions, limits | Does not own profiles |
-| user-service | Profile for an auth identity | Does not issue tokens |
+| user-service | Profile and operator-attested phone directory | Does not issue tokens or claim SMS proof |
 | wallet-service | Owner, currency, lifecycle and durable ledger mapping | Not the source of balances |
-| payment-service | Planned transfer workflow/client idempotency | Business operations are not implemented yet |
+| payment-service | Transfer intent, client idempotency, recovery and notifications | Completion requires matching ledger confirmation |
 | ledger-service | Accounts, balances, immutable paired postings | No public funding API |
 | platform-runtime | HTTP lifecycle, DB wiring, migrations, health | A library, not a separate service; no shared business entities |
 
@@ -93,6 +96,12 @@ layers. Ports are introduced for real dependencies. Services do not import each 
 Java code or read each other's databases. ArchUnit checks architectural constraints.
 
 ### Containers and local environment
+
+Java container startup adds `infra/runtime/java-security.properties` to the JDK
+security defaults. Positive, negative and stale JVM DNS caches are disabled for
+dynamic Compose service names: restarted containers may exchange IP addresses.
+The setting is container-scoped and does not replace the JDK security policy.
+
 
 ```mermaid
 flowchart LR
@@ -180,7 +189,10 @@ Contracts are in each service's `src/main/resources/openapi.yaml`.
 | Gateway | POST `/v1/auth/sso` | Provider-token exchange; requires optional SSO configuration |
 | Gateway + Bearer | GET `/v1/auth/me`, POST `/v1/auth/logout` | Identity / revocation |
 | Gateway + Bearer | GET / PUT `/v1/users/me` | Own profile |
-| Gateway + Bearer | GET / POST `/v1/wallets` | Own wallets |
+| Gateway + Bearer | GET / POST `/v1/wallets`, GET `/v1/wallets/{id}/balance` | Own wallets and live balances |
+| Gateway + Bearer | PUT `/v1/users/me/phone`, POST `/v1/recipients/resolve` | Pending phone and exact verified recipient lookup |
+| Gateway + Bearer | POST / GET `/v1/payments`, GET `/v1/payments/{id}` | Idempotent transfers and participant history |
+| Gateway + Bearer | GET `/v1/notifications`, POST `/v1/notifications/{id}/read` | Own in-app inbox |
 | Private ledger | POST `/v1/ledger/accounts`, GET `/v1/ledger/accounts/{id}` | Account and balance |
 | Private ledger | POST `/v1/ledger/transfers`, GET `/v1/ledger/transfers/{id}` | Posting/replay and outcome |
 | Each service | GET `/health/live`, `/health/ready`, `/openapi.yaml` | Operational endpoints |
@@ -191,7 +203,7 @@ sequenceDiagram
     participant G as Gateway
     participant A as Auth
     participant DB as Auth DB
-    participant S as User or Wallet
+    participant S as User, Wallet or Payment
     C->>G: Login with email/password
     G->>A: Login + service key
     A->>DB: Verify credentials, persist session digest
@@ -208,8 +220,8 @@ sequenceDiagram
 
 Passwords are protected with Argon2id. The token is a random opaque string, not a JWT;
 `sessions` stores its SHA-256 digest. Sessions last 30 minutes; logout deletes the session.
-The gateway validates every profile/wallet request through auth, replaces the client's
-identity with the trusted identity, and does not forward the bearer token to user/wallet.
+The gateway validates every protected business request through auth, replaces the client's
+identity with the trusted identity, and does not forward the bearer token to user/wallet/payment.
 Authorization failure blocks the request.
 
 Ledger requires `X-Service-Key` and a trusted `X-Identity-Id`; the gateway does not proxy it.
@@ -228,7 +240,8 @@ flowchart LR
     ID -. "owner_id" .-> W["Wallet"]
     ID -. "owner_id" .-> A["Ledger account"]
     W -. "wallet_id and confirmed ledger_account_id" .-> A
-    P["Payment: schema only"] -. "Planned payment_id" .-> R["Transfer request"]
+    P["Durable payment intent"] -->|"Stable payment_id"| R["Transfer request"]
+    P --> N["Owner-scoped terminal notifications"]
     R -->|"POSTED"| T["Immutable transfer"]
     T --> D["Debit account"]
     T --> C["Credit account"]
@@ -238,9 +251,9 @@ flowchart LR
 | Database | Tables / guarantees |
 | --- | --- |
 | auth-db | `identities`: nullable email/password_hash pair for SSO-only principals, unique non-null email; `external_identities`: (issuer, subject) PK and unique local identity mapping; `sessions`: token_hash PK, FK identity_id, expires_at; `auth_attempts`: persistent limits |
-| user-db | `profiles`: unique identity_id, display_name |
+| user-db | `profiles`: unique identity_id, display_name, pending/verified E.164 phone; unique verified number; operator audit and persistent lookup quota |
 | wallet-db | `wallets`: unique(owner_id,currency), EUR/USD/GBP, ACTIVE/CLOSED, PENDING/READY, unique ledger_account_id, durable retry lease; no balance |
-| payment-db | `payments`: unique(requester_id,idempotency_key), request_hash, wallet IDs, amount/currency, PENDING/COMPLETED/REJECTED; schema only |
+| payment-db | `payments`: unique(requester_id,idempotency_key), request_hash, wallet IDs, amount/currency, PENDING/COMPLETED/REJECTED, recipient/account snapshot, fenced lease/backoff; notifications unique(owner,payment,type) |
 | ledger-db | `accounts`: unique wallet_id, owner, CUSTOMER/CLEARING, balance_minor; `transfers`: payment_id PK and account/currency FKs; `transfer_requests`: durable payload/outcome; `postings`: view |
 | Every database | `flyway_schema_history`: technical record of applied migrations |
 
@@ -295,7 +308,7 @@ Details: [ledger](docs/ledger.md), [ADR 0005](docs/adr/0005-atomic-ledger.md).
 
 POST /v1/wallets commits intent and returns 202 for ACTIVE/PENDING, or 200 for READY
 and existing CLOSED wallets. GET includes provisioning_status and nullable
-ledger_account_id. ACTIVE alone is not readiness: future payments require READY.
+ledger_account_id. ACTIVE alone is not readiness: payments require READY.
 Wallet requires LEDGER_BASE_URL (Compose supplies http://ledger-service:8080).
 
 ```mermaid
@@ -338,26 +351,61 @@ response or wallet crash is recovered with the same wallet UUID. A valid replay 
 return a nonzero ledger balance; wallet only owns the mapping. Mismatched owner,
 wallet or currency never becomes READY. See [ADR 0007](docs/adr/0007-wallet-ledger-provisioning.md).
 
-## Planned P2P
+## Phone P2P and notifications
 
-**A plan, not an implemented flow.** Dashed connections remain to be built.
+[HTTP contract](docs/p2p-contract.md) and [ADR 0009](docs/adr/0009-phone-p2p-payments.md)
+cover the implemented boundary and local operator procedure.
 
 ```mermaid
-flowchart LR
-    C["Client"] -.-> G["Gateway P2P"]
-    G -.-> P["Payment: requester + idempotency key"]
-    P -. "Wallet mapping" .-> W["Wallet"]
-    W -->|"Implemented provisioning"| L["Ledger"]
-    P -. "Stable payment_id" .-> L
-    L -. "POSTED / rejection" .-> P
-    P -. "Recovery after timeout/restart" .-> L
+sequenceDiagram
+    actor C as Native client
+    participant G as Gateway
+    participant U as User
+    participant P as Payment
+    participant W as Wallet
+    participant DB as Payment DB
+    participant L as Ledger
+    C->>G: Resolve exact E.164 phone
+    G->>U: Authenticated lookup, persistent quota
+    U-->>C: Verified identity and display name via gateway
+    C->>C: Confirm recipient, save immutable command/key in Keychain
+    C->>G: POST payment with Idempotency-Key
+    G->>P: Trusted requester and command
+    P->>DB: Look up existing requester/key first
+    opt New intent
+        P->>U: Recheck phone maps to confirmed recipient
+        P->>W: Validate source owner and both READY mappings
+        P->>DB: Persist payment and account snapshot
+    end
+    P-->>C: PENDING or prior result via gateway
+    loop Durable fenced worker until known outcome
+        P->>L: Same payment UUID and account payload
+        L-->>P: Matching POSTED or durable rejection
+        P->>DB: Commit terminal state and notifications atomically
+    end
+    C->>G: Refresh history and own inbox
 ```
 
-Wallet-to-ledger provisioning and recovery are implemented. Next: payment orchestration,
-reconciliation and public P2P with full acceptance tests. An `ACTIVE` wallet alone
-does not establish ledger readiness. There is no shared distributed transaction:
-durable state and idempotent commands are needed, not a promise of exactly-once HTTP.
-See [M1](docs/m1.md) and the [provisioning mission](docs/agents/missions/wallet-ledger.md).
+No shared distributed transaction is held across services. Ledger owns the money;
+payment remains PENDING after timeout, malformed response or unavailable dependencies.
+A crash after ledger commit is recovered by replaying the same ledger command. Terminal
+notifications commit with payment state, with unique constraints preventing duplicates.
+The recipient sees only completed incoming payments; the sender sees all its intents.
+History and inbox return the latest 100 entries, without pagination in this version.
+
+Phone updates are unverified until a local operator confirms ownership out of band
+and runs the audited CLI. No SMS, push provider or other external service is connected.
+Only verified numbers resolve; lookup is exact and limited to 30 attempts per requester
+per 60 seconds, including misses. It reveals the matched display name, not email or a
+user directory. Changing a number clears verification. Accepted payment snapshots are
+not redirected by later phone changes. No public verification or funding endpoint exists.
+
+The iOS tabs are Wallets, Transfers, Notifications and Profile. Amounts use exact Int64
+minor units. An uncertain command/key is retained in device-only Keychain per origin and
+identity across restart/logout; retry uses the same payload. Foreground/manual refresh
+fetches in-app notifications; no background delivery or OS push is promised.
+Existing scaffold payment rows without recipient/account mappings are not executed or
+exposed. See [M1](docs/m1.md) for acceptance and remaining scope.
 
 ## Agent team
 
@@ -396,9 +444,9 @@ flowchart LR
 | auth_owner | auth-service: credentials, sessions, limits |
 | ios_owner | ios: native SwiftUI client, gateway integration, browser authentication and tests |
 | sso_owner | sso-service: Keycloak/OIDC configuration; auth SSO adapter files only under an explicitly transferred lease |
-| user_owner | user-service: profiles |
-| wallet_owner | wallet-service: metadata/lifecycle, durable provisioning |
-| payment_owner | payment-service: planned orchestration/idempotency |
+| user_owner | user-service: profiles, phone directory and operator attestation |
+| wallet_owner | wallet-service: metadata/lifecycle, durable provisioning and live balances |
+| payment_owner | payment-service: orchestration/idempotency, recovery and notifications |
 | ledger_owner | ledger-service: accounts, balances, posting correctness |
 | qa_integration | End-to-end contracts, outages/recovery; only assigned test files |
 | qa_security | Financial invariants and owner isolation; only assigned tests |
@@ -502,6 +550,7 @@ flowchart LR
 | Auth/onboarding smoke in CI | Auth, profile, wallets through HTTP |
 | Provisioning smoke in CI | Concurrent retries, ledger outage, wallet restart and unique zero-balance account mapping |
 | Ledger smoke in CI | Private posting with synthetic funds |
+| `scripts/p2p-smoke.py` in disposable CI | Phone resolution, public P2P, duplicate/concurrent spending, outages, post-commit recovery, notification isolation and journal reconciliation |
 | SSO browser smoke in CI | Disposable Keycloak authorization code/PKCE and gateway exchange |
 | macOS iOS CI | Native compilation and simulator unit tests; not physical-device acceptance |
 
@@ -547,4 +596,3 @@ contracts on demand. [Audit](docs/agents/context-efficiency.md) records measured
 text reductions, not estimated billing savings. Fresh scoped worker contexts and
 bounded evidence replace full-history copies for independent tasks. macOS CI
 compiles/tests Swift; disposable browser CI verifies Keycloak code/PKCE and SSO.
-

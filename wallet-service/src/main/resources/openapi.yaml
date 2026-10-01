@@ -2,7 +2,8 @@ openapi: 3.0.3
 info:
   title: wallet-service
   version: 0.1.0
-  description: Wallet lifecycle and durable asynchronous ledger provisioning. Balances belong to ledger.
+  description: Wallet lifecycle and durable asynchronous ledger provisioning. Balances
+    belong to ledger.
 paths:
   /health/live:
     get:
@@ -48,12 +49,14 @@ paths:
         VerifiedIdentity: []
       responses:
         '200':
-          description: Current identity wallets including provisioning state, sorted by currency
+          description: Current identity wallets including provisioning state, sorted
+            by currency
           content:
             application/json:
               schema:
                 type: object
-                required: [wallets]
+                required:
+                - wallets
                 properties:
                   wallets:
                     type: array
@@ -65,12 +68,12 @@ paths:
           description: Wallet database unavailable
     post:
       operationId: openWallet
-      description: >-
-        Creates durable provisioning intent and returns immediately. ACTIVE PENDING returns
-        202; READY or existing CLOSED returns 200. Poll GET for readiness. Retries preserve
-        wallet identity and never reopen CLOSED wallets. A background worker retries ledger
-        with the stable wallet ID. Ledger outage leaves PENDING. Existing ACTIVE wallets
-        are reconciled after migration. No balances are held in wallet-service.
+      description: Creates durable provisioning intent and returns immediately. ACTIVE
+        PENDING returns 202; READY or existing CLOSED returns 200. Poll GET for readiness.
+        Retries preserve wallet identity and never reopen CLOSED wallets. A background
+        worker retries ledger with the stable wallet ID. Ledger outage leaves PENDING.
+        Existing ACTIVE wallets are reconciled after migration. No balances are held
+        in wallet-service.
       security:
       - ServiceKey: []
         VerifiedIdentity: []
@@ -81,11 +84,15 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [currency]
+              required:
+              - currency
               properties:
                 currency:
                   type: string
-                  enum: [EUR, USD, GBP]
+                  enum:
+                  - EUR
+                  - USD
+                  - GBP
       responses:
         '200':
           description: Confirmed READY wallet or existing CLOSED wallet
@@ -107,11 +114,104 @@ paths:
           description: Body exceeds 4096 bytes
         '503':
           description: Wallet database unavailable
+  /v1/wallets/{id}/balance:
+    get:
+      operationId: walletBalance
+      security: &id001
+      - ServiceKey: []
+        VerifiedIdentity: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: &id002
+          type: string
+          format: uuid
+      description: Owner-only live ledger balance. Validates account, wallet, owner
+        and currency mapping. Never substitutes zero on failure.
+      responses:
+        '200':
+          description: Authoritative ledger balance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Balance'
+        '400': &id003
+          description: Invalid UUID or currency
+        '401': &id004
+          description: Missing service key or trusted identity
+        '404':
+          description: Wallet missing or belongs to another owner
+        '503':
+          description: Database unavailable or ledger unavailable/malformed
+        '409':
+          description: Wallet is not ACTIVE and READY
+  /v1/internal/wallets/{id}:
+    get:
+      operationId: internalWallet
+      security: *id001
+      description: Private trusted-service lookup, never exposed by gateway. May return
+        another owner; payment caller must validate mappings and eligibility.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: *id002
+      responses:
+        '200':
+          description: Wallet metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+        '400': *id003
+        '401': *id004
+        '404': &id005
+          description: Wallet not found
+        '503': &id006
+          description: Dependency unavailable
+  /v1/internal/wallets/by-owner/{owner}/currency/{currency}:
+    get:
+      operationId: internalOwnerCurrencyWallet
+      security: *id001
+      description: Private trusted-service lookup, never exposed by gateway. May return
+        another owner; payment caller must validate mappings and eligibility.
+      parameters:
+      - name: owner
+        in: path
+        required: true
+        schema: *id002
+      - name: currency
+        in: path
+        required: true
+        schema:
+          type: string
+          enum:
+          - EUR
+          - USD
+          - GBP
+      responses:
+        '200':
+          description: Wallet metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '503': *id006
 components:
   schemas:
     Wallet:
       type: object
-      required: [id, owner_id, currency, status, provisioning_status, ledger_account_id]
+      required:
+      - id
+      - owner_id
+      - currency
+      - status
+      - provisioning_status
+      - ledger_account_id
       properties:
         id:
           type: string
@@ -121,13 +221,20 @@ components:
           format: uuid
         currency:
           type: string
-          enum: [EUR, USD, GBP]
+          enum:
+          - EUR
+          - USD
+          - GBP
         status:
           type: string
-          enum: [ACTIVE, CLOSED]
+          enum:
+          - ACTIVE
+          - CLOSED
         provisioning_status:
           type: string
-          enum: [PENDING, READY]
+          enum:
+          - PENDING
+          - READY
           description: READY proves a confirmed ledger mapping, not funding.
         ledger_account_id:
           type: string
@@ -144,6 +251,26 @@ components:
           enum:
           - UP
           - DOWN
+    Balance:
+      type: object
+      required:
+      - wallet_id
+      - currency
+      - balance_minor
+      properties:
+        wallet_id:
+          type: string
+          format: uuid
+        currency:
+          type: string
+          enum:
+          - EUR
+          - USD
+          - GBP
+        balance_minor:
+          type: integer
+          format: int64
+          minimum: 0
   securitySchemes:
     ServiceKey:
       type: apiKey

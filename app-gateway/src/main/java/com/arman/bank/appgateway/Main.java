@@ -8,10 +8,11 @@ public final class Main {
         var auth = URI.create(ServiceRuntime.required("AUTH_BASE_URL"));
         var users = URI.create(ServiceRuntime.required("USER_BASE_URL"));
         var wallets = URI.create(ServiceRuntime.required("WALLET_BASE_URL"));
+        var payments = URI.create(ServiceRuntime.required("PAYMENT_BASE_URL"));
         var key = ServiceRuntime.required("INTERNAL_AUTH_KEY");
         var proxy = new AuthProxy(auth, key, Clock.systemUTC());
         try {
-            var protectedProxy = new ProtectedProxy(auth, users, wallets, key);
+            var protectedProxy = new ProtectedProxy(auth, users, wallets, payments, key);
             try {
                 var runtime = ServiceRuntime.start("app-gateway", Integer.parseInt(System.getenv().getOrDefault("PORT", "8080")),
                     null, config -> { proxy.configure(config); protectedProxy.configure(config); });

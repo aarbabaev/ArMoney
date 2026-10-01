@@ -5,4 +5,6 @@ import java.util.UUID;
 public interface ProfileStore {
     Profile save(Profile profile);
     Optional<Profile> find(UUID identityId);
+    Optional<Profile> changePhone(UUID identityId, String phone);
+    Optional<Profile> resolvePhone(UUID requester, String phone);
 }

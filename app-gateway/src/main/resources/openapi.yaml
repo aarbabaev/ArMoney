@@ -1,14 +1,15 @@
 openapi: 3.0.3
 info:
   title: app-gateway
-  version: 0.1.0
-  description: Operational API and authenticated profiles and wallets with durable ledger-account provisioning.
-    No balances or transfers are exposed.
+  version: 0.2.0
+  description: 'Public ArMoney API: authentication, profiles, phone recipients, wallets
+    and balances, durable P2P and in-app notifications.'
 paths:
   /v1/auth/sso:
     post:
       operationId: exchangeSsoToken
-      description: Exchange a verified Keycloak access token for an ArMoney session; never links accounts by email.
+      description: Exchange a verified Keycloak access token for an ArMoney session;
+        never links accounts by email.
       requestBody:
         required: true
         content:
@@ -16,7 +17,8 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [access_token]
+              required:
+              - access_token
               properties:
                 access_token:
                   type: string
@@ -179,26 +181,11 @@ paths:
       operationId: getProfile
       responses:
         '200':
-          description: Current identity profile
+          description: Current profile; display-name updates preserve phone state
           content:
             application/json:
               schema:
-                type: object
-                required:
-                - id
-                - identity_id
-                - display_name
-                properties:
-                  id:
-                    type: string
-                    format: uuid
-                  identity_id:
-                    type: string
-                    format: uuid
-                  display_name:
-                    type: string
-                    minLength: 1
-                    maxLength: 100
+                $ref: '#/components/schemas/Profile'
         '404':
           description: No profile yet
         '400':
@@ -210,13 +197,10 @@ paths:
         '503':
           description: Dependency unavailable
         '429':
-          description: Gateway concurrency limit
-          headers:
-            Retry-After:
-              schema:
-                type: integer
+          description: 'Request or concurrency limit; Retry-After: 60'
       security:
       - BearerAuth: []
+      parameters: []
     put:
       operationId: saveProfile
       description: Create or update the current identity profile. Stable profile ID;
@@ -238,26 +222,11 @@ paths:
                   description: Trimmed; nonblank; no control characters
       responses:
         '200':
-          description: Saved profile
+          description: Current profile; display-name updates preserve phone state
           content:
             application/json:
               schema:
-                type: object
-                required:
-                - id
-                - identity_id
-                - display_name
-                properties:
-                  id:
-                    type: string
-                    format: uuid
-                  identity_id:
-                    type: string
-                    format: uuid
-                  display_name:
-                    type: string
-                    minLength: 1
-                    maxLength: 100
+                $ref: '#/components/schemas/Profile'
         '400':
           description: Invalid JSON or field values
         '401':
@@ -267,19 +236,19 @@ paths:
         '503':
           description: Dependency unavailable
         '429':
-          description: Gateway concurrency limit
-          headers:
-            Retry-After:
-              schema:
-                type: integer
+          description: 'Request or concurrency limit; Retry-After: 60'
       security:
       - BearerAuth: []
+      parameters: []
   /v1/wallets:
     get:
       operationId: listWallets
+      security:
+      - BearerAuth: []
       responses:
         '200':
-          description: Only current identity wallets, sorted by currency
+          description: Current identity wallets including provisioning state, sorted
+            by currency
           content:
             application/json:
               schema:
@@ -291,28 +260,23 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Wallet'
-        '400':
-          description: Invalid JSON or field values
         '401':
           description: Missing or invalid identity
-        '413':
-          description: Body exceeds 4096 bytes
         '503':
-          description: Dependency unavailable
+          description: Wallet database unavailable
         '429':
-          description: Gateway concurrency limit
-          headers:
-            Retry-After:
-              schema:
-                type: integer
-      security:
-      - BearerAuth: []
+          description: 'Request or concurrency limit; Retry-After: 60'
+      parameters: []
     post:
       operationId: openWallet
-      description: Returns a new or existing wallet for this owner and currency. Retrying
-        never creates duplicates or reopens a closed wallet. Active wallets remain PENDING
-        until their ledger account is confirmed. Background retries recover provisioning
-        after outages; poll GET /v1/wallets to observe READY. No funds are created.
+      description: Creates durable provisioning intent and returns immediately. ACTIVE
+        PENDING returns 202; READY or existing CLOSED returns 200. Poll GET for readiness.
+        Retries preserve wallet identity and never reopen CLOSED wallets. A background
+        worker retries ledger with the stable wallet ID. Ledger outage leaves PENDING.
+        Existing ACTIVE wallets are reconciled after migration. No balances are held
+        in wallet-service.
+      security:
+      - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -331,13 +295,13 @@ paths:
                   - GBP
       responses:
         '200':
-          description: Provisioned wallet (READY), or an existing CLOSED wallet that is not reopened
+          description: Confirmed READY wallet or existing CLOSED wallet
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Wallet'
         '202':
-          description: Active wallet saved; ledger-account provisioning is PENDING
+          description: ACTIVE wallet with durable PENDING ledger provisioning
           content:
             application/json:
               schema:
@@ -349,15 +313,366 @@ paths:
         '413':
           description: Body exceeds 4096 bytes
         '503':
-          description: Dependency unavailable
+          description: Wallet database unavailable
         '429':
-          description: Gateway concurrency limit
+          description: 'Request or concurrency limit; Retry-After: 60'
+      parameters: []
+  /v1/users/me/phone:
+    put:
+      operationId: changePhone
+      security:
+      - BearerAuth: []
+      description: Requires an existing profile. Changing the phone clears verification;
+        repeating it preserves verification. No verification endpoint exists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - phone_number
+              properties:
+                phone_number:
+                  type: string
+                  pattern: ^\+[1-9][0-9]{7,14}$
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        '400':
+          description: Invalid exact JSON or canonical E.164 value
+        '401':
+          description: Missing service key or trusted identity
+        '404':
+          description: Profile or verified recipient not found
+        '413':
+          description: Request exceeds 4096 bytes
+        '503':
+          description: Database unavailable
+        '429':
+          description: 'Request or concurrency limit; Retry-After: 60'
+      parameters: []
+  /v1/recipients/resolve:
+    post:
+      operationId: resolveVerifiedPhone
+      security:
+      - BearerAuth: []
+      description: Exact verified phone only. Discloses recipient display name to
+        authenticated callers. Database-backed limit of 30 lookups per requester per
+        60 seconds includes misses.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - phone_number
+              properties:
+                phone_number:
+                  type: string
+                  pattern: ^\+[1-9][0-9]{7,14}$
+      responses:
+        '200':
+          description: Verified recipient
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recipient'
+        '400':
+          description: Invalid exact JSON or canonical E.164 value
+        '401':
+          description: Missing service key or trusted identity
+        '404':
+          description: Profile or verified recipient not found
+        '413':
+          description: Request exceeds 4096 bytes
+        '503':
+          description: Database unavailable
+        '429':
+          description: Requester lookup limit exceeded
           headers:
             Retry-After:
               schema:
                 type: integer
+              description: Seconds until retry (conservative 60)
+      parameters: []
+  /v1/wallets/{id}/balance:
+    get:
+      operationId: walletBalance
       security:
       - BearerAuth: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      description: Owner-only live ledger balance. Validates account, wallet, owner
+        and currency mapping. Never substitutes zero on failure.
+      responses:
+        '200':
+          description: Authoritative ledger balance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Balance'
+        '400':
+          description: Invalid UUID or currency
+        '401':
+          description: Missing service key or trusted identity
+        '404':
+          description: Wallet missing or belongs to another owner
+        '503':
+          description: Database unavailable or ledger unavailable/malformed
+        '409':
+          description: Wallet is not ACTIVE and READY
+        '429':
+          description: 'Request or concurrency limit; Retry-After: 60'
+  /v1/payments:
+    post:
+      operationId: submitPayment
+      security:
+      - BearerAuth: []
+      description: Requester-scoped durable idempotency is checked before phone/wallet
+        resolution. Same payload returns its original status, even if peers later
+        change or fail. New requests confirm the current verified phone and eligible
+        wallets. Ledger calls occur only after durable acceptance; uncertain results
+        remain PENDING. No automatic wallet creation or funding.
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_-]{1,128}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentRequest'
+      responses:
+        '200':
+          description: Existing terminal result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '202':
+          description: Durable pending payment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '400':
+          description: Invalid input or missing idempotency key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Invalid internal credentials or trusted identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Recipient or wallet missing or foreign
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Idempotency conflict, recipient changed, wallet ineligible,
+            or legacy unresolved row
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Peer unavailable or malformed before acceptance, or local persistence
+            unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 'Request or concurrency limit; Retry-After: 60'
+    get:
+      operationId: paymentHistory
+      security:
+      - BearerAuth: []
+      description: Newest 100 visible payments ordered by created_at and id descending.
+        Sender sees all own statuses; recipient sees completed incoming payments only.
+        No pagination promise.
+      responses:
+        '200':
+          description: Bounded recent history
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - payments
+                properties:
+                  payments:
+                    type: array
+                    maxItems: 100
+                    items:
+                      $ref: '#/components/schemas/Payment'
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Persistence unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 'Request or concurrency limit; Retry-After: 60'
+      parameters: []
+  /v1/payments/{id}:
+    get:
+      operationId: paymentDetails
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Requester or completed-recipient view
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '400':
+          description: Invalid UUID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Missing, foreign, unresolved legacy, or non-completed incoming
+            payment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Persistence unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 'Request or concurrency limit; Retry-After: 60'
+  /v1/notifications:
+    get:
+      operationId: notifications
+      security:
+      - BearerAuth: []
+      description: Newest 100 owner notifications, ordered by created_at and id descending.
+        Durable in-app records, no SMS or push delivery.
+      responses:
+        '200':
+          description: Bounded owner notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - notifications
+                properties:
+                  notifications:
+                    type: array
+                    maxItems: 100
+                    items:
+                      $ref: '#/components/schemas/Notification'
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Persistence unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 'Request or concurrency limit; Retry-After: 60'
+      parameters: []
+  /v1/notifications/{id}/read:
+    post:
+      operationId: readNotification
+      security:
+      - BearerAuth: []
+      description: Requires an empty body. Repeated reads preserve the original read_at
+        timestamp.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Updated notification
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '400':
+          description: Invalid UUID or non-empty body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Missing or foreign notification
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Persistence unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 'Request or concurrency limit; Retry-After: 60'
 components:
   schemas:
     Wallet:
@@ -378,20 +693,26 @@ components:
           format: uuid
         currency:
           type: string
-          enum: [EUR, USD, GBP]
+          enum:
+          - EUR
+          - USD
+          - GBP
         status:
           type: string
-          enum: [ACTIVE, CLOSED]
-          description: Wallet lifecycle; ACTIVE does not by itself imply ledger readiness
+          enum:
+          - ACTIVE
+          - CLOSED
         provisioning_status:
           type: string
-          enum: [PENDING, READY]
-          description: READY means the owning identity and currency were confirmed by ledger
+          enum:
+          - PENDING
+          - READY
+          description: READY proves a confirmed ledger mapping, not funding.
         ledger_account_id:
           type: string
           format: uuid
           nullable: true
-          description: Null while PENDING; confirmed ledger account ID when READY
+          description: Null while PENDING; immutable once READY.
     Health:
       type: object
       required:
@@ -466,6 +787,198 @@ components:
       properties:
         error:
           type: string
+    Profile:
+      type: object
+      required:
+      - id
+      - identity_id
+      - display_name
+      - phone_number
+      - phone_verified
+      properties:
+        id:
+          type: string
+          format: uuid
+        identity_id: &id001
+          type: string
+          format: uuid
+        display_name: &id002
+          type: string
+          minLength: 1
+          maxLength: 100
+        phone_number:
+          type: string
+          pattern: ^\+[1-9][0-9]{7,14}$
+          nullable: true
+        phone_verified:
+          type: boolean
+    Recipient:
+      type: object
+      required:
+      - identity_id
+      - display_name
+      - phone_number
+      properties:
+        identity_id: *id001
+        display_name: *id002
+        phone_number:
+          type: string
+          pattern: ^\+[1-9][0-9]{7,14}$
+    Balance:
+      type: object
+      required:
+      - wallet_id
+      - currency
+      - balance_minor
+      properties:
+        wallet_id:
+          type: string
+          format: uuid
+        currency:
+          type: string
+          enum:
+          - EUR
+          - USD
+          - GBP
+        balance_minor:
+          type: integer
+          format: int64
+          minimum: 0
+    PaymentRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - source_wallet_id
+      - recipient_id
+      - recipient_phone
+      - currency
+      - amount_minor
+      properties:
+        source_wallet_id:
+          type: string
+          format: uuid
+        recipient_id:
+          type: string
+          format: uuid
+        recipient_phone:
+          type: string
+          pattern: ^\+[1-9][0-9]{7,14}$
+        currency:
+          type: string
+          enum:
+          - EUR
+          - USD
+          - GBP
+        amount_minor:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+    Payment:
+      type: object
+      required:
+      - id
+      - requester_id
+      - recipient_id
+      - source_wallet_id
+      - destination_wallet_id
+      - recipient_phone
+      - currency
+      - amount_minor
+      - status
+      - rejection_reason
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        requester_id:
+          type: string
+          format: uuid
+        recipient_id:
+          type: string
+          format: uuid
+        source_wallet_id:
+          type: string
+          format: uuid
+        destination_wallet_id:
+          type: string
+          format: uuid
+        recipient_phone:
+          type: string
+        currency:
+          type: string
+          enum:
+          - EUR
+          - USD
+          - GBP
+        amount_minor:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+        status:
+          type: string
+          enum:
+          - PENDING
+          - COMPLETED
+          - REJECTED
+        rejection_reason:
+          type: string
+          nullable: true
+          enum:
+          - INSUFFICIENT_FUNDS
+          - INVALID_ACCOUNT
+          - BALANCE_LIMIT
+          - null
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Notification:
+      type: object
+      required:
+      - id
+      - payment_id
+      - type
+      - currency
+      - amount_minor
+      - created_at
+      - read_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        payment_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum:
+          - PAYMENT_COMPLETED
+          - PAYMENT_REJECTED
+          - PAYMENT_RECEIVED
+        currency:
+          type: string
+          enum:
+          - EUR
+          - USD
+          - GBP
+        amount_minor:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+        created_at:
+          type: string
+          format: date-time
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
   securitySchemes:
     BearerAuth:
       type: http
