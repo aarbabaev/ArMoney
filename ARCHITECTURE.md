@@ -97,6 +97,12 @@ Java code or read each other's databases. ArchUnit checks architectural constrai
 
 ### Containers and local environment
 
+Java container startup adds `infra/runtime/java-security.properties` to the JDK
+security defaults. Positive, negative and stale JVM DNS caches are disabled for
+dynamic Compose service names: restarted containers may exchange IP addresses.
+The setting is container-scoped and does not replace the JDK security policy.
+
+
 ```mermaid
 flowchart LR
     SRC["Source + Gradle wrapper"] --> BUILD["Docker build: JDK 21"]

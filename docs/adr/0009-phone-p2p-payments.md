@@ -70,3 +70,10 @@ adds balanced synthetic funding, concurrent spending, duplicate requests, ledger
 outage, and a crash after ledger commit before local acknowledgement. These fixtures
 must never run against persistent user data. macOS CI builds/tests the native client;
 physical-device acceptance remains separate.
+
+Container restart acceptance exposed stale JVM DNS routing after Docker reused
+a stopped service IP for another service. A container-only additional Java security
+properties file disables positive/negative/stale DNS caching before clients start.
+The complete JDK security configuration remains intact; the Compose resolver is
+the trusted source of internal service addresses. Strict payment lookup checks
+remain in place after restart.
