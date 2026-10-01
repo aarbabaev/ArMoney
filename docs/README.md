@@ -9,7 +9,8 @@ results take precedence over historical ADR scope and previous deployment eviden
 | Document | Scope |
 | --- | --- |
 | [Architecture pointer](architecture.md) | Link to the maintained map |
-| [M1 plan](m1.md) | Implemented slices and planned durable public P2P |
+| [M1 plan](m1.md) | Implemented slices and durable public P2P acceptance |
+| [P2P contract](p2p-contract.md) | Phone recipients, balances, transfers, recovery and notifications |
 | [Onboarding](onboarding.md) | Profile/wallet HTTP walkthrough and IDEA setup |
 | [Ledger](ledger.md) | Private financial API, retry semantics and fixture limits |
 | [SSO and iOS runbook](sso-and-ios.md) | Windows LAN HTTPS, Keycloak, CA trust and validation boundaries |
@@ -33,6 +34,7 @@ extends the original metadata-only scope in ADR 0004.
 | [0006](adr/0006-agent-team.md) | On-demand agent team |
 | [0007](adr/0007-wallet-ledger-provisioning.md) | Durable wallet account provisioning |
 | [0008](adr/0008-native-ios-and-keycloak-sso.md) | Native client and Keycloak SSO |
+| [0009](adr/0009-phone-p2p-payments.md) | Phone attestation, durable P2P and in-app notifications |
 
 ## Agent workflow
 

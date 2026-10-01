@@ -50,5 +50,43 @@ class HttpLedgerAccountsSpec extends Specification {
         where:
         url << ['file:///tmp/ledger', 'http://user:pass@ledger', 'http://ledger/path', 'http://ledger?target=other', 'http://ledger#fragment']
     }
+    def "balance accepts only matching account and exact nonnegative int64"() {
+        given:
+        def wallet = new Wallet(UUID.randomUUID(), UUID.randomUUID(), 'EUR', 'ACTIVE', 'READY', UUID.randomUUID())
+        def data = [id:wallet.ledgerAccountId().toString(), wallet_id:wallet.id().toString(), owner_id:wallet.ownerId().toString(), currency:'EUR', balance_minor:123L]
+        if (field != null) data[field] = bad
+        server = HttpServer.create(new InetSocketAddress('127.0.0.1', 0), 0)
+        server.createContext('/v1/ledger/accounts/' + wallet.ledgerAccountId(), { ex ->
+            assert ex.requestMethod == 'GET'
+            assert ex.requestHeaders.getFirst('X-Identity-Id') == wallet.ownerId().toString()
+            assert ex.requestHeaders.getFirst('X-Service-Key') == KEY
+            ex.responseHeaders.set('Content-Type', 'application/json')
+            byte[] bytes = InternalHttp.JSON.writeValueAsBytes(data)
+            ex.sendResponseHeaders(200, bytes.length); ex.responseBody.write(bytes); ex.close()
+        } as com.sun.net.httpserver.HttpHandler)
+        server.start()
+        client = new HttpLedgerAccounts("http://127.0.0.1:${server.address.port}", KEY)
+        when:
+        def value
+        def failed = false
+        try { value = client.balance(wallet) } catch (Exception rejectedResponse) { failed = true }
+        then:
+        failed == rejected
+        if (!rejected) assert value == expected
+        where:
+        field           | bad                                    | rejected | expected
+        null            | null                                   | false    | 123L
+        'balance_minor' | 0L                                     | false    | 0L
+        'balance_minor' | Long.MAX_VALUE                         | false    | Long.MAX_VALUE
+        'balance_minor' | -1L                                    | true     | null
+        'balance_minor' | 1.5                                    | true     | null
+        'balance_minor' | '123'                                  | true     | null
+        'balance_minor' | new BigInteger('9223372036854775808')   | true     | null
+        'balance_minor' | null                                   | true     | null
+        'id'            | UUID.randomUUID().toString()            | true     | null
+        'owner_id'      | UUID.randomUUID().toString()            | true     | null
+        'wallet_id'     | UUID.randomUUID().toString()            | true     | null
+        'currency'      | 'USD'                                  | true     | null
+    }
 }
 

@@ -21,7 +21,9 @@ A banking backend with explicit service ownership and a PostgreSQL-backed ledger
 The native SwiftUI client lives in [ios/](ios/README.md); optional Keycloak SSO and
 local HTTPS setup are documented in [docs/sso-and-ios.md](docs/sso-and-ios.md).
 Identity registration, login, current identity and logout now work through gateway.
-Current-user profiles, wallet provisioning and private ledger posting are implemented. Public P2P execution remains a future slice.
+Profiles and operator-attested phone recipients, live wallet balances, durable P2P transfers,
+history and in-app notifications are implemented. See the [P2P contract](docs/p2p-contract.md)
+and [operator procedure](docs/adr/0009-phone-p2p-payments.md). No SMS or push provider is connected.
 
 ## Run
 
@@ -58,7 +60,9 @@ Dependency versions are centralized in the root and platform-runtime builds.
 For direct local runs, provide PORT (default 8080), DB_URL, DB_USER and DB_PASSWORD
 for persistent services, then run `./gradlew :ledger-service:run`.
 Each service must use a different PORT when started outside Compose.
-Gateway needs PORT, AUTH_BASE_URL and INTERNAL_AUTH_KEY; auth-service also needs
+Gateway needs PORT, AUTH_BASE_URL, USER_BASE_URL, WALLET_BASE_URL, PAYMENT_BASE_URL
+and INTERNAL_AUTH_KEY; payment needs USER_BASE_URL, WALLET_BASE_URL, LEDGER_BASE_URL
+and INTERNAL_AUTH_KEY; auth-service also needs
 INTERNAL_AUTH_KEY with the same value (at least 32 random characters). For an existing
 installation, append INTERNAL_AUTH_KEY to .env without changing LOCAL_DB_PASSWORD.
 

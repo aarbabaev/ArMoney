@@ -22,6 +22,12 @@ public final class PostgresWallets implements WalletStore, ProvisioningStore {
         return transaction(sql -> sql.fetch("select * from wallets where owner_id = ? order by currency", owner)
             .map(PostgresWallets::read));
     }
+    public Optional<Wallet> find(UUID id) {
+        return transaction(sql -> Optional.ofNullable(sql.fetchOne("select * from wallets where id = ?", id)).map(PostgresWallets::read));
+    }
+    public Optional<Wallet> find(UUID owner, String currency) {
+        return transaction(sql -> Optional.ofNullable(sql.fetchOne("select * from wallets where owner_id = ? and currency = ?", owner, currency)).map(PostgresWallets::read));
+    }
     public Optional<Claim> claim() {
         return transaction(sql -> {
             UUID token = UUID.randomUUID();

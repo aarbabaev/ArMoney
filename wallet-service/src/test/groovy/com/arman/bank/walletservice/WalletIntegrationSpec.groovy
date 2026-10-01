@@ -100,4 +100,28 @@ class WalletIntegrationSpec extends Specification {
         body << ['{}','{"currency":"eur"}','{"currency":"XYZ"}','{"currency":null}',
             '{"currency":"EUR","owner_id":"forged"}','{"currency":"EUR","currency":"USD"}']
     }
+    def "private lookup requires trusted headers and balance is owner scoped and fails closed"() {
+        given:
+        def store = new PostgresWallets(db)
+        def wallet = new WalletService(store).open(alice, 'EUR')
+        def path = '/v1/wallets/' + wallet.id() + '/balance'
+        expect:
+        req('GET', '/v1/internal/wallets/' + wallet.id(), bob).statusCode() == 200
+        req('GET', '/v1/internal/wallets/' + wallet.id(), bob, null, null).statusCode() == 401
+        req('GET', '/v1/internal/wallets/' + wallet.id(), null).statusCode() == 401
+        json(req('GET', "/v1/internal/wallets/by-owner/${alice}/currency/EUR")).get('id').asText() == wallet.id().toString()
+        req('GET', "/v1/internal/wallets/by-owner/${bob}/currency/EUR").statusCode() == 404
+        req('GET', path, bob).statusCode() == 404
+        req('GET', path).statusCode() == 409
+        when:
+        store.complete(store.claim().orElseThrow(), UUID.randomUUID())
+        then:
+        // Existing test route deliberately has no ledger client; it must never substitute zero.
+        req('GET', path).statusCode() == 503
+        req('GET', path, bob).statusCode() == 404
+        when:
+        db.transaction { it.execute("update wallets set status = 'CLOSED' where id = ?", wallet.id()) }
+        then:
+        req('GET', path).statusCode() == 409
+    }
 }

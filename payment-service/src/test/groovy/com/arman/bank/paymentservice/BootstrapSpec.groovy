@@ -7,7 +7,7 @@ import java.net.http.*
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses
 
 class BootstrapSpec extends Specification {
-    def "operational API and contract are served; business routes are absent"() {
+    def "bare runtime serves operational API and does not implicitly register business routes"() {
         given:
         def runtime = ServiceRuntime.start('payment-service', 0, null)
         def client = HttpClient.newHttpClient()
