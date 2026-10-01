@@ -2,6 +2,8 @@
 
 Status: Accepted for local M1 development
 
+Current-status note: This records the password-session slice. [ADR 0008](0008-native-ios-and-keycloak-sso.md) adds optional SSO and a LAN HTTPS edge while preserving local opaque sessions.
+
 Implement registration, login, current identity and logout in auth-service.
 Gateway forwards a fixed route allowlist; it never accepts client-supplied user IDs
 as authentication. No other service gains access to auth tables.

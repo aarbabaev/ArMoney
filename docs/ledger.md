@@ -28,8 +28,12 @@ No funding API exists. Synthetic funding happens only in isolated tests, with a
 real opposite posting against a test clearing account.
 
 ## Local update / IDEA
-docker compose up --build -d applies V2 without deleting volumes.
+For the base backend, docker compose up --build -d applies outstanding migrations
+without deleting volumes. Existing SSO deployments must retain their explicit
+Compose file set from [the SSO runbook](sso-and-ios.md).
 Existing INTERNAL_AUTH_KEY also configures ledger. No new secret is needed.
+The DB port below requires an ignored loopback port override; base Compose does
+not publish ledger or its database. IDEA does not load .env automatically.
 For IDEA use Java 21, PORT=8084, DB_URL=jdbc:postgresql://127.0.0.1:5437/bank,
 DB_USER=bank, DB_PASSWORD from LOCAL_DB_PASSWORD, INTERNAL_AUTH_KEY from .env.
 Keep these in an ignored .env file. Docker gateway does not forward to this port.

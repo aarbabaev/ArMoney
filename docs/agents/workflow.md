@@ -124,9 +124,8 @@ per-task responsibility, not a background updater.
 
 ## Pull request base
 
-Target `main` for all subsequent pull requests. The consolidated integration PR
-moves the completed slices from the former bootstrap branch into main for owner
-review. Start future feature branches from the latest main unless the user
+Target `main` for all subsequent pull requests. The backend and native iOS/SSO
+slices have been integrated into main. Start future feature branches from the latest main unless the user
 explicitly chooses a different starting point; do not continue using the bootstrap
 branch as the default integration target. PR creation never authorizes a merge.
 

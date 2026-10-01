@@ -4,7 +4,7 @@ enum AppError: LocalizedError, Equatable {
     case configuration, authentication, invalidResponse, http(Int), secureStorage
     var errorDescription: String? {
         switch self {
-        case .configuration: return "Set a valid HTTPS bank origin in Config/Local.xcconfig."
+        case .configuration: return "Set your HTTPS bank origin in Config/Local.xcconfig. Replace the .invalid placeholder with your bank server's LAN hostname or IP address."
         case .authentication: return "Your session ended. Please sign in again."
         case .invalidResponse: return "The server returned an unexpected response."
         case .http(let status): return status == 429 ? "Too many requests. Please wait and retry." : "The request failed (HTTP \(status)). Please retry."
@@ -19,6 +19,8 @@ struct Configuration {
         guard let c = URLComponents(string: origin), c.scheme == "https", let host = c.host, !host.isEmpty,
               c.user == nil, c.password == nil, c.query == nil, c.fragment == nil,
               c.path.isEmpty || c.path == "/", let url = c.url else { throw AppError.configuration }
+        let normalizedHost = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard normalizedHost != "invalid", !normalizedHost.hasSuffix(".invalid") else { throw AppError.configuration }
         self.origin = url
     }
     static func bundled() throws -> Configuration {

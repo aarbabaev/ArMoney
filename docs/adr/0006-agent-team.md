@@ -2,6 +2,8 @@
 
 Status: accepted for development tooling.
 
+Current-status note: The team now also includes dedicated iOS and SSO owners. See [the current ownership table](../agents/workflow.md#ownership); the original backend team decision below remains historical context.
+
 ## Context
 
 Six deployable services need clear ownership while cross-service contracts,

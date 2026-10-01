@@ -1,7 +1,9 @@
 # Mission: durable wallet-to-ledger provisioning
 
-Status: implemented by the wallet provisioning slice; final delivery requires its
-focused and full integration checks plus CI. Decision: docs/adr/0007-wallet-ledger-provisioning.md.
+Status: implemented and integrated into main. This mission preserves the original
+acceptance scope; it is not an instruction to reimplement the slice. Changes still
+require focused/full checks and exact-head CI. Decision: [ADR 0007](../../adr/0007-wallet-ledger-provisioning.md).
+Next planned slice: [durable public P2P](../../m1.md).
 
 Goal: every usable wallet converges to exactly one matching zero-opening-balance
 ledger account despite duplicate requests, timeouts and service restarts.

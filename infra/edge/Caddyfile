@@ -1,5 +1,7 @@
 {
     admin off
+    # IP-address clients omit SNI; select the certificate for the configured origin.
+    default_sni {$ARMONEY_HOST}
     auto_https disable_redirects
 }
 https://{$ARMONEY_HOST}:443 {

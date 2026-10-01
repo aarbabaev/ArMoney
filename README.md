@@ -1,7 +1,18 @@
-# Arman Bank — M1 bootstrap
+# ArMoney
 
 For the complete system and agent-team map with Mermaid diagrams, see
 [ARCHITECTURE.md](ARCHITECTURE.md). It is maintained alongside project changes.
+
+Repository: [aarbabaev/ArMoney](https://github.com/aarbabaev/ArMoney).
+The Compose project, network/volume names and Java packages retain their existing
+compatibility identifiers; a repository rename must not rename persistent resources.
+Existing Git checkouts can update their remote with:
+
+```sh
+git remote set-url origin https://github.com/aarbabaev/ArMoney.git
+```
+
+The local folder need not be renamed. See the [documentation index](docs/README.md).
 
 Java 21 / Gradle multi-project, Javalin (no Spring), PostgreSQL, Flyway,
 jOOQ, HikariCP, Spock, Testcontainers and ArchUnit.
@@ -14,9 +25,12 @@ Current-user profiles, wallet provisioning and private ledger posting are implem
 
 ## Run
 
-Prerequisites: JDK 21 and Docker with Linux containers.
+Prerequisites: JDK 21 and Docker with Linux containers. The commands below run
+the base backend. For Windows LAN HTTPS/Keycloak deployment, use the explicit
+Compose file set in [the SSO runbook](docs/sso-and-ios.md).
 
 ```sh
+# First clone only: do not overwrite an existing .env
 cp .env.example .env
 # Replace the local development password and INTERNAL_AUTH_KEY in .env
 docker compose up --build -d
@@ -37,7 +51,7 @@ python3 scripts/smoke.py       # all six containers must already be running
 docker compose down           # preserves data
 ```
 
-Windows: use `gradlew.bat` and `Copy-Item .env.example .env`.
+Windows: use `gradlew.bat`; copy `.env.example` only if `.env` does not already exist. Preserve existing database passwords and secrets when adding new settings.
 Wrapper version and distribution checksum are pinned. Java toolchain is 21.
 Dependency versions are centralized in the root and platform-runtime builds.
 
@@ -69,9 +83,11 @@ CI compiles on Java 21, runs unit/architecture and PostgreSQL integration tests,
 builds all images, and probes all six services on the private Compose network.
 Missing Docker is a test failure, never a silent skip. Reports are uploaded.
 Use a feature branch and PR; do not push to main or merge automatically.
-Main had only an initial .gitattributes when bootstrap started; no existing code
-was replaced. Branch protection is a repository-owner setting and is not enabled
-by this code change. Configure the CI build job as required before merging.
+Start feature branches from the latest main and target main in pull requests.
+Branch protection is a repository-owner setting; source code alone does not establish
+that it is enabled. Required checks must pass on the exact PR head before delivery.
+CI also includes macOS native build/simulator tests and disposable browser SSO
+coverage. These do not establish physical-iPhone or persistent-stack acceptance.
 
 Not included: broker, Redis, Kubernetes, production deployment, money movement API,
 distributed orchestration, observability backend, MFA and email verification.
@@ -82,16 +98,20 @@ distributed orchestration, observability backend, MFA and email verification.
 | --- | --- | --- |
 | POST | /v1/auth/register | 202 for new or existing email; no password overwrite |
 | POST | /v1/auth/login | 200 with access_token, token_type, expires_in and expires_at |
+| POST | /v1/auth/sso | Exchange a verified Keycloak access token for a local session; optional SSO configuration required |
 | GET | /v1/auth/me | Current identity; requires Authorization: Bearer <access_token> |
 | POST | /v1/auth/logout | 204; revokes that session |
 
-Registration/login accept JSON with exactly email and password. Passwords require
+Password registration/login accept JSON with exactly email and password.
+SSO exchange accepts only access_token. Issuer/subject mapping keeps SSO identities
+separate from password identities, without email linking. See the SSO runbook. Passwords require
 15+ characters (up to 128 UTF-16 units); emails are trimmed/lowercased.
 Sessions expire after 30 minutes. Responses use Cache-Control: no-store.
 For invalid input expect 400, invalid credentials/session 401, oversized body 413,
 limits 429 with Retry-After, and unavailable auth dependency 503.
 
-Existing installations receive V2 automatically at auth startup; V1 is unchanged.
+Flyway applies outstanding migrations at startup. Auth V2 adds password sessions
+and V3 adds SSO mapping while preserving existing UUIDs; V1 is unchanged.
 Use `docker compose up --build -d` after updating .env with INTERNAL_AUTH_KEY.
 Do not delete volumes. Local DataGrip port overrides remain compatible.
 

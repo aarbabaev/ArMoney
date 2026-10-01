@@ -1,6 +1,8 @@
-# ADR 0001 â€” Explicit service boundaries, minimal executable bootstrap
+# ADR 0001  -  Explicit service boundaries, minimal executable bootstrap
 
 Status: Accepted for bootstrap
+
+Current-status note: This records the initial bootstrap scope. Later ADRs and the maintained [architecture map](../../ARCHITECTURE.md) describe the implemented business APIs.
 
 Use explicit service boundaries and verifiable financial correctness with Java 21,
 Gradle, Javalin and PostgreSQL, without Spring or a message broker.
