@@ -100,6 +100,9 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
       - name: Install pinned Android SDK packages
         run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
       - name: Kotlin tests, lint and debug APK

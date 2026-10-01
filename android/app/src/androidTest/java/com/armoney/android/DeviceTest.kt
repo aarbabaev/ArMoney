@@ -51,4 +51,16 @@ class DeviceTest {
             assertTrue(runCatching { recreated.consume("${Callback.REDIRECT}?code=code&state=${request.state}", 2000) }.isFailure)
         } finally { first.remove(Login.scope(config.origin)) }
     }
+    @Test fun authenticatedStorageRejectsTamperedCiphertext() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val scope = "tamper-test|${UUID.randomUUID()}"
+        val store = SecureStore(context)
+        store.write(scope, "saved command")
+        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(scope.toByteArray()).joinToString("") { "%02x".format(it) }
+        val file = java.io.File(context.noBackupFilesDir, "armoney/$hash")
+        try {
+            val data = file.readBytes(); data[data.lastIndex] = (data.last().toInt() xor 1).toByte(); file.writeBytes(data)
+            assertTrue(runCatching { SecureStore(context).read(scope) }.isFailure)
+        } finally { store.remove(scope) }
+    }
 }

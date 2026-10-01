@@ -28,7 +28,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | Auth | Password login and Keycloak exchange, stable local identities, opaque sessions | Global provider logout/revocation integration |
 | SSO | Optional Keycloak realm, browser authorization code + PKCE | Production identity controls, MFA, email verification |
 | iOS | Existing native SwiftUI login, wallets/balances, transfers/history, notifications and profile (iOS 18+); feature development paused | Physical iPhone validation paused; regression CI retained |
-| Android | Native Kotlin/Compose counterpart, implementation under validation | Emulator/physical-device acceptance |
+| Android | Native Kotlin/Compose SSO, wallets/balances, phone transfers/history, inbox and profile (API26+) | Physical-device/LAN acceptance; exact-revision CI evidence in the delivery PR |
 | User | Profile, pending phone, operator-attested phone directory | Automated ownership proof requires a separate approved provider |
 | Wallet | Metadata, durable ledger provisioning, owner-scoped live balances | Lifecycle controls |
 | Ledger | Private accounts, balances, atomic postings, wallet/payment integration | Operational hardening |
