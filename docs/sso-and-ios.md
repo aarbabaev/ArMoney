@@ -33,7 +33,8 @@ docker compose -f compose.yaml -f compose.sso.yaml cp edge:/data/caddy/pki/autho
 Use https://YOUR_ARMONEY_HOST:8443 as the app origin. The issuer is that origin
 plus /sso/realms/armoney. Explicit -f arguments do not automatically include the
 user's compose.override.yaml; add it explicitly if you also need existing loopback
-DataGrip mappings. Never include compose.sso-ci.yaml outside disposable CI.
+DataGrip mappings or the local admin listener. Never include compose.sso-ci.yaml
+outside disposable CI.
 
 Allow TCP 8443 only on the Windows Private network profile, scoped to LocalSubnet.
 Do not open database ports or configure router port forwarding. Ensure Wi-Fi client
@@ -104,7 +105,8 @@ and [hostname resolution](https://github.com/keycloak/keycloak/blob/26.7.4/servi
 The native apps use the system browser and separate public clients: armoney-ios
 and armoney-android. Keycloak returns a short-lived provider token, which auth-service
 exchanges for an opaque 30-minute ArMoney session. Logout revokes that local session
-and offers browser logout; it is not global revocation across all devices. Existing
+and iOS also offers browser logout; Android currently preserves the browser SSO
+cookie. Neither flow is global revocation across all devices. Existing
 local sessions survive provider-side logout/disablement until local revocation or
 expiry. Refresh tokens and back-channel logout are outside this slice.
 
@@ -123,7 +125,8 @@ in Xcode. Neither those credentials nor your certificate trust are configured by
 
 Docker Desktop must use Linux containers. Keep the same explicit Compose file set
 for startup, inspection and updates; add the ignored `compose.override.yaml` after
-`compose.sso.yaml` only when its existing loopback database bindings are needed.
+`compose.sso.yaml` when its loopback database bindings or local administration
+listener are needed.
 Do not switch project names or delete volumes to fix connectivity. The repository
 is ArMoney, while Compose remains `arman-bank` to preserve persistent data.
 
