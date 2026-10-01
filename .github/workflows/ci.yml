@@ -112,14 +112,19 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      - name: Reserve disk space for the Android 36 userdata image
+        run: |
+          # These preinstalled SDKs are unused by this disposable Android-only job.
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          df -h "$HOME"
+          available_kb=$(df -Pk "$HOME" | awk 'NR == 2 {print $4}')
+          test "$available_kb" -ge 12582912 || { echo 'Need at least 12 GiB for the system image, userdata and tests'; exit 1; }
       - name: Real Keystore and native screen tests
         uses: ReactiveCircus/android-emulator-runner@1dcd0090116d15e7c562f8db72807de5e036a4ed # v2.34.0
         with:
           api-level: 36
           target: google_apis
           arch: x86_64
-          # Keep userdata within hosted-runner capacity; the API 36 default needs ~7 GB.
-          disk-size: 2048M
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: ./gradlew -p android --no-daemon connectedDebugAndroidTest
