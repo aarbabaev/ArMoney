@@ -1,8 +1,13 @@
-# ArMoney: SSO and native iOS
+# ArMoney: SSO and native clients
 
 The SwiftUI app targets iOS 18+ and iPhone 16 Pro Max. See [ios/README.md](../ios/README.md)
 for Xcode build, signing and app configuration. [ADR 0008](adr/0008-native-ios-and-keycloak-sso.md)
 defines identity mapping and logout limitations.
+
+Android uses the same HTTPS edge and realm through its own public client. See
+[android/README.md](../android/README.md) for Android Studio, debug CA trust and
+local origin configuration, and [SSO client updates](../sso-service/README.md)
+for an existing realm. Neither native app contains the private introspection secret.
 
 ## Run the optional SSO stack
 
@@ -66,8 +71,8 @@ other volumes to rotate a secret.
 
 ## Session behavior
 
-The native app uses the system authentication browser and a public client named
-armoney-ios. Keycloak returns a short-lived provider token, which auth-service
+The native apps use the system browser and separate public clients: armoney-ios
+and armoney-android. Keycloak returns a short-lived provider token, which auth-service
 exchanges for an opaque 30-minute ArMoney session. Logout revokes that local session
 and offers browser logout; it is not global revocation across all devices. Existing
 local sessions survive provider-side logout/disablement until local revocation or
@@ -79,7 +84,7 @@ The Python SSO smoke script is CI-only: it modifies a disposable realm, creates 
 synthetic user and adds an exact loopback redirect for browser automation. That
 redirect and the test admin port are not part of the shipped deployment. Browser
 certificate bypass exists only in this synthetic CI fixture; HTTP assertions use
-the exported CA and the iOS application always validates TLS.
+the exported CA and both native applications always validate TLS.
 
 Physical iPhone installation requires your Apple signing team and device approval
 in Xcode. Neither those credentials nor your certificate trust are configured by CI.

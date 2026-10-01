@@ -59,11 +59,13 @@ public final class KeycloakTokens implements SsoTokens, AutoCloseable {
             var subject = body.path("sub");
             var expiry = body.path("exp");
             var audience = body.path("aud");
+            String issuingClient = body.path("client_id").textValue();
+            boolean acceptedClient = "armoney-ios".equals(issuingClient) || "armoney-android".equals(issuingClient);
             boolean acceptedAudience = audience.isTextual() && audience.textValue().equals("armoney-api");
             if (audience.isArray()) for (var item : audience) acceptedAudience |= item.isTextual() && item.textValue().equals("armoney-api");
             if (!issuer.equals(body.path("iss").textValue()) || !"Bearer".equalsIgnoreCase(body.path("token_type").textValue()) ||
-                !acceptedAudience || !"armoney-ios".equals(body.path("client_id").textValue()) ||
-                (body.has("azp") && !"armoney-ios".equals(body.path("azp").textValue())) ||
+                !acceptedAudience || !acceptedClient ||
+                (body.has("azp") && !issuingClient.equals(body.path("azp").textValue())) ||
                 !subject.isTextual() || subject.textValue().isBlank() || subject.textValue().length() > 255 ||
                 subject.textValue().chars().anyMatch(Character::isISOControl) ||
                 !expiry.isIntegralNumber() || !expiry.canConvertToLong() || expiry.longValue() <= clock.instant().getEpochSecond() ||

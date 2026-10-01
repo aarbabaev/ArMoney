@@ -32,10 +32,43 @@ class KeycloakTokensSpec extends Specification {
     }
     def cleanup() { provider?.close(); server?.stop(0) }
 
-    def 'authenticated provider establishes stable subject'() {
+    def 'both allowed native clients establish the same issuer and subject with matching or absent azp'() {
+        given:
+        claims.client_id = nativeClient
+        if (authorizedParty) claims.azp = nativeClient
+        else claims.remove('azp')
         expect:
         provider.verify('opaque-access-token').issuer() == ISSUER
         provider.verify('opaque-access-token').subject() == 'stable-subject'
+        where:
+        nativeClient      | authorizedParty
+        'armoney-ios'     | true
+        'armoney-ios'     | false
+        'armoney-android' | true
+        'armoney-android' | false
+    }
+
+    def 'client allowlist and authorized party must agree exactly across native clients'() {
+        given:
+        claims.client_id = nativeClient
+        claims.azp = authorizedParty
+        when:
+        provider.verify('opaque-access-token')
+        then:
+        def error = thrown(AuthFailure)
+        error.kind() == AuthFailure.Kind.UNAUTHORIZED
+        where:
+        nativeClient        | authorizedParty
+        'armoney-ios'       | 'armoney-android'
+        'armoney-android'   | 'armoney-ios'
+        'armoney-android'   | 'other-client'
+        'armoney-android'   | null
+        'armoney-android'   | ['armoney-android']
+        'armoney-android-x' | 'armoney-android-x'
+        'ARMONEY-ANDROID'   | 'ARMONEY-ANDROID'
+        'armoney-auth'      | 'armoney-auth'
+        null                | 'armoney-android'
+        ['armoney-android'] | 'armoney-android'
     }
 
     def 'rejects unacceptable provider claims'() {
