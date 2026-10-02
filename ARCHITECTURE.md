@@ -1,7 +1,7 @@
 # ArMoney  -  System and Agent Team Architecture
 
 > The main project map. Checked against source code on **2026-10-01**, based on main
-> `802b2078a997cb2c17b62c42e1f7c0da0ea6b0f8` plus this P2P implementation.
+> `513a028877f47b41a0f759cc7e8b35147600c865` plus this Android implementation.
 > Describes the source code, not the guaranteed state of running containers.
 
 ## Navigation
@@ -27,7 +27,8 @@ exact-revision CI and independent review; source implementation is not deploymen
 | --- | --- | --- |
 | Auth | Password login and Keycloak exchange, stable local identities, opaque sessions | Global provider logout/revocation integration |
 | SSO | Optional Keycloak realm, browser authorization code + PKCE | Production identity controls, MFA, email verification |
-| iOS | Native SwiftUI login, wallets/balances, transfers/history, notifications and profile (iOS 18+) | Physical iPhone validation |
+| iOS | Existing native SwiftUI login, wallets/balances, transfers/history, notifications and profile (iOS 18+); feature development paused | Physical iPhone validation paused; regression CI retained |
+| Android | Native Kotlin/Compose SSO, wallets/balances, phone transfers/history, inbox and profile (API26+) | Physical-device/LAN acceptance; exact-revision CI evidence in the delivery PR |
 | User | Profile, pending phone, operator-attested phone directory | Automated ownership proof requires a separate approved provider |
 | Wallet | Metadata, durable ledger provisioning, owner-scoped live balances | Lifecycle controls |
 | Ledger | Private accounts, balances, atomic postings, wallet/payment integration | Operational hardening |
@@ -38,12 +39,12 @@ Java 21, Gradle multi-project, Javalin, PostgreSQL, Flyway, jOOQ, HikariCP;
 Spock, Testcontainers, ArchUnit; REST/OpenAPI; Docker Compose, GitHub Actions.
 Exact versions: [build.gradle](build.gradle), [runtime build](platform-runtime/build.gradle),
 [Gradle wrapper](gradle/wrapper/gradle-wrapper.properties), [Compose](compose.yaml).
-Spring, Kafka, Redis and Kubernetes are not implemented. Native iOS uses SwiftUI;
+Spring, Kafka, Redis and Kubernetes are not implemented. Native iOS uses SwiftUI; Android uses Kotlin and Jetpack Compose;
 Keycloak and Caddy are optional container services, configured by compose.sso.yaml.
 
 ## Services and runtime
 
-**Base backend connections are shown below; the optional SSO/iOS edge is described separately.** Wallet provisions accounts through the
+**Base backend connections are shown below; the optional native-client SSO edge is described separately.** Wallet provisions accounts through the
 private ledger API. Payment validates user/wallet mappings and posts through ledger.
 
 ```mermaid
@@ -118,7 +119,8 @@ only the gateway on loopback; the five databases have separate volumes. Flyway r
 while DB wiring is created, before the HTTP listener opens. Migration failure prevents startup.
 
 Variables: `PORT`, `DB_URL`, `DB_USER`, `DB_PASSWORD`; protected internal APIs use
-`INTERNAL_AUTH_KEY`; the gateway uses `AUTH_BASE_URL`, `USER_BASE_URL`, `WALLET_BASE_URL`.
+`INTERNAL_AUTH_KEY`; the gateway uses `AUTH_BASE_URL`, `USER_BASE_URL`, `WALLET_BASE_URL`, `PAYMENT_BASE_URL`.
+Payment uses `USER_BASE_URL`, `WALLET_BASE_URL`, `LEDGER_BASE_URL`.
 Secrets come from local configuration; their values must not appear in documentation.
 A regular Java launch **does not read `.env` automatically**: configure environment
 variables/an env file in IDEA; Compose uses its own substitution mechanism.
@@ -129,16 +131,23 @@ The user's local `compose.override.yaml` exposes databases to DataGrip on
 override. All database containers use `bank` as the database and user name; the password is local.
 Restarting does not require deleting volumes. See [README](README.md) and [IDEA](docs/onboarding.md).
 
-## Native iOS and SSO
+## Native clients and SSO
 
 The optional overlay adds an HTTPS edge and a Keycloak-owned PostgreSQL database.
 Caddy supplies default SNI from ARMONEY_HOST for clients using numeric IP origins; certificate name and CA validation still apply. Only the edge is bound to the selected LAN interface; the existing gateway binding
-remains loopback. Keycloak administration and management paths are not exposed.
+remains loopback. Keycloak administration and management paths are not exposed on
+the LAN listener. An optional workstation-only override exposes the admin console
+through Caddy at `https://localhost:9443`, bound to `127.0.0.1`; it uses a separate
+admin hostname and master-realm frontend URL, preserving the ArMoney issuer.
+See [local administration](docs/sso-and-ios.md#optional-host-only-administration).
 
 ```mermaid
 flowchart LR
     I["ArMoney SwiftUI / iPhone"] --> E["HTTPS edge :8443"]
+    AND["ArMoney Kotlin / Android"] --> E
     B["System authentication browser"] --> E
+    OP["Operator on Docker host"] -.-> ADM["Optional loopback TLS :9443"]
+    ADM -.->|"Admin / master realm only"| K
     E -->|"/v1 APIs"| G["App gateway"]
     E -->|"Allowlisted /sso routes"| K["Keycloak"]
     K --> KD[("SSO PostgreSQL")]
@@ -165,7 +174,7 @@ sequenceDiagram
     K-->>A: Active token and claims
     A->>A: Validate claims, map issuer/subject to local UUID
     A-->>I: Opaque ArMoney session through gateway
-    I->>I: Device-only Keychain storage
+    I->>I: Keychain on iOS / Keystore-backed storage on Android
 ```
 
 No identity is linked by email. Existing password identities and their wallet UUIDs
@@ -175,8 +184,13 @@ provider logout/disablement does not immediately revoke issued local sessions.
 Local logout and browser logout are separate operations, not global single logout.
 The app supports profile onboarding and actual wallet PENDING/READY states, with
 no fabricated balances or transfer success. TLS trust must be configured on each
-Mac/iPhone; native code never bypasses certificate validation. See
+Mac/iPhone/Android device; native code never bypasses certificate validation. See
 [setup](docs/sso-and-ios.md), [iOS](ios/README.md) and [ADR 0008](docs/adr/0008-native-ios-and-keycloak-sso.md).
+
+Android build/configuration and acceptance are described in [android/README.md](android/README.md),
+[Android contract](docs/android-contract.md) and [ADR 0010](docs/adr/0010-native-android.md).
+The Android public client uses its own exact callback; both native clients map the
+same issuer/subject to one bank identity. No new financial service is introduced.
 
 ## API and authentication
 
@@ -400,8 +414,9 @@ per 60 seconds, including misses. It reveals the matched display name, not email
 user directory. Changing a number clears verification. Accepted payment snapshots are
 not redirected by later phone changes. No public verification or funding endpoint exists.
 
-The iOS tabs are Wallets, Transfers, Notifications and Profile. Amounts use exact Int64
-minor units. An uncertain command/key is retained in device-only Keychain per origin and
+The native clients expose wallets, transfers, notifications and profile. Amounts use
+exact Int64/Long minor units. An uncertain command/key is retained in device-only
+Keychain (iOS) or Keystore-backed encrypted storage (Android), scoped per origin and
 identity across restart/logout; retry uses the same payload. Foreground/manual refresh
 fetches in-app notifications; no background delivery or OS push is promised.
 Existing scaffold payment rows without recipient/account mappings are not executed or
@@ -420,6 +435,7 @@ flowchart LR
     O --> G["gateway_owner"]
     O --> A["auth_owner"]
     O --> IOS["ios_owner"]
+    O --> ANDROID["android_owner"]
     O --> SSO["sso_owner"]
     O --> U["user_owner"]
     O --> W["wallet_owner"]
@@ -442,6 +458,7 @@ flowchart LR
 | bank_orchestrator | Assignment, integration, shared config/runtime, Compose/CI, this documentation, PR |
 | gateway_owner | app-gateway: routes, public contract, identity |
 | auth_owner | auth-service: credentials, sessions, limits |
+| android_owner | android: native Kotlin/Compose client, browser SSO, gateway contracts and secure recovery |
 | ios_owner | ios: native SwiftUI client, gateway integration, browser authentication and tests |
 | sso_owner | sso-service: Keycloak/OIDC configuration; auth SSO adapter files only under an explicitly transferred lease |
 | user_owner | user-service: profiles, phone directory and operator attestation |
@@ -464,6 +481,7 @@ Roles: `.codex/agents`; skills: `.agents/skills`.
 | bank-java | Java 21, Gradle, layer boundaries, and resources |
 | bank-postgres | jOOQ/HikariCP, Flyway, transactions/locks/retries |
 | bank-api | OpenAPI, Javalin, identity, bounded HTTP |
+| bank-android | Native Kotlin client, browser PKCE, Keystore persistence and emulator evidence |
 | bank-ios | Native SwiftUI iOS 18+, gateway integration, Keychain and device validation |
 | bank-sso | Keycloak OIDC, authorization code/PKCE, identity mapping and session migration |
 | bank-testing | Spock, Testcontainers, ArchUnit, evidence |
@@ -539,6 +557,10 @@ flowchart LR
     CI --> TEST["Java / Spock / ArchUnit / PostgreSQL"]
     TEST --> SMOKE["Isolated Compose + smoke"]
     SMOKE --> READY["Ready PR, user merges"]
+    CI --> ANDROID["Kotlin tests / lint / APK / emulator"]
+    CI --> IOS["Swift build / simulator tests"]
+    ANDROID --> READY
+    IOS --> READY
 ```
 
 | Check | What it establishes |
@@ -551,7 +573,8 @@ flowchart LR
 | Provisioning smoke in CI | Concurrent retries, ledger outage, wallet restart and unique zero-balance account mapping |
 | Ledger smoke in CI | Private posting with synthetic funds |
 | `scripts/p2p-smoke.py` in disposable CI | Phone resolution, public P2P, duplicate/concurrent spending, outages, post-commit recovery, notification isolation and journal reconciliation |
-| SSO browser smoke in CI | Disposable Keycloak authorization code/PKCE and gateway exchange |
+| Android CI | Debug APK, lint, JVM tests and real Keystore/native screen emulator tests |
+| SSO browser smoke in CI | Disposable Keycloak authorization code/PKCE and gateway exchange for iOS and Android |
 | macOS iOS CI | Native compilation and simulator unit tests; not physical-device acceptance |
 
 On Windows, use `.\gradlew.bat`. CI: [.github/workflows/ci.yml](.github/workflows/ci.yml).
@@ -589,8 +612,8 @@ Further reading: [README](README.md), [IDEA and manual testing](docs/onboarding.
 
 ### Context-efficient agent routing
 
-Dedicated ios_owner and sso_owner roles own the native client and SSO integration.
-They load bank-ios and bank-sso skills only for relevant tasks. Shared instructions
+Dedicated ios_owner, android_owner and sso_owner roles own native clients and SSO.
+They load bank-ios, bank-android and bank-sso skills only for relevant tasks. Shared instructions
 remain in AGENTS.md/workflow; [context-map](docs/agents/context-map.md) points to
 contracts on demand. [Audit](docs/agents/context-efficiency.md) records measured
 text reductions, not estimated billing savings. Fresh scoped worker contexts and

@@ -3,6 +3,7 @@
 .idea/
 *.iml
 .env
+compose.override.yaml
 
 .env.*
 !.env.example

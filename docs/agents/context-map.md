@@ -16,14 +16,15 @@ Java package names and paths retain `arman` compatibility.
 | Ledger correctness | [atomic ledger ADR](../adr/0005-atomic-ledger.md), [ledger guide](../ledger.md), `LedgerEngineIntegrationSpec.groovy` |
 | Wallet provisioning/recovery | [provisioning ADR](../adr/0007-wallet-ledger-provisioning.md), wallet `Provisioner` and `ProvisioningIntegrationSpec` |
 | Disposable system evidence | `.github/workflows/ci.yml`, relevant `scripts/*smoke*`; workflow isolation rules before execution |
-| Native app slice | Assigned `ios/` project/source/tests and frozen gateway contract; [bank-ios](../../.agents/skills/bank-ios/SKILL.md) |
+| Native Android slice | Assigned `android/` source/tests, [Android contract](../android-contract.md), gateway contract and [bank-android](../../.agents/skills/bank-android/SKILL.md) |
+| Native iOS slice | Assigned `ios/` project/source/tests and frozen gateway contract; [bank-ios](../../.agents/skills/bank-ios/SKILL.md) |
 | Keycloak slice | Assigned `sso-service/` configuration and explicit auth adapter lease; [bank-sso](../../.agents/skills/bank-sso/SKILL.md) |
 
 Ellipses abbreviate module Java package paths; use `rg --files <module>` to locate
-one named file. Search without generated `build/` outputs. The iOS/SSO rows are
+one named file. Search without generated `build/` outputs. The native-client/SSO rows are
 target ownership and lookup instructions, not a claim those flows passed runtime
 verification. Consult the integrated architecture status and current source.
 
 Use [skill routing](skills.md) for capability selection. For external API/version
-uncertainty consult current official Apple, Keycloak or OpenAI documentation for
+uncertainty consult current official Android, Apple, Keycloak or OpenAI documentation for
 the exact question; do not paste complete manuals into project instructions.

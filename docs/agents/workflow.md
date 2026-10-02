@@ -38,6 +38,7 @@ Format reference: [official OpenAI documentation](https://learn.chatgpt.com/docs
 | gateway_owner | app-gateway/ | Public API, routing and identity checks |
 | auth_owner | auth-service/ | Credentials, sessions and revocation |
 | sso_owner | sso-service/; explicitly leased auth adapter files | Keycloak/OIDC and identity mapping |
+| android_owner | android/ | Native Kotlin/Compose app, gateway integration, browser authentication and secure local recovery |
 | ios_owner | ios/ | Native SwiftUI app, browser authentication and secure session storage |
 | user_owner | user-service/ | Owner-scoped profiles |
 | wallet_owner | wallet-service/ | Wallet lifecycle and provisioning |
