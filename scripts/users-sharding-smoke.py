@@ -56,10 +56,13 @@ def ready():
         try:
             if call('GET', '/health/ready')[0] == 200:
                 # Gateway itself has no database: probe every internal service too.
-                result = subprocess.run(['docker', 'run', '--rm', '--network', args.project + '_bank',
-                    'curlimages/curl:8.16.0', '--fail', '--silent', '--max-time', '3',
-                    'http://user-service:8080/health/ready'], capture_output=True, timeout=20)
-                if result.returncode == 0:
+                checks = []
+                for service in ('auth-service', 'user-service', 'wallet-service', 'payment-service', 'ledger-service'):
+                    result = subprocess.run(['docker', 'run', '--rm', '--network', args.project + '_bank',
+                        'curlimages/curl:8.16.0', '--fail', '--silent', '--max-time', '3',
+                        f'http://{service}:8080/health/ready'], capture_output=True, timeout=20)
+                    checks.append(result.returncode == 0)
+                if all(checks):
                     return
         except (OSError, urllib.error.URLError, subprocess.TimeoutExpired):
             pass
@@ -72,7 +75,7 @@ def user(prefix, expected_shard, physical):
              'password': 'synthetic-sharding-smoke-password'}
     expect(202, call('POST', '/v1/auth/register', body=creds))
     token = expect(200, call('POST', '/v1/auth/login', body=creds))['access_token']
-    owner = str(uuid.UUID(expect(200, call('GET', '/v1/auth/me', token)['id']))
+    owner = str(uuid.UUID(expect(200, call('GET', '/v1/auth/me', token))['id']))
     first = expect(200, call('PUT', '/v1/users/me', token, {'display_name': prefix + ' Synthetic'},
                              {'X-Identity-Email': 'bo-forged@example.test', 'X-Shard-Id': 's2'}))
     assert sql('user-db', f"select shard_id from profile_directory where identity_id = '{owner}';") == expected_shard
