@@ -18,6 +18,8 @@ Java 21 / Gradle multi-project, Javalin (no Spring), PostgreSQL, Flyway,
 jOOQ, HikariCP, Spock, Testcontainers and ArchUnit.
 
 A banking backend with explicit service ownership and a PostgreSQL-backed ledger.
+AED is the only supported currency; amounts use integer fils (100 fils = 1 AED).
+There is no currency exchange or multi-currency account selection.
 Native clients live in [ios/](ios/README.md) (SwiftUI) and [android/](android/README.md)
 (Kotlin/Jetpack Compose). Optional Keycloak SSO and
 local HTTPS setup are documented in [docs/sso-and-ios.md](docs/sso-and-ios.md).

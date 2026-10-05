@@ -6,14 +6,14 @@ Gateway adds internal service identity; clients do not supply it.
 
 1. PUT /v1/users/me with JSON {"display_name":"Demo User"} returns 200 and the profile.
 2. GET /v1/users/me returns 200, or 404 if no profile was created.
-3. POST /v1/wallets with JSON {"currency":"EUR"} returns 202 with PENDING (or 200 if already READY / CLOSED).
+3. POST /v1/wallets with JSON {"currency":"AED"} returns 202 with PENDING (or 200 if already READY / CLOSED).
 4. Repeat step 3: the wallet id is unchanged.
 5. Poll GET /v1/wallets: it returns {"wallets":[...]} for the current identity only.
    Wait for provisioning_status=READY and a non-null ledger_account_id.
 6. Login as another identity: its profile/wallet collection is independent.
 7. Logout and reuse the old token: profile/wallet requests now return 401.
 
-Supported currencies: EUR, USD, GBP (uppercase). No public balance or transfer API yet.
+Supported currencies: AED (uppercase). Public balances and transfers are described in [the P2P contract](p2p-contract.md).
 Ledger outages retain PENDING work; automatic retries reuse the same wallet UUID.
 Do not send owner_id or identity_id in JSON; gateway derives ownership from auth.
 

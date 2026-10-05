@@ -115,7 +115,7 @@ class BankModel(application: Application) : AndroidViewModel(application) {
         if (generation == epoch) profile = p
     }
     private fun authenticated(action: suspend (SavedSession, Int) -> Unit) = task { val s = session ?: error("Sign in first"); action(s, generation) }
-    fun openWallet(currency: String) = authenticated { s, _ -> require(currency in setOf("EUR", "USD", "GBP")); http.send("/v1/wallets", "POST", json("currency", currency), s.session.access_token); load(s) }
+    fun openWallet(currency: String) = authenticated { s, _ -> supportedCurrency(currency); http.send("/v1/wallets", "POST", json("currency", currency), s.session.access_token); load(s) }
     fun resolve(value: String) = authenticated { s, epoch ->
         recipient = null
         val p = phone(value)
@@ -127,7 +127,7 @@ class BankModel(application: Application) : AndroidViewModel(application) {
     fun submit(wallet: Wallet, amount: String) = authenticated { s, epoch ->
         check(pending == null); val r = recipient ?: error("Confirm a recipient first")
         require(wallet.owner_id == s.identity.id && wallet.ready)
-        val command = PaymentCommand(uuid(wallet.id), uuid(r.identity_id), phone(r.phone_number), wallet.currency, minor(amount))
+        val command = PaymentCommand(uuid(wallet.id), uuid(r.identity_id), phone(r.phone_number), supportedCurrency(wallet.currency), minor(amount))
         val p = Pending(config.origin, s.identity.id, UUID.randomUUID().toString(), command)
         recovery.save(p); pending = p
         sendPending(s, p, epoch)

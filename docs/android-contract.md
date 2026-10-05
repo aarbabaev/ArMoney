@@ -37,3 +37,8 @@ payment recovery, HTTP contracts and OAuth checks; emulator tests for actual Key
 persistence/owner isolation and a native screen smoke. Disposable Keycloak browser
 tests must exercise both clients and preserve existing iOS acceptance. Physical
 device and LAN certificate/browser validation are separate evidence.
+
+Currency policy: AED only for new wallets and transfers, with amounts in integer
+fils (100 fils = 1 AED). There is no currency selector or FX. Existing encrypted
+uncertain commands retain their original currency, key and payload; the client
+never relabels or discards them to satisfy the new policy. See ADR 0011.

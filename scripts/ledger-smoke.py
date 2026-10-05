@@ -30,25 +30,25 @@ def expect(code, result):
     return result[1]
 
 alice, bob = str(uuid.uuid4()), str(uuid.uuid4())
-body = {"wallet_id": str(uuid.uuid4()), "currency": "EUR"}
+body = {"wallet_id": str(uuid.uuid4()), "currency": "AED"}
 expect(401, call("POST", "/v1/ledger/accounts", alice, body, False))
 a = expect(200, call("POST", "/v1/ledger/accounts", alice, body))
 assert expect(200, call("POST", "/v1/ledger/accounts", alice, body))["id"] == a["id"]
-b = expect(200, call("POST", "/v1/ledger/accounts", bob, {"wallet_id": str(uuid.uuid4()), "currency": "EUR"}))
+b = expect(200, call("POST", "/v1/ledger/accounts", bob, {"wallet_id": str(uuid.uuid4()), "currency": "AED"}))
 reserve, reserve_wallet, funding = (str(uuid.uuid4()) for _ in range(3))
 # All interpolated fields below are locally generated UUIDs or validated UUID API results.
 account_a = str(uuid.UUID(a["id"]))
 sql = f"""
 BEGIN;
-INSERT INTO accounts(id,wallet_id,currency,account_kind) VALUES ('{reserve}','{reserve_wallet}','EUR','CLEARING');
+INSERT INTO accounts(id,wallet_id,currency,account_kind) VALUES ('{reserve}','{reserve_wallet}','AED','CLEARING');
 INSERT INTO transfers(payment_id,debit_account_id,credit_account_id,currency,amount_minor)
-VALUES ('{funding}','{reserve}','{account_a}','EUR',1000);
+VALUES ('{funding}','{reserve}','{account_a}','AED',1000);
 COMMIT;
 """
 subprocess.run(["docker", "compose", "exec", "-T", "ledger-db", "psql", "-U", "bank", "-d", "bank",
     "-v", "ON_ERROR_STOP=1"], input=sql, text=True, capture_output=True, check=True, timeout=30)
 command = {"payment_id":str(uuid.uuid4()),"debit_account_id":a["id"],"credit_account_id":b["id"],
-           "currency":"EUR","amount_minor":250}
+           "currency":"AED","amount_minor":250}
 posted = expect(200, call("POST", "/v1/ledger/transfers", alice, command))
 assert posted["outcome"] == "POSTED"
 assert expect(200, call("POST", "/v1/ledger/transfers", alice, command)) == posted

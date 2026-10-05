@@ -85,7 +85,7 @@ class ProtectedProxySpec extends Specification {
         def identity = UUID.randomUUID().toString()
         def wallet = UUID.randomUUID().toString()
         def account = UUID.randomUUID().toString()
-        def body = InternalHttp.JSON.writeValueAsString([id: wallet, owner_id: identity, currency: 'EUR',
+        def body = InternalHttp.JSON.writeValueAsString([id: wallet, owner_id: identity, currency: 'AED',
             status: 'ACTIVE', provisioning_status: provisioning, ledger_account_id: ready ? account : null])
         def seen = [:]
         def auth = HttpServer.create(new InetSocketAddress('127.0.0.1', 0), 0)
@@ -116,7 +116,7 @@ class ProtectedProxySpec extends Specification {
         def response = client.send(HttpRequest.newBuilder(URI.create("http://localhost:${runtime.port()}/v1/wallets"))
             .header('Authorization', 'Bearer ' + ('a' * 43)).header('Content-Type', 'application/json')
             .header('X-Identity-Id', UUID.randomUUID().toString()).header('X-Service-Key', 'forged')
-            .POST(HttpRequest.BodyPublishers.ofString('{"currency":"EUR"}')).build(), HttpResponse.BodyHandlers.ofString())
+            .POST(HttpRequest.BodyPublishers.ofString('{"currency":"AED"}')).build(), HttpResponse.BodyHandlers.ofString())
 
         then:
         response.statusCode() == upstreamStatus
@@ -125,7 +125,7 @@ class ProtectedProxySpec extends Specification {
         seen.owner == identity
         seen.key == key
         seen.token == null
-        seen.body == '{"currency":"EUR"}'
+        seen.body == '{"currency":"AED"}'
 
         when: 'an undocumented 202 is returned for a wallet list'
         def list = client.send(HttpRequest.newBuilder(URI.create("http://localhost:${runtime.port()}/v1/wallets"))

@@ -17,7 +17,7 @@ public final class LedgerService {
     }
     public Optional<TransferResult> result(UUID requester, UUID payment) { return store.result(requester, payment); }
     private static void currency(String value) {
-        if (!Set.of("EUR", "USD", "GBP").contains(value == null ? "" : value))
+        if (!"AED".equals(value))
             throw new IllegalArgumentException("Unsupported currency");
     }
 }

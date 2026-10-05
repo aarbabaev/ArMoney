@@ -40,9 +40,9 @@ class WalletIntegrationSpec extends Specification {
         def executor = Executors.newFixedThreadPool(8)
         when:
         def wallets = (1..16).collect {
-            executor.submit({ service.open(alice, 'EUR') } as Callable)
+            executor.submit({ service.open(alice, 'AED') } as Callable)
         }.collect { it.get(15, TimeUnit.SECONDS) }
-        def response = req('POST', '/v1/wallets', alice, '{"currency":"EUR"}')
+        def response = req('POST', '/v1/wallets', alice, '{"currency":"AED"}')
         then:
         wallets*.id().unique().size() == 1
         response.statusCode() == 202
@@ -51,36 +51,36 @@ class WalletIntegrationSpec extends Specification {
         json(response).get('id').asText() == wallets.first().id().toString()
         json(req('GET', '/v1/wallets')).get('wallets').size() == 1
         json(req('GET', '/v1/wallets', bob)).get('wallets').size() == 0
-        req('POST', '/v1/wallets', bob, '{"currency":"EUR"}').statusCode() == 202
-        req('POST', '/v1/wallets', alice, '{"currency":"USD"}').statusCode() == 202
-        service.list(alice)*.currency() == ['EUR', 'USD']
-        db.transaction { it.fetchCount(org.jooq.impl.DSL.table('wallets')) } == 3
+        req('POST', '/v1/wallets', bob, '{"currency":"AED"}').statusCode() == 202
+        req('POST', '/v1/wallets', alice, '{"currency":"USD"}').statusCode() == 400
+        service.list(alice)*.currency() == ['AED']
+        db.transaction { it.fetchCount(org.jooq.impl.DSL.table('wallets')) } == 2
         when:
         runtime.close()
         db = new Database(postgres.jdbcUrl, postgres.username, postgres.password)
         then:
-        new WalletService(new PostgresWallets(db)).list(alice).size() == 2
+        new WalletService(new PostgresWallets(db)).list(alice).size() == 1
         cleanup:
         executor?.shutdownNow()
     }
     def "retries do not reopen a closed wallet"() {
         given:
         def service = new WalletService(new PostgresWallets(db))
-        def wallet = service.open(alice, 'EUR')
+        def wallet = service.open(alice, 'AED')
         db.transaction { it.execute("update wallets set status = 'CLOSED' where id = ?", wallet.id()) }
         expect:
-        service.open(alice, 'EUR').status() == 'CLOSED'
-        service.open(alice, 'EUR').id() == wallet.id()
-        req('POST', '/v1/wallets', alice, '{"currency":"EUR"}').statusCode() == 200
+        service.open(alice, 'AED').status() == 'CLOSED'
+        service.open(alice, 'AED').id() == wallet.id()
+        req('POST', '/v1/wallets', alice, '{"currency":"AED"}').statusCode() == 200
     }
     def "confirmed wallet returns 200 and stable account mapping without exposing a balance"() {
         given:
         def store = new PostgresWallets(db)
-        def wallet = new WalletService(store).open(alice, 'EUR')
+        def wallet = new WalletService(store).open(alice, 'AED')
         def account = UUID.randomUUID()
         store.complete(store.claim().orElseThrow(), account)
         when:
-        def response = req('POST', '/v1/wallets', alice, '{"currency":"EUR"}')
+        def response = req('POST', '/v1/wallets', alice, '{"currency":"AED"}')
         then:
         response.statusCode() == 200
         json(response).get('id').asText() == wallet.id().toString()
@@ -91,26 +91,32 @@ class WalletIntegrationSpec extends Specification {
     }
     def "wallet rejects untrusted owners and invalid currency without writes"() {
         expect:
-        req('POST', '/v1/wallets', alice, '{"currency":"EUR"}', null).statusCode() == 401
+        req('POST', '/v1/wallets', alice, '{"currency":"AED"}', null).statusCode() == 401
         req('GET', '/v1/wallets', null).statusCode() == 401
         req('GET', '/v1/wallets', alice, null, 'wrong').statusCode() == 401
         req('POST', '/v1/wallets', alice, body).statusCode() == 400
         db.transaction { it.fetchCount(org.jooq.impl.DSL.table('wallets')) } == 0
         where:
-        body << ['{}','{"currency":"eur"}','{"currency":"XYZ"}','{"currency":null}',
-            '{"currency":"EUR","owner_id":"forged"}','{"currency":"EUR","currency":"USD"}']
+        body << ['{"currency":"USD"}','{"currency":"EUR"}','{"currency":"GBP"}','{}','{"currency":"aed"}','{"currency":"XYZ"}','{"currency":null}',
+            '{"currency":"AED","owner_id":"forged"}','{"currency":"AED","currency":"USD"}']
+    }
+    def "owner currency lookup rejects unsupported currencies"() {
+        expect:
+        req('GET', "/v1/internal/wallets/by-owner/${alice}/currency/${currency}").statusCode() == 400
+        where:
+        currency << ['USD', 'EUR', 'GBP', 'aed', 'XYZ', 'AE', 'AEDD']
     }
     def "private lookup requires trusted headers and balance is owner scoped and fails closed"() {
         given:
         def store = new PostgresWallets(db)
-        def wallet = new WalletService(store).open(alice, 'EUR')
+        def wallet = new WalletService(store).open(alice, 'AED')
         def path = '/v1/wallets/' + wallet.id() + '/balance'
         expect:
         req('GET', '/v1/internal/wallets/' + wallet.id(), bob).statusCode() == 200
         req('GET', '/v1/internal/wallets/' + wallet.id(), bob, null, null).statusCode() == 401
         req('GET', '/v1/internal/wallets/' + wallet.id(), null).statusCode() == 401
-        json(req('GET', "/v1/internal/wallets/by-owner/${alice}/currency/EUR")).get('id').asText() == wallet.id().toString()
-        req('GET', "/v1/internal/wallets/by-owner/${bob}/currency/EUR").statusCode() == 404
+        json(req('GET', "/v1/internal/wallets/by-owner/${alice}/currency/AED")).get('id').asText() == wallet.id().toString()
+        req('GET', "/v1/internal/wallets/by-owner/${bob}/currency/AED").statusCode() == 404
         req('GET', path, bob).statusCode() == 404
         req('GET', path).statusCode() == 409
         when:

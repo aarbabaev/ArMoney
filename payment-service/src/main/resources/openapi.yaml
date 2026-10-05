@@ -323,10 +323,9 @@ components:
         currency:
           type: string
           enum:
-          - EUR
-          - USD
-          - GBP
+          - AED
         amount_minor:
+          description: Amount in integer fils (100 fils = 1 AED).
           type: integer
           format: int64
           minimum: 1
@@ -367,10 +366,9 @@ components:
         currency:
           type: string
           enum:
-          - EUR
-          - USD
-          - GBP
+          - AED
         amount_minor:
+          description: Amount in integer fils (100 fils = 1 AED).
           type: integer
           format: int64
           minimum: 1
@@ -421,10 +419,9 @@ components:
         currency:
           type: string
           enum:
-          - EUR
-          - USD
-          - GBP
+          - AED
         amount_minor:
+          description: Amount in integer fils (100 fils = 1 AED).
           type: integer
           format: int64
           minimum: 1

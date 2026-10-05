@@ -99,7 +99,7 @@ final class AppModel: ObservableObject {
         guard generation == current else { return }
         wallets = try HTTPClient.decode(WalletList.self, data: data).wallets
         balances = [:]; balanceErrors = [:]
-        for wallet in wallets where wallet.status == "ACTIVE" && wallet.provisioningStatus == "READY" {
+        for wallet in wallets where wallet.currency == "AED" && wallet.status == "ACTIVE" && wallet.provisioningStatus == "READY" {
             do {
                 let data = try await api.request("v1/wallets/\(wallet.id)/balance", token: bearer)
                 guard generation == current else { return }
@@ -150,13 +150,13 @@ final class AppModel: ObservableObject {
             try await load(current)
         } catch { handle(error, generation: current) }
     }
-    func createWallet(_ currency: String) async {
+    func createWallet() async {
         guard !busy else { return }
         let current = generation; busy = true; message = nil
         defer { if generation == current { busy = false } }
         do {
             guard let api else { throw AppError.configuration }
-            _ = try await api.request("v1/wallets", method: "POST", token: token(), body: ["currency": currency])
+            _ = try await api.request("v1/wallets", method: "POST", token: token(), body: ["currency": "AED"])
             guard generation == current else { return }
             try await load(current)
         } catch { handle(error, generation: current) }
@@ -180,7 +180,7 @@ final class AppModel: ObservableObject {
     }
     func send(wallet: Wallet, amount: String) async {
         guard !busy, pending == nil, recoveryReady, let recipient, let amountMinor = Money.parse(amount),
-              wallet.status == "ACTIVE", wallet.provisioningStatus == "READY" else { return }
+              wallet.currency == "AED", wallet.status == "ACTIVE", wallet.provisioningStatus == "READY" else { return }
         let current = generation
         do {
             let command = PaymentCommand(sourceWalletId: wallet.id, recipientId: recipient.identityId,

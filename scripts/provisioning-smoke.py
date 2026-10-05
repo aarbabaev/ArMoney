@@ -82,7 +82,7 @@ bob, other_owner = identity()
 try:
     compose("stop", "ledger-service")
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
-        results = list(executor.map(lambda _: request("POST", "/v1/wallets", {"currency": "EUR"}, alice), range(12)))
+        results = list(executor.map(lambda _: request("POST", "/v1/wallets", {"currency": "AED"}, alice), range(12)))
     wallets = [expect(202, result) for result in results]
     assert len({w["id"] for w in wallets}) == 1
     wallet = wallets[0]
@@ -100,9 +100,9 @@ finally:
 ready = await_wallet(alice, wallet["id"], "READY")
 assert ready["id"] == wallet["id"] and ready["status"] == "ACTIVE"
 account = expect(200, ledger_account(ready["ledger_account_id"], owner))
-assert (account["wallet_id"], account["owner_id"], account["currency"], account["balance_minor"]) == (wallet["id"], owner, "EUR", 0)
+assert (account["wallet_id"], account["owner_id"], account["currency"], account["balance_minor"]) == (wallet["id"], owner, "AED", 0)
 expect(404, ledger_account(ready["ledger_account_id"], other_owner))
-assert expect(200, request("POST", "/v1/wallets", {"currency": "EUR"}, alice)) == ready
+assert expect(200, request("POST", "/v1/wallets", {"currency": "AED"}, alice)) == ready
 # Locally generated/validated UUID only; inspect a disposable test DB, never an application cross-DB dependency.
 wallet_id = str(uuid.UUID(wallet["id"]))
 count = subprocess.run(["docker", "compose", "exec", "-T", "ledger-db", "psql", "-U", "bank", "-d", "bank",

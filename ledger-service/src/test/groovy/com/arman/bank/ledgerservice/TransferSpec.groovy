@@ -8,9 +8,19 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes
 
 class TransferSpec extends Specification {
     @Unroll
+    def "rejects unsupported currency #currency"() {
+        when:
+        new Transfer(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), Currency.getInstance(currency), 100L)
+        then:
+        thrown(IllegalArgumentException)
+        where:
+        currency << ['USD', 'EUR', 'GBP']
+    }
+
+    @Unroll
     def "rejects non-positive amount #amount"() {
         when:
-        new Transfer(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), Currency.getInstance('EUR'), amount)
+        new Transfer(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), Currency.getInstance('AED'), amount)
         then:
         thrown(IllegalArgumentException)
         where:
@@ -21,14 +31,14 @@ class TransferSpec extends Specification {
         given:
         def id = UUID.randomUUID()
         when:
-        new Transfer(UUID.randomUUID(), id, id, Currency.getInstance('EUR'), 100L)
+        new Transfer(UUID.randomUUID(), id, id, Currency.getInstance('AED'), 100L)
         then:
         thrown(IllegalArgumentException)
     }
 
     def "preserves exact minor units"() {
         expect:
-        new Transfer(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), Currency.getInstance('EUR'), Long.MAX_VALUE).amountMinor() == Long.MAX_VALUE
+        new Transfer(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), Currency.getInstance('AED'), Long.MAX_VALUE).amountMinor() == Long.MAX_VALUE
     }
 
     def "domain depends only on the JDK and itself"() {

@@ -11,7 +11,7 @@ public record Wallet(UUID id, UUID ownerId, String currency, String status,
     public Wallet {
         Objects.requireNonNull(id);
         Objects.requireNonNull(ownerId);
-        if (!Set.of("EUR", "USD", "GBP").contains(currency == null ? "" : currency))
+        if (!"AED".equals(currency))
             throw new IllegalArgumentException("Unsupported currency");
         if (!Set.of("ACTIVE", "CLOSED").contains(status == null ? "" : status))
             throw new IllegalArgumentException("Invalid status");

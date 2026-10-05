@@ -3,7 +3,7 @@ info:
   title: wallet-service
   version: 0.1.0
   description: Wallet lifecycle and durable asynchronous ledger provisioning. Balances
-    belong to ledger.
+    belong to ledger. AED is the only supported currency; 100 integer fils equal 1 AED.
 paths:
   /health/live:
     get:
@@ -90,9 +90,7 @@ paths:
                 currency:
                   type: string
                   enum:
-                  - EUR
-                  - USD
-                  - GBP
+                  - AED
       responses:
         '200':
           description: Confirmed READY wallet or existing CLOSED wallet
@@ -187,9 +185,7 @@ paths:
         schema:
           type: string
           enum:
-          - EUR
-          - USD
-          - GBP
+          - AED
       responses:
         '200':
           description: Wallet metadata
@@ -222,9 +218,7 @@ components:
         currency:
           type: string
           enum:
-          - EUR
-          - USD
-          - GBP
+          - AED
         status:
           type: string
           enum:
@@ -264,10 +258,9 @@ components:
         currency:
           type: string
           enum:
-          - EUR
-          - USD
-          - GBP
+          - AED
         balance_minor:
+          description: Integer fils (100 fils = 1 AED).
           type: integer
           format: int64
           minimum: 0

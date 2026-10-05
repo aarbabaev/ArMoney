@@ -12,8 +12,8 @@ class HttpLedgerAccountsSpec extends Specification {
     def cleanup() { client?.close(); server?.stop(0) }
     def "malformed untrusted ledger responses fail closed"() {
         given:
-        def wallet = new Wallet(UUID.randomUUID(), UUID.randomUUID(), 'EUR', 'ACTIVE')
-        def data = [id:UUID.randomUUID().toString(), wallet_id:wallet.id().toString(), owner_id:wallet.ownerId().toString(), currency:'EUR']
+        def wallet = new Wallet(UUID.randomUUID(), UUID.randomUUID(), 'AED', 'ACTIVE')
+        def data = [id:UUID.randomUUID().toString(), wallet_id:wallet.id().toString(), owner_id:wallet.ownerId().toString(), currency:'AED']
         if (field != null) data[field] = bad
         def body = special ?: InternalHttp.JSON.writeValueAsString(data)
         server = HttpServer.create(new InetSocketAddress('127.0.0.1', 0), 0)
@@ -52,8 +52,8 @@ class HttpLedgerAccountsSpec extends Specification {
     }
     def "balance accepts only matching account and exact nonnegative int64"() {
         given:
-        def wallet = new Wallet(UUID.randomUUID(), UUID.randomUUID(), 'EUR', 'ACTIVE', 'READY', UUID.randomUUID())
-        def data = [id:wallet.ledgerAccountId().toString(), wallet_id:wallet.id().toString(), owner_id:wallet.ownerId().toString(), currency:'EUR', balance_minor:123L]
+        def wallet = new Wallet(UUID.randomUUID(), UUID.randomUUID(), 'AED', 'ACTIVE', 'READY', UUID.randomUUID())
+        def data = [id:wallet.ledgerAccountId().toString(), wallet_id:wallet.id().toString(), owner_id:wallet.ownerId().toString(), currency:'AED', balance_minor:123L]
         if (field != null) data[field] = bad
         server = HttpServer.create(new InetSocketAddress('127.0.0.1', 0), 0)
         server.createContext('/v1/ledger/accounts/' + wallet.ledgerAccountId(), { ex ->

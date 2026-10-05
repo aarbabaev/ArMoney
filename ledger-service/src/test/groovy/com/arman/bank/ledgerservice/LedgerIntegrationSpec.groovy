@@ -7,7 +7,7 @@ import java.sql.DriverManager
 import java.sql.SQLException
 
 class LedgerIntegrationSpec extends Specification {
-    def "PostgreSQL enforces paired postings currency and immutable transfer identity"() {
+    def "PostgreSQL enforces paired postings account references and immutable transfer identity"() {
         given:
         def postgres = new PostgreSQLContainer('postgres:17.6-alpine')
         postgres.start()
@@ -17,12 +17,12 @@ class LedgerIntegrationSpec extends Specification {
         def b = UUID.randomUUID()
         def c = UUID.randomUUID()
         def payment = UUID.randomUUID()
-        [a, b, c].each { id ->
+        [a, b].each { id ->
             def statement = connection.prepareStatement("insert into accounts(id, wallet_id, currency, account_kind) values (?, ?, ?, 'CLEARING')")
             try {
                 statement.setObject(1, id)
                 statement.setObject(2, UUID.randomUUID())
-                statement.setString(3, id == c ? 'USD' : 'EUR')
+                statement.setString(3, 'AED')
                 statement.executeUpdate()
             } finally { statement.close() }
         }
@@ -32,7 +32,7 @@ class LedgerIntegrationSpec extends Specification {
                 statement.setObject(1, id)
                 statement.setObject(2, debit)
                 statement.setObject(3, credit)
-                statement.setString(4, 'EUR')
+                statement.setString(4, 'AED')
                 statement.setLong(5, amount)
                 statement.executeUpdate()
             } finally { statement.close() }

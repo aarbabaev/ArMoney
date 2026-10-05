@@ -15,9 +15,9 @@ may supply identity headers. There is no direct gateway ledger route. Public P2P
 which validates wallet ownership and confirmed phone recipients before posting.
 OpenAPI is available on ledger-service's own /openapi.yaml.
 
-An account request contains wallet_id (UUID) and currency (EUR/USD/GBP).
+An account request contains wallet_id (UUID) and currency (AED).
 A transfer contains payment_id, debit_account_id, credit_account_id (UUIDs),
-currency and amount_minor (positive int64; 100 means one unit for these currencies).
+currency and amount_minor (positive int64; 100 fils = 1 AED).
 POST returns 200 for POSTED, 409 with a durable outcome for rejection,
 or 409 idempotency_conflict if the ID's payload/requester changes.
 GET result returns 200 even for a stored rejection, 404 when absent/not owned.

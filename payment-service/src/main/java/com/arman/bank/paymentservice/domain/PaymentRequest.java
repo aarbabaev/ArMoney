@@ -5,7 +5,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Objects;
-import java.util.Set;
 import java.util.UUID;
 
 public record PaymentRequest(UUID sourceWalletId, UUID recipientId, String recipientPhone,
@@ -15,7 +14,7 @@ public record PaymentRequest(UUID sourceWalletId, UUID recipientId, String recip
         Objects.requireNonNull(recipientId);
         if (recipientPhone == null || !recipientPhone.matches("\\+[1-9][0-9]{7,14}"))
             throw new IllegalArgumentException("Invalid phone");
-        if (currency == null || !Set.of("EUR", "USD", "GBP").contains(currency) || amountMinor <= 0)
+        if (!"AED".equals(currency) || amountMinor <= 0)
             throw new IllegalArgumentException("Invalid amount or currency");
     }
 

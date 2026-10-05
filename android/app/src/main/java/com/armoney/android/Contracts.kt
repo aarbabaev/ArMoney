@@ -8,6 +8,8 @@ import java.math.BigDecimal
 import java.util.UUID
 
 val wire = Json { ignoreUnknownKeys = true }
+const val SUPPORTED_CURRENCY = "AED"
+fun supportedCurrency(value: String): String = value.also { require(it == SUPPORTED_CURRENCY) { "Only AED is supported for new wallets and transfers." } }
 fun uuid(value: String): String = value.also { require(UUID.fromString(it).toString() == it) }
 fun phone(value: String): String = value.also { require(it.matches(Regex("\\+[1-9][0-9]{7,14}"))) { "Use an international number, such as +12025550123." } }
 fun minor(value: String): Long {
@@ -43,7 +45,7 @@ object Callback {
 @Serializable data class Session(val access_token: String, val token_type: String, val expires_at: String)
 @Serializable data class Identity(val id: String, val email: String? = null)
 @Serializable data class SavedSession(val origin: String, val session: Session, val identity: Identity)
-@Serializable data class Wallet(val id: String, val owner_id: String, val currency: String, val status: String, val provisioning_status: String) { val ready get() = status == "ACTIVE" && provisioning_status == "READY" }
+@Serializable data class Wallet(val id: String, val owner_id: String, val currency: String, val status: String, val provisioning_status: String) { val ready get() = currency == SUPPORTED_CURRENCY && status == "ACTIVE" && provisioning_status == "READY" }
 @Serializable data class Wallets(val wallets: List<Wallet>)
 @Serializable data class Balance(val wallet_id: String, val currency: String, val balance_minor: Long)
 @Serializable data class Profile(val identity_id: String, val display_name: String, val phone_number: String? = null, val phone_verified: Boolean)

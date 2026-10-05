@@ -67,3 +67,6 @@ Tests cover concurrent debit exhaustion, same-ID retry, opposite directions,
 durable rejection, authorization, mismatched payload/currency, overflow, SQL overdraft,
 immutability, rollback after balance trigger execution and restart/reconciliation.
 Compose additionally verifies the private HTTP flow on disposable funded accounts.
+
+Currency policy update: [ADR 0011](0011-aed-only.md) supersedes the original
+EUR/USD/GBP policy with AED only. Published migrations remain unchanged.

@@ -63,7 +63,7 @@ def make_user(label):
     token = expect(200, call('POST', '/v1/auth/login', body=creds))['access_token']
     owner = expect(200, call('GET', '/v1/auth/me', token))['id']
     expect(200, call('PUT', '/v1/users/me', token, {'display_name': label}))
-    status, wallet = call('POST', '/v1/wallets', token, {'currency': 'EUR'})
+    status, wallet = call('POST', '/v1/wallets', token, {'currency': 'AED'})
     assert status in (200, 202)
     wallet = until(lambda: expect(200, call('GET', '/v1/wallets', token))['wallets'][0],
         lambda w: w['provisioning_status'] == 'READY')
@@ -91,9 +91,9 @@ expect(404, call('GET', '/v1/wallets/' + a['id'] + '/balance', bob))
 reserve, reserve_wallet, funding = (str(uuid.uuid4()) for _ in range(3))
 account_a, account_b = (str(uuid.UUID(w['ledger_account_id'])) for w in (a, b))
 sql('ledger-db', f"""BEGIN;
-INSERT INTO accounts(id,wallet_id,currency,account_kind) VALUES ('{reserve}','{reserve_wallet}','EUR','CLEARING');
+INSERT INTO accounts(id,wallet_id,currency,account_kind) VALUES ('{reserve}','{reserve_wallet}','AED','CLEARING');
 INSERT INTO transfers(payment_id,debit_account_id,credit_account_id,currency,amount_minor)
-VALUES ('{funding}','{reserve}','{account_a}','EUR',1000); COMMIT;""")
+VALUES ('{funding}','{reserve}','{account_a}','AED',1000); COMMIT;""")
 
 
 def balance(token, wallet):
@@ -110,7 +110,10 @@ def terminal(payment_id):
 
 
 command = {'source_wallet_id': a['id'], 'recipient_id': bob_id,
-    'recipient_phone': phone, 'currency': 'EUR', 'amount_minor': 250}
+    'recipient_phone': phone, 'currency': 'AED', 'amount_minor': 250}
+for unsupported in ("USD", "EUR", "GBP", "aed"):
+    expect(400, call("POST", "/v1/payments", alice, dict(command, currency=unsupported), str(uuid.uuid4())))
+assert balance(alice, a) == 1000 and balance(bob, b) == 0
 idem = str(uuid.uuid4())
 with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
     results = list(pool.map(lambda _: call('POST', '/v1/payments', alice, command, idem), range(4)))

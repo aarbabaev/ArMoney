@@ -101,7 +101,7 @@ final class ArMoneyTests: XCTestCase {
 // Immutable fixtures selected from the request; no shared mutable test handler.
 final class FixtureProtocol: URLProtocol {
     static let wallets = Data("""
-    {"wallets":[{"id":"one","owner_id":"owner","currency":"EUR","status":"ACTIVE","provisioning_status":"PENDING","ledger_account_id":null},{"id":"two","owner_id":"owner","currency":"USD","status":"ACTIVE","provisioning_status":"READY","ledger_account_id":"ledger"}]}
+    {"wallets":[{"id":"one","owner_id":"owner","currency":"AED","status":"ACTIVE","provisioning_status":"PENDING","ledger_account_id":null},{"id":"two","owner_id":"owner","currency":"AED","status":"ACTIVE","provisioning_status":"READY","ledger_account_id":"ledger"}]}
     """.utf8)
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -128,9 +128,9 @@ final class BankingSafetyTests: XCTestCase {
         for input in ["0", "0.00", "-1", "+1", "1,50", "1.001", "1e3", " 1", "1 ", "1\n", "١٢", ".50", "1.", "92233720368547758.08", "92233720368547759", "999999999999999999999"] {
             XCTAssertNil(Money.parse(input), input)
         }
-        XCTAssertEqual(Money.format(Int64.max, currency: "EUR"), "92233720368547758.07 EUR")
-        XCTAssertEqual(Money.format(Int64.min, currency: "GBP"), "−92233720368547758.08 GBP")
-        XCTAssertEqual(Money.format(1, currency: "USD"), "0.01 USD")
+        XCTAssertEqual(Money.format(Int64.max, currency: "AED"), "92233720368547758.07 AED")
+        XCTAssertEqual(Money.format(Int64.min, currency: "AED"), "−92233720368547758.08 AED")
+        XCTAssertEqual(Money.format(1, currency: "AED"), "0.01 AED")
     }
     func testPhoneRequiresExactE164() {
         XCTAssertTrue(Money.validPhone("+441234567890"))
@@ -139,7 +139,7 @@ final class BankingSafetyTests: XCTestCase {
         }
     }
     func testLostResponseRecoveryPreservesKeyAndPayloadAcrossSerialization() throws {
-        let command = PaymentCommand(sourceWalletId: "source", recipientId: "recipient", recipientPhone: "+441234567890", currency: "EUR", amountMinor: 9_007_199_254_740_993)
+        let command = PaymentCommand(sourceWalletId: "source", recipientId: "recipient", recipientPhone: "+441234567890", currency: "AED", amountMinor: 9_007_199_254_740_993)
         let pending = PendingSubmission(command: command)
         let restored = try JSONDecoder().decode(PendingSubmission.self, from: JSONEncoder().encode(pending))
         XCTAssertEqual(restored, pending)
@@ -151,10 +151,10 @@ final class BankingSafetyTests: XCTestCase {
         XCTAssertFalse(json.contains("amountMinor"))
     }
     func testPendingCannotAcceptMismatchedOrUnknownOutcome() {
-        let command = PaymentCommand(sourceWalletId: "source", recipientId: "recipient", recipientPhone: "+441234567890", currency: "EUR", amountMinor: 1250)
+        let command = PaymentCommand(sourceWalletId: "source", recipientId: "recipient", recipientPhone: "+441234567890", currency: "AED", amountMinor: 1250)
         let pending = PendingSubmission(command: command)
         func response(amount: Int64 = 1250, status: String = "PENDING", owner: String = "owner") -> Payment {
-            Payment(id: "00000000-0000-4000-8000-000000000001", requesterId: owner, recipientId: "recipient", sourceWalletId: "source", destinationWalletId: "00000000-0000-4000-8000-000000000002", recipientPhone: "+441234567890", currency: "EUR", amountMinor: amount, status: status, rejectionReason: nil, createdAt: "date", updatedAt: "date")
+            Payment(id: "00000000-0000-4000-8000-000000000001", requesterId: owner, recipientId: "recipient", sourceWalletId: "source", destinationWalletId: "00000000-0000-4000-8000-000000000002", recipientPhone: "+441234567890", currency: "AED", amountMinor: amount, status: status, rejectionReason: nil, createdAt: "date", updatedAt: "date")
         }
         XCTAssertTrue(pending.matches(response(), identity: "owner"))
         XCTAssertTrue(pending.matches(response(status: "COMPLETED"), identity: "owner"))
@@ -169,7 +169,7 @@ final class BankingSafetyTests: XCTestCase {
         let otherOwner = PendingStore(origin: origin, identity: "other")
         let otherOrigin = PendingStore(origin: origin + ":8443", identity: "owner")
         defer { try? own.clear(); try? otherOwner.clear(); try? otherOrigin.clear() }
-        let pending = PendingSubmission(command: PaymentCommand(sourceWalletId: "source", recipientId: "recipient", recipientPhone: "+441234567890", currency: "EUR", amountMinor: 100))
+        let pending = PendingSubmission(command: PaymentCommand(sourceWalletId: "source", recipientId: "recipient", recipientPhone: "+441234567890", currency: "AED", amountMinor: 100))
         try own.save(pending)
         XCTAssertNil(try otherOwner.load())
         XCTAssertNil(try otherOrigin.load())
@@ -182,12 +182,12 @@ final class BankingSafetyTests: XCTestCase {
     }
     @MainActor func testPaymentAndNotificationNetworkDecoding() throws {
         let payment = try HTTPClient.decode(Payment.self, data: Data("""
-        {"id":"payment","requester_id":"owner","recipient_id":"recipient","source_wallet_id":"source","destination_wallet_id":"destination","recipient_phone":"+441234567890","currency":"EUR","amount_minor":9007199254740993,"status":"PENDING","rejection_reason":null,"created_at":"2026-10-01T00:00:00Z","updated_at":"2026-10-01T00:00:00Z"}
+        {"id":"payment","requester_id":"owner","recipient_id":"recipient","source_wallet_id":"source","destination_wallet_id":"destination","recipient_phone":"+441234567890","currency":"AED","amount_minor":9007199254740993,"status":"PENDING","rejection_reason":null,"created_at":"2026-10-01T00:00:00Z","updated_at":"2026-10-01T00:00:00Z"}
         """.utf8))
         XCTAssertEqual(payment.amountMinor, 9_007_199_254_740_993)
         XCTAssertEqual(payment.status, "PENDING")
         let notification = try HTTPClient.decode(BankNotification.self, data: Data("""
-        {"id":"notification","payment_id":"payment","type":"PAYMENT_RECEIVED","currency":"EUR","amount_minor":1250,"created_at":"2026-10-01T00:00:00Z","read_at":null}
+        {"id":"notification","payment_id":"payment","type":"PAYMENT_RECEIVED","currency":"AED","amount_minor":1250,"created_at":"2026-10-01T00:00:00Z","read_at":null}
         """.utf8))
         XCTAssertNil(notification.readAt)
         XCTAssertEqual(notification.paymentId, "payment")
@@ -217,7 +217,7 @@ final class PaymentRecoveryRegressionTests: XCTestCase {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [PaymentRefusalProtocol.self]
         let api = BankAPI(configuration: try Configuration(origin: "https://refusal.test"), http: HTTPClient(session: URLSession(configuration: config)))
-        let pending = PendingSubmission(command: PaymentCommand(sourceWalletId: "source", recipientId: "recipient", recipientPhone: "+441234567890", currency: "EUR", amountMinor: 100))
+        let pending = PendingSubmission(command: PaymentCommand(sourceWalletId: "source", recipientId: "recipient", recipientPhone: "+441234567890", currency: "AED", amountMinor: 100))
         let original = pending
         for _ in 0..<2 {
             do { _ = try await api.submit(pending, token: "fixture"); XCTFail("A refusal cannot become success") }
@@ -257,7 +257,7 @@ final class PaymentRefusalProtocol: URLProtocol {
 
 final class UncertainAttemptRegressionTests: XCTestCase {
     func testLostOriginalThenKnownRetryRefusalCannotUnlockReplacement() throws {
-        let command = PaymentCommand(sourceWalletId: "source", recipientId: "recipient", recipientPhone: "+441234567890", currency: "EUR", amountMinor: 100)
+        let command = PaymentCommand(sourceWalletId: "source", recipientId: "recipient", recipientPhone: "+441234567890", currency: "AED", amountMinor: 100)
         let first = PendingSubmission(command: command)
         XCTAssertTrue(first.mayDiscardRefusalFromNextAttempt(.response(409, "recipient_changed")))
         // The original POST has been sent but is delayed in backend validation.
@@ -278,7 +278,7 @@ final class UncertainAttemptRegressionTests: XCTestCase {
     }
     func testLegacyPendingRecordIsConservativelyUncertain() throws {
         let pending = try JSONDecoder().decode(PendingSubmission.self, from: Data("""
-        {"key":"original-reference","command":{"sourceWalletId":"source","recipientId":"recipient","recipientPhone":"+441234567890","currency":"EUR","amountMinor":100}}
+        {"key":"original-reference","command":{"sourceWalletId":"source","recipientId":"recipient","recipientPhone":"+441234567890","currency":"AED","amountMinor":100}}
         """.utf8))
         XCTAssertTrue(pending.attempted)
         XCTAssertFalse(pending.mayDiscardRefusalFromNextAttempt(.response(409, "wallet_ineligible")))
@@ -287,7 +287,7 @@ final class UncertainAttemptRegressionTests: XCTestCase {
         let origin = "https://\(UUID().uuidString.lowercased()).test"
         let store = PendingStore(origin: origin, identity: "owner")
         defer { try? store.clear() }
-        var pending = PendingSubmission(command: PaymentCommand(sourceWalletId: "source", recipientId: "recipient", recipientPhone: "+441234567890", currency: "EUR", amountMinor: 100))
+        var pending = PendingSubmission(command: PaymentCommand(sourceWalletId: "source", recipientId: "recipient", recipientPhone: "+441234567890", currency: "AED", amountMinor: 100))
         pending.markAttempted(); try store.save(pending)
         try SessionStore(origin: origin).clear()
         let recovered = try XCTUnwrap(PendingStore(origin: origin, identity: "owner").load())
