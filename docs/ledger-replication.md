@@ -41,7 +41,10 @@ docker compose -f compose.yaml -f compose.ledger-replication.yaml up --build -d 
 
 The one-shot setup is designed for existing and fresh primary volumes. It creates
 a dedicated non-superuser replication role, two physical slots and synchronous
-quorum configuration. Its local-commit setting applies only to administrative
+quorum configuration. Both slots reserve WAL immediately, before concurrent base
+backups can recycle needed segments. Only inactive never-reserved slots under the
+two overlay-owned names receive guarded repair; active or unusable slots are not
+silently discarded. Its local-commit setting applies only to administrative
 bootstrap. Standbys bootstrap only empty data directories, refuse partial or
 promoted directories and never automatically delete/reseed data. An interrupted
 clone requires operator inspection and explicit recreation of only the affected
@@ -59,11 +62,23 @@ primary. Pool acquisition, statements and sockets have separate bounded timeouts
 250 ms is not an end-to-end response SLA.
 
 Provisioning, posting, idempotency checks and result lookup always use primary.
+The overlay sets `LEDGER_REQUIRE_SYNC_CONFIRMATION=true`: returning provisioning
+or a new/replayed payment result also requires durable WAL confirmation on a
+quorum standby after the primary transaction. Missing confirmation produces an
+unavailable response, preserving the original command for recovery. This gate
+has no primary-only success fallback. It protects cancellation/restart recovery,
+where a locally committed transaction can outlive its synchronous wait and a
+read-only or conflict-only retry would not wait automatically.
+Base Compose omits this flag and retains its existing single-node durability model.
 Readiness requires a usable primary that is not in recovery. Replica outage can
 degrade to primary reads; it cannot manufacture a balance or financial success.
 The bootstrap `bank` role remains the existing schema-owning local role. Restricted
 production roles need explicitly scoped access to the control functions used for
-identity checks; missing permission safely disables replica routing via fallback.
+identity checks and replication/receiver statistics. Missing read-routing permission
+falls back to primary; missing durability-confirmation permission fails closed.
+The confirmation gate has a two-second retry budget with separate connection/query
+timeouts, requires a named quorum sender and the matching configured standby, and
+checks durable WAL receipt as well as cluster/database/active timeline identity.
 
 `synchronous_commit=on` waits for WAL flush on at least one quorum standby.
 With both disconnected, a commit can wait even though its local effects exist.

@@ -23,6 +23,14 @@ Only administrative bootstrap uses local commit to create replication credential
 slots and quorum configuration before standbys can connect. Application commits
 never automatically downgrade to asynchronous operation.
 
+The replicated profile also enables `LEDGER_REQUIRE_SYNC_CONFIRMATION`. Before
+acknowledging provisioning or a new/replayed payment result after its primary
+transaction, ledger requires durable quorum WAL confirmation. PostgreSQL can
+preserve a local commit after cancellation/restart releases a synchronous wait;
+a conflict-only replay or result SELECT would otherwise skip that wait. Failure
+to confirm quorum remains unavailable/uncertain and never becomes financial
+success through primary read fallback.
+
 Account balance queries select one standby round-robin, capture a WAL flush fence
 from primary and check database, system identifier, timeline, recovery role and
 replay progress before returning a result. Lag, wrong identity, promotion or

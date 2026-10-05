@@ -52,6 +52,7 @@ services:
   ledger-service:
     environment:
       LEDGER_READ_DB_URLS: jdbc:postgresql://ledger-db-replica1:5432/bank,jdbc:postgresql://ledger-db-replica2:5432/bank
+      LEDGER_REQUIRE_SYNC_CONFIRMATION: "true"
     depends_on:
       ledger-db-replica1:
         condition: service_healthy

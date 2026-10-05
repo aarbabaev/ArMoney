@@ -9,8 +9,120 @@ import org.jooq.SQLDialect
 import spock.lang.Specification
 import java.sql.DriverManager
 import java.time.Duration
+import java.util.concurrent.*
+import com.arman.bank.ledgerservice.domain.Transfer
 
 class LedgerReadsIntegrationSpec extends Specification {
+    def "canceled synchronous wait cannot turn locally committed balanced posting into confirmed replay"() {
+        given:
+        def network = Network.newNetwork()
+        def pg = new PostgreSQLContainer('postgres:17.6-alpine')
+            .withNetwork(network).withNetworkAliases('sync-primary')
+            .withEnv('POSTGRES_HOST_AUTH_METHOD', 'trust')
+            .withCommand('postgres', '-c', 'wal_sender_timeout=1s')
+        pg.start()
+        pg.execInContainer('sh', '-c', 'echo "host replication all all trust" >> "$PGDATA/pg_hba.conf"')
+        def db = new Database(pg.jdbcUrl, pg.username, pg.password)
+        db.transaction { it.execute('select pg_reload_conf()') }
+        def base = new PostgresLedger(db)
+        def owner = UUID.randomUUID()
+        def wallet = UUID.randomUUID()
+        def a = base.open(owner, wallet, 'AED')
+        def b = base.open(UUID.randomUUID(), UUID.randomUUID(), 'AED')
+        db.transaction { sql ->
+            def clearing = UUID.randomUUID()
+            sql.execute("insert into accounts(id,wallet_id,currency,account_kind) values (?,?,'AED','CLEARING')", clearing, UUID.randomUUID())
+            sql.execute("insert into transfers(payment_id,debit_account_id,credit_account_id,currency,amount_minor) values (?,?,?,'AED',100)", UUID.randomUUID(), clearing, a.id())
+        }
+        def replica = new GenericContainer('postgres:17.6-alpine')
+            .withNetwork(network).withExposedPorts(5432).withEnv('PGDATA', '/tmp/standby')
+            .withCommand('sh', '-c', "mkdir -m 700 /tmp/standby && pg_basebackup -c fast -d 'host=sync-primary user=${pg.username} application_name=ledger_replica1' -D /tmp/standby -R && chown -R postgres:postgres /tmp/standby && exec docker-entrypoint.sh postgres")
+            .waitingFor(Wait.forLogMessage('.*database system is ready to accept read-only connections.*\\n', 1))
+            .withStartupTimeout(Duration.ofSeconds(60))
+        replica.start()
+        def admin = DriverManager.getConnection(pg.jdbcUrl, pg.username, pg.password)
+        def adminSql = DSL.using(admin, SQLDialect.POSTGRES)
+        adminSql.execute("alter system set synchronous_standby_names = 'ANY 1 (ledger_replica1, ledger_replica2)'")
+        adminSql.execute('select pg_reload_conf()')
+        eventually { adminSql.fetchOne("select count(*) from pg_stat_replication where application_name='ledger_replica1' and sync_state='quorum' and state='streaming'").get(0, Integer) == 1 }
+        def replicaUrl = "jdbc:postgresql://${replica.host}:${replica.getMappedPort(5432)}/${pg.databaseName}"
+        def reads = new LedgerReads(db, replicaUrl, pg.username, pg.password, true)
+        def store = new PostgresLedger(db, reads)
+        def transfer = new Transfer(UUID.randomUUID(), a.id(), b.id(), Currency.getInstance('AED'), 10)
+        def executor = Executors.newSingleThreadExecutor()
+
+        expect:
+        store.open(owner, wallet, 'AED').id() == a.id()
+
+        when: 'the only quorum standby is frozen and the actual balanced transfer waits in SyncRep'
+        replica.dockerClient.pauseContainerCmd(replica.containerId).exec()
+        boolean paused = true
+        def pending = executor.submit({ store.post(owner, transfer) } as Callable)
+        eventually { adminSql.fetchOne("select count(*) from pg_stat_activity where wait_event='SyncRep'").get(0, Integer) == 1 }
+        def pid = adminSql.fetchOne("select pid from pg_stat_activity where wait_event='SyncRep'").get(0, Integer)
+        adminSql.execute('select pg_cancel_backend(?)', pid)
+        pending.get(10, TimeUnit.SECONDS)
+
+        then: 'canceling the sync wait cannot expose local-only success'
+        def failure = thrown(ExecutionException)
+        failure.cause instanceof IllegalStateException
+        base.result(owner, transfer.paymentId()).get().outcome().name() == 'POSTED'
+        base.account(owner, a.id()).get().balanceMinor() == 90
+        db.transaction { it.fetchOne('select count(*), sum(amount_minor) from postings where payment_id=?', transfer.paymentId()).with { get(0, Integer) == 2 && get(1, BigDecimal) == 0 } }
+
+        when: 'a no-WAL replay attempts to reuse the locally committed terminal result'
+        long replayStart = System.nanoTime()
+        store.post(owner, transfer)
+
+        then:
+        thrown(IllegalStateException)
+        System.nanoTime() - replayStart < Duration.ofSeconds(5).toNanos()
+
+        when:
+        store.result(owner, transfer.paymentId())
+        then:
+        thrown(IllegalStateException)
+
+        when: 'even a not-found lookup remains uncertain without quorum confirmation'
+        store.result(owner, UUID.randomUUID())
+        then:
+        thrown(IllegalStateException)
+
+        when: 'provisioning replay also cannot confirm a primary-only mapping'
+        store.open(owner, wallet, 'AED')
+        then:
+        thrown(IllegalStateException)
+
+        when: 'the standby reconnects and durably receives the original commit'
+        replica.dockerClient.unpauseContainerCmd(replica.containerId).exec()
+        paused = false
+        eventually { adminSql.fetchOne("select count(*) from pg_stat_replication where application_name='ledger_replica1' and sync_state='quorum' and state='streaming'").get(0, Integer) == 1 }
+
+        then:
+        store.post(owner, transfer).outcome().name() == 'POSTED'
+        store.result(owner, transfer.paymentId()).get().outcome().name() == 'POSTED'
+        store.open(owner, wallet, 'AED').id() == a.id()
+        db.transaction { it.fetchOne('select count(*) from transfers where payment_id=?', transfer.paymentId()).get(0, Integer) } == 1
+
+        cleanup:
+        if (paused && replica?.containerId) replica.dockerClient.unpauseContainerCmd(replica.containerId).exec()
+        executor?.shutdownNow()
+        reads?.close()
+        admin?.close()
+        db?.close()
+        replica?.stop()
+        pg?.stop()
+        network?.close()
+    }
+
+    private static void eventually(Closure condition) {
+        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos()
+        while (!condition.call()) {
+            assert System.nanoTime() < deadline
+            Thread.sleep(50)
+        }
+    }
+
     def "physical standby reads alternate catch up and fall back on paused replay outage or promoted endpoint"() {
         given:
         def network = Network.newNetwork()

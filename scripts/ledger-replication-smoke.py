@@ -106,6 +106,12 @@ volumes:
             sql(primary, "CREATE TABLE activation_marker (id integer PRIMARY KEY); INSERT INTO activation_marker VALUES (1);")
             compose("restart", primary)
             eventually(lambda: sql(primary, "SELECT count(*) FROM activation_marker;") == "1", "existing primary volume preserved")
+            # Reproduce the previous setup's legacy never-reserved physical slots.
+            # Their NULL restart_lsn must be repaired before simultaneous fast clones.
+            sql(primary, "SELECT pg_create_physical_replication_slot('ledger_replica1');\nSELECT pg_create_physical_replication_slot('ledger_replica2');\n")
+            assert sql(primary, "SELECT count(*) FROM pg_replication_slots WHERE restart_lsn IS NULL AND NOT active;") == "2"
+            compose("run", "--rm", "--no-deps", "ledger-replication-setup")
+            assert sql(primary, "SELECT count(*) FROM pg_replication_slots WHERE slot_name IN ('ledger_replica1','ledger_replica2') AND restart_lsn IS NOT NULL AND NOT active AND wal_status='reserved';") == "2"
             compose("up", "-d", primary, *replicas)
             eventually(lambda: sql(primary, "SELECT count(*) FROM pg_stat_replication WHERE state='streaming' AND sync_state='quorum';") == "2",
                        "two synchronous streaming standbys", seconds=180)
@@ -165,7 +171,7 @@ volumes:
             assert sql(replicas[0], "SELECT count(*) FROM replication_probe;") == "3"
             assert sql(replicas[0], "SHOW synchronous_standby_names;") == "ANY 1 (ledger_replica1, ledger_replica2)"
             # Explicit operator-only reparenting in this disposable fixture.
-            sql(replicas[0], "SET synchronous_commit=local;\nSELECT pg_create_physical_replication_slot('ledger_replica2') WHERE NOT EXISTS (SELECT FROM pg_replication_slots WHERE slot_name='ledger_replica2');\nALTER SYSTEM SET synchronous_standby_names='ANY 1 (ledger_replica2)';\nSELECT pg_reload_conf();\n")
+            sql(replicas[0], "SET synchronous_commit=local;\nSELECT pg_create_physical_replication_slot('ledger_replica2', true) WHERE NOT EXISTS (SELECT FROM pg_replication_slots WHERE slot_name='ledger_replica2');\nALTER SYSTEM SET synchronous_standby_names='ANY 1 (ledger_replica2)';\nSELECT pg_reload_conf();\n")
             compose("stop", replicas[1])
             # Container remains stopped, so use a one-off container mounting its
             # exact project volume. No persistent stack or old-primary volume is touched.

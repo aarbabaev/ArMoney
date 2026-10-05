@@ -285,6 +285,10 @@ least one synchronous standby. Only account/balance reads can use replica pools:
 each query checks database/cluster/timeline/recovery identity and a primary WAL
 replay fence, then falls back to primary when unavailable or stale. Provisioning,
 posting and durable result lookup stay primary. Replicas never run Flyway.
+The replicated profile requires an explicit post-transaction quorum WAL flush
+confirmation before acknowledging provisioning or new/replayed payment results.
+This prevents cancellation/restart recovery from returning a locally committed
+but unreplicated result. Missing confirmation stays unavailable/uncertain.
 
 ```mermaid
 flowchart LR

@@ -8,7 +8,8 @@ public final class Main {
         var db = new Database(ServiceRuntime.required("DB_URL"), ServiceRuntime.required("DB_USER"), ServiceRuntime.required("DB_PASSWORD"));
         LedgerReads reads = null;
         try {
-            reads = new LedgerReads(db, System.getenv().getOrDefault("LEDGER_READ_DB_URLS", ""), ServiceRuntime.required("DB_USER"), ServiceRuntime.required("DB_PASSWORD"));
+            reads = new LedgerReads(db, System.getenv().getOrDefault("LEDGER_READ_DB_URLS", ""), ServiceRuntime.required("DB_USER"), ServiceRuntime.required("DB_PASSWORD"),
+                Boolean.parseBoolean(System.getenv().getOrDefault("LEDGER_REQUIRE_SYNC_CONFIRMATION", "false")));
             var ownedReads = reads;
             var routes = new LedgerRoutes(new LedgerService(new PostgresLedger(db, reads)), ServiceRuntime.required("INTERNAL_AUTH_KEY"));
             var runtime = ServiceRuntime.start("ledger-service", Integer.parseInt(System.getenv().getOrDefault("PORT", "8080")), ownedReads::ready,

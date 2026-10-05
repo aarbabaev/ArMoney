@@ -13,14 +13,14 @@ public final class PostgresLedger implements LedgerStore {
     public PostgresLedger(Database db, LedgerReads reads) { this.db = db; this.reads = reads; }
 
     @Override public Account open(UUID owner, UUID wallet, String currency) {
-        return db.transaction(sql -> {
+        return confirmed(db.transaction(sql -> {
             sql.execute("insert into accounts(id, wallet_id, owner_id, currency) values (?, ?, ?, ?) on conflict(wallet_id) do nothing",
                 UUID.randomUUID(), wallet, owner, currency);
             var row = sql.fetchOne("select * from accounts where wallet_id = ?", wallet);
             if (!owner.equals(row.get("owner_id", UUID.class)) || !currency.equals(row.get("currency", String.class)) ||
                 !"CUSTOMER".equals(row.get("account_kind", String.class))) throw new LedgerConflict();
             return account(row);
-        });
+        }));
     }
     @Override public Optional<Account> account(UUID owner, UUID id) {
         java.util.function.Function<DSLContext, Optional<Account>> query = sql -> Optional.ofNullable(sql.fetchOne(
@@ -28,11 +28,11 @@ public final class PostgresLedger implements LedgerStore {
         return reads == null ? db.transaction(query) : reads.read(query);
     }
     @Override public Optional<TransferResult> result(UUID requester, UUID payment) {
-        return db.transaction(sql -> Optional.ofNullable(sql.fetchOne(
-            "select * from transfer_requests where payment_id = ? and requester_id = ?", payment, requester)).map(PostgresLedger::result));
+        return confirmed(db.transaction(sql -> Optional.ofNullable(sql.fetchOne(
+            "select * from transfer_requests where payment_id = ? and requester_id = ?", payment, requester)).map(PostgresLedger::result)));
     }
     @Override public TransferResult post(UUID requester, Transfer transfer) {
-        return db.transaction(sql -> {
+        return confirmed(db.transaction(sql -> {
             // Reserve the id first. Conflicting inserts wait until the winning transaction commits or rolls back.
             int inserted = sql.execute("""
                 insert into transfer_requests(payment_id, requester_id, debit_account_id, credit_account_id, currency, amount_minor, outcome)
@@ -68,8 +68,9 @@ public final class PostgresLedger implements LedgerStore {
             }
             sql.execute("update transfer_requests set outcome = ? where payment_id = ?", outcome.name(), transfer.paymentId());
             return new TransferResult(transfer, outcome);
-        });
+        }));
     }
+    private <T> T confirmed(T value) { if (reads != null) reads.confirmDurable(); return value; }
     private static Account account(org.jooq.Record r) {
         return new Account(r.get("id", UUID.class), r.get("wallet_id", UUID.class), r.get("owner_id", UUID.class),
             r.get("currency", String.class), r.get("balance_minor", Long.class));
