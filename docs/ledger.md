@@ -1,5 +1,11 @@
 # Ledger slice
 
+AED is the only supported currency; `balance_minor` and `amount_minor` are integer
+fils. Optional [replication operations](ledger-replication.md) use two direct
+physical standbys for fenced balance reads. Posting, account creation and payment
+result lookup remain primary-only; a replica is never the balance authority for
+a transfer decision. See [ADR 0013](adr/0013-ledger-replication.md).
+
 Ledger implements zero-balance account creation, owner-scoped balances, atomic
 same-currency posting and durable payment results. These routes are internal:
 

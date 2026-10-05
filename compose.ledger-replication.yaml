@@ -1,0 +1,62 @@
+# Optional: docker compose -f compose.yaml -f compose.ledger-replication.yaml ...
+services:
+  ledger-db:
+    entrypoint: ["/bin/sh", "/opt/ledger-replication/primary.sh"]
+    command: ["postgres", "-c", "wal_level=replica", "-c", "max_wal_senders=6", "-c", "max_replication_slots=2", "-c", "max_slot_wal_keep_size=1GB", "-c", "synchronous_commit=on"]
+    volumes:
+      - ./infra/ledger-replication:/opt/ledger-replication:ro
+  ledger-replication-setup:
+    image: postgres:17.6-alpine
+    entrypoint: ["/bin/sh", "/opt/ledger-replication/setup.sh"]
+    environment:
+      PGHOST: ledger-db
+      PGUSER: bank
+      PGDATABASE: bank
+      PGPASSWORD: ${LOCAL_DB_PASSWORD:?Set LOCAL_DB_PASSWORD}
+      LEDGER_REPLICATION_PASSWORD: ${LEDGER_REPLICATION_PASSWORD:?Set a dedicated LEDGER_REPLICATION_PASSWORD}
+    volumes:
+      - ./infra/ledger-replication:/opt/ledger-replication:ro
+    depends_on:
+      ledger-db:
+        condition: service_healthy
+    networks: [bank]
+  ledger-db-replica1: &ledger-replica
+    image: postgres:17.6-alpine
+    entrypoint: ["/bin/sh", "/opt/ledger-replication/standby.sh"]
+    command: ["postgres", "-c", "hot_standby=on"]
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      REPLICA_NAME: ledger_replica1
+      LEDGER_REPLICATION_PASSWORD: ${LEDGER_REPLICATION_PASSWORD:?Set a dedicated LEDGER_REPLICATION_PASSWORD}
+    volumes:
+      - ledger-db-replica1:/var/lib/postgresql/data
+      - ./infra/ledger-replication:/opt/ledger-replication:ro
+    depends_on:
+      ledger-replication-setup:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bank -d bank"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+    networks: [bank]
+  ledger-db-replica2:
+    <<: *ledger-replica
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      REPLICA_NAME: ledger_replica2
+      LEDGER_REPLICATION_PASSWORD: ${LEDGER_REPLICATION_PASSWORD:?Set a dedicated LEDGER_REPLICATION_PASSWORD}
+    volumes:
+      - ledger-db-replica2:/var/lib/postgresql/data
+      - ./infra/ledger-replication:/opt/ledger-replication:ro
+  ledger-service:
+    environment:
+      LEDGER_READ_DB_URLS: jdbc:postgresql://ledger-db-replica1:5432/bank,jdbc:postgresql://ledger-db-replica2:5432/bank
+    depends_on:
+      ledger-db-replica1:
+        condition: service_healthy
+      ledger-db-replica2:
+        condition: service_healthy
+volumes:
+  ledger-db-replica1:
+  ledger-db-replica2:

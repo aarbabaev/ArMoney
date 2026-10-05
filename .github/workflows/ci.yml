@@ -44,6 +44,8 @@ jobs:
         run: docker compose logs --no-color
         env:
           LOCAL_DB_PASSWORD: ci-only-password
+      - name: Isolated ledger physical replication acceptance
+        run: python3 scripts/ledger-replication-smoke.py
       - name: Browser SSO against disposable Keycloak and HTTPS edge
         env:
           COMPOSE_FILE: compose.yaml:compose.sso.yaml:compose.sso-ci.yaml

@@ -3,7 +3,7 @@
 Status: implemented and integrated into main. This mission preserves the original
 acceptance scope; it is not an instruction to reimplement the slice. Changes still
 require focused/full checks and exact-head CI. Decision: [ADR 0007](../../adr/0007-wallet-ledger-provisioning.md).
-Next planned slice: [durable public P2P](../../m1.md).
+The subsequent [durable public P2P](../../m1.md) slice is implemented; this mission retains its historical scope.
 
 Goal: every usable wallet converges to exactly one matching zero-opening-balance
 ledger account despite duplicate requests, timeouts and service restarts.

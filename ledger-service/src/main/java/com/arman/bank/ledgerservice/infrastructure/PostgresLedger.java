@@ -8,7 +8,9 @@ import static com.arman.bank.ledgerservice.domain.TransferResult.Outcome.*;
 
 public final class PostgresLedger implements LedgerStore {
     private final Database db;
-    public PostgresLedger(Database db) { this.db = db; }
+    private final LedgerReads reads;
+    public PostgresLedger(Database db) { this(db, null); }
+    public PostgresLedger(Database db, LedgerReads reads) { this.db = db; this.reads = reads; }
 
     @Override public Account open(UUID owner, UUID wallet, String currency) {
         return db.transaction(sql -> {
@@ -21,8 +23,9 @@ public final class PostgresLedger implements LedgerStore {
         });
     }
     @Override public Optional<Account> account(UUID owner, UUID id) {
-        return db.transaction(sql -> Optional.ofNullable(sql.fetchOne(
-            "select * from accounts where id = ? and owner_id = ? and account_kind = 'CUSTOMER'", id, owner)).map(PostgresLedger::account));
+        java.util.function.Function<DSLContext, Optional<Account>> query = sql -> Optional.ofNullable(sql.fetchOne(
+            "select * from accounts where id = ? and owner_id = ? and account_kind = 'CUSTOMER'", id, owner)).map(PostgresLedger::account);
+        return reads == null ? db.transaction(query) : reads.read(query);
     }
     @Override public Optional<TransferResult> result(UUID requester, UUID payment) {
         return db.transaction(sql -> Optional.ofNullable(sql.fetchOne(

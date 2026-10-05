@@ -44,7 +44,7 @@ curl http://localhost:8080/openapi.yaml
 ```
 
 Only gateway is published, on loopback port 8080. Internal services and databases
-are reachable on the Compose network. Each persistent service owns one database
+are reachable on the Compose network. Base Compose gives each persistent service one database
 container and volume. Local database users own their schema to run migrations;
 production must separate the migration role from the restricted runtime role.
 
@@ -73,7 +73,7 @@ installation, append INTERNAL_AUTH_KEY to .env without changing LOCAL_DB_PASSWOR
 
 Each service serves its own checked-in OpenAPI contract at `/openapi.yaml`.
 `/health/live` reports process liveness; `/health/ready` checks its database
-through HikariCP/jOOQ. Migrations run before the listener starts. Gateway readiness
+through HikariCP/jOOQ; ledger requires primary outside recovery. Migrations run before the listener starts. Gateway readiness
 currently checks only itself; auth routes proxy to auth-service with bounded timeouts.
 Auth endpoints are listed below. Other unimplemented business routes return 404.
 
@@ -96,8 +96,8 @@ that it is enabled. Required checks must pass on the exact PR head before delive
 CI also includes macOS native build/simulator tests and disposable browser SSO
 coverage. These do not establish physical-iPhone or persistent-stack acceptance.
 
-Not included: broker, Redis, Kubernetes, production deployment, money movement API,
-distributed orchestration, observability backend, MFA and email verification.
+Not included: broker, Redis, Kubernetes, production deployment, observability backend,
+configured MFA and email verification. Durable public P2P and payment recovery are implemented.
 
 ## Auth API through gateway
 
@@ -137,7 +137,7 @@ Run `python3 scripts/onboarding-smoke.py` after updating the containers.
 
 Ledger now supports zero-balance accounts, owner-scoped balance reads and atomic,
 retry-safe transfer commands for trusted internal callers. It is not exposed by
-gateway; payment orchestration and public P2P remain next.
+gateway; payment-service implements durable orchestration and public P2P through gateway.
 See [ledger guide](docs/ledger.md) and [ADR 0005](docs/adr/0005-atomic-ledger.md).
 Existing INTERNAL_AUTH_KEY also configures ledger; no new secret is required.
 
@@ -155,3 +155,10 @@ V3 migrates existing ACTIVE wallets to pending provisioning without changing IDs
 CLOSED wallets stay closed and are excluded. Preserve existing .env and volumes.
 See [ADR 0007](docs/adr/0007-wallet-ledger-provisioning.md).
 The disruptive scripts/provisioning-smoke.py runs only in disposable CI.
+
+## Optional ledger replication
+
+Two direct PostgreSQL hot standbys can serve WAL-fenced balances; commands and
+payment-result lookup remain primary-only. See [activation, monitoring and manual
+failover](docs/ledger-replication.md) and [ADR 0013](docs/adr/0013-ledger-replication.md).
+Existing primary data is preserved. Automatic HA and host-failure protection are not implemented.

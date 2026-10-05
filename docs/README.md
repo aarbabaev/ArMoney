@@ -13,6 +13,7 @@ results take precedence over historical ADR scope and previous deployment eviden
 | [P2P contract](p2p-contract.md) | Phone recipients, balances, transfers, recovery and notifications |
 | [Onboarding](onboarding.md) | Profile/wallet HTTP walkthrough and IDEA setup |
 | [Ledger](ledger.md) | Private financial API, retry semantics and fixture limits |
+| [Ledger replication](ledger-replication.md) | Direct standbys, fenced reads, quorum and manual failover |
 | [SSO and iOS runbook](sso-and-ios.md) | Windows LAN HTTPS, Keycloak, CA trust and validation boundaries |
 | [Native Android README](../android/README.md) | Android Studio, SDK, local HTTPS and native app acceptance |
 | [Android contract](android-contract.md) | Android build, identity and financial recovery boundaries |
@@ -38,6 +39,7 @@ extends the original metadata-only scope in ADR 0004.
 | [0008](adr/0008-native-ios-and-keycloak-sso.md) | Native client and Keycloak SSO |
 | [0009](adr/0009-phone-p2p-payments.md) | Phone attestation, durable P2P and in-app notifications |
 | [0010](adr/0010-native-android.md) | Native Kotlin Android client and shared SSO identity |
+| [0013](adr/0013-ledger-replication.md) | Direct physical ledger replication and fenced balance reads |
 
 ## Agent workflow
 
