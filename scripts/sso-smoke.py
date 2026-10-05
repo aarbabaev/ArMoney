@@ -159,7 +159,7 @@ try:
             assert expect(200, request("GET", PUBLIC + "/v1/auth/me", token=again["access_token"]))["id"] == principal_id
             expect(401, request("POST", PUBLIC + "/v1/auth/sso", {"access_token": oidc["id_token"]}))
             expect(200, request("PUT", PUBLIC + "/v1/users/me", {"display_name": "ArMoney CI"}, token))
-            wallets = request("POST", PUBLIC + "/v1/wallets", {"currency": "EUR"}, token)
+            wallets = request("POST", PUBLIC + "/v1/wallets", {"currency": "AED"}, token)
             assert wallets[0] in (200, 202) and wallets[1]["owner_id"] == principal_id
             sessions[client_id] = (code, verifier, oidc, token)
         expect(401, request("POST", PUBLIC + "/v1/auth/sso", {"access_token": "invalid"}))

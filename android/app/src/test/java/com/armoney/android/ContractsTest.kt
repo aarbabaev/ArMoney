@@ -7,7 +7,20 @@ class ContractsTest {
     @Test fun exactMoneyAndOverflow() {
         assertEquals(1L, minor("0.01")); assertEquals(Long.MAX_VALUE, minor("92233720368547758.07"))
         listOf("0", "-1", "1.001", "1e2", "NaN", "92233720368547758.08", "1,00", " 1").forEach { assertTrue(it, runCatching { minor(it) }.isFailure) }
-        assertEquals("USD 92233720368547758.07", money(Long.MAX_VALUE, "USD"))
+        assertEquals("AED 92233720368547758.07", money(Long.MAX_VALUE, "AED"))
+    }
+    @Test fun onlyAedWalletsAreEligibleForNewTransfers() {
+        val wallet = Wallet("347637d3-a560-43d3-acd1-4c3f36e1ad9c", "b3848dc9-a620-4be7-bd69-e594ab0ad72e", "AED", "ACTIVE", "READY")
+        assertEquals("AED", supportedCurrency(wallet.currency))
+        assertTrue(wallet.ready)
+        assertEquals(100L, minor("1.00"))
+        assertEquals("AED 1.00", money(100, wallet.currency))
+        listOf("EUR", "USD", "GBP", "JPY", "aed", " AED", "").forEach { currency ->
+            assertTrue(currency, runCatching { supportedCurrency(currency) }.isFailure)
+            assertFalse(currency, wallet.copy(currency = currency).ready)
+        }
+        assertFalse(wallet.copy(status = "CLOSED").ready)
+        assertFalse(wallet.copy(provisioning_status = "PENDING").ready)
     }
     @Test fun exactPhoneAndIdentity() {
         assertEquals("+12025550123", phone("+12025550123"))

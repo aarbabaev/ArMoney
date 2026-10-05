@@ -72,10 +72,7 @@ class MainActivity : ComponentActivity() {
             Text("${wallet.status} · ${wallet.provisioning_status}"); Text(wallet.id, style = MaterialTheme.typography.bodySmall)
         } }
     }
-    Text("Open a wallet")
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("EUR", "USD", "GBP").forEach { currency ->
-        OutlinedButton(onClick = { model.openWallet(currency) }, enabled = !model.busy) { Text(currency) }
-    } }
+    OutlinedButton(onClick = { model.openWallet(SUPPORTED_CURRENCY) }, enabled = !model.busy) { Text("Open AED wallet") }
     Text("Wallets are not automatically funded. Refresh to check provisioning.", style = MaterialTheme.typography.bodySmall)
 }
 @Composable private fun TransferScreen(model: BankModel) {
@@ -99,7 +96,7 @@ class MainActivity : ComponentActivity() {
             model.wallets.filter { it.ready }.forEach { wallet ->
                 Row { RadioButton(selected == wallet.id, onClick = { selected = wallet.id }, enabled = !model.busy); Text("${wallet.currency} · ${model.balances[wallet.id]?.let { money(it, wallet.currency) } ?: "balance unavailable"}", Modifier.padding(top = 12.dp)) }
             }
-            OutlinedTextField(value = amount, onValueChange = { amount = it }, label = { Text("Amount (for example 12.34)") }, enabled = !model.busy, singleLine = true)
+            OutlinedTextField(value = amount, onValueChange = { amount = it }, label = { Text("Amount in AED (for example 12.34)") }, enabled = !model.busy, singleLine = true)
             Button(onClick = { confirm = true }, enabled = !model.busy && selected != null && runCatching { minor(amount) }.isSuccess) { Text("Review transfer") }
             if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("Confirm recipient and amount") }, text = {
                 Text("Send $amount ${model.wallets.find { it.id == selected }?.currency} to ${recipient.display_name}, ${recipient.phone_number}?")

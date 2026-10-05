@@ -15,7 +15,7 @@ class PaymentIntegrationSpec extends Specification {
     PostgresPayments store
     UUID alice = UUID.randomUUID()
     UUID bob = UUID.randomUUID()
-    PaymentRequest request = new PaymentRequest(UUID.randomUUID(), bob, '+15551234567', 'EUR', 125L)
+    PaymentRequest request = new PaymentRequest(UUID.randomUUID(), bob, '+15551234567', 'AED', 125L)
     PaymentPeers.Mapping mapping = new PaymentPeers.Mapping(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())
 
     def setupSpec() {
@@ -47,7 +47,7 @@ class PaymentIntegrationSpec extends Specification {
         db.transaction { it.fetchOne('select count(*) from payments').get(0, Integer) } == 1
         store.create(alice, 'same-key', request, new PaymentPeers.Mapping(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())).destinationWalletId() == mapping.destinationWalletId()
         when:
-        store.create(alice, 'same-key', new PaymentRequest(request.sourceWalletId(), bob, request.recipientPhone(), 'EUR', 126L), mapping)
+        store.create(alice, 'same-key', new PaymentRequest(request.sourceWalletId(), bob, request.recipientPhone(), 'AED', 126L), mapping)
         then:
         def failure = thrown(PaymentFailure)
         failure.status() == 409
@@ -69,7 +69,7 @@ class PaymentIntegrationSpec extends Specification {
         expect:
         service.submit(alice, 'replay', request).id() == first.id()
         when:
-        service.submit(alice, 'replay', new PaymentRequest(request.sourceWalletId(), UUID.randomUUID(), request.recipientPhone(), 'EUR', 125L))
+        service.submit(alice, 'replay', new PaymentRequest(request.sourceWalletId(), UUID.randomUUID(), request.recipientPhone(), 'AED', 125L))
         then:
         thrown(PaymentFailure)
         0 * peers._
@@ -185,7 +185,7 @@ class PaymentIntegrationSpec extends Specification {
         db.transaction { it.execute("""
             insert into payments(id,requester_id,idempotency_key,request_hash,source_wallet_id,destination_wallet_id,currency,amount_minor,status)
             values (?,?,?,?,?,?,?,?,'PENDING')
-            """, id, alice, 'legacy', request.hash(), request.sourceWalletId(), mapping.destinationWalletId(), 'EUR', 125L) }
+            """, id, alice, 'legacy', request.hash(), request.sourceWalletId(), mapping.destinationWalletId(), 'AED', 125L) }
         expect:
         store.claim().empty
         store.history(alice).empty
@@ -215,5 +215,28 @@ class PaymentIntegrationSpec extends Specification {
         store.notifications(alice).size() == 100
         store.notifications(bob).size() == 100
         store.history(alice).first().createdAt() >= store.history(alice).last().createdAt()
+    }
+
+    def 'database rejects non-AED payment and notification currency: #currency'() {
+        given:
+        def payment = store.create(alice, 'valid-aed', request, mapping)
+        when:
+        db.transaction { it.execute("""
+            insert into payments(id,requester_id,idempotency_key,request_hash,source_wallet_id,destination_wallet_id,currency,amount_minor,status)
+            values (?,?,?,?,?,?,?,?,'PENDING')
+            """, UUID.randomUUID(), alice, 'unsupported', request.hash(), request.sourceWalletId(), mapping.destinationWalletId(), currency, 125L) }
+        then:
+        thrown(org.jooq.exception.DataAccessException)
+        when:
+        db.transaction { it.execute("""
+            insert into notifications(id,owner_id,payment_id,type,currency,amount_minor)
+            values (?,?,?,'PAYMENT_COMPLETED',?,?)
+            """, UUID.randomUUID(), alice, payment.id(), currency, 125L) }
+        then:
+        thrown(org.jooq.exception.DataAccessException)
+        db.transaction { it.fetchOne('select count(*) from payments').get(0, Integer) } == 1
+        store.notifications(alice).empty
+        where:
+        currency << ['USD', 'EUR', 'GBP']
     }
 }

@@ -47,19 +47,21 @@ updated = expect(200, request("PUT", "/v1/users/me", {"display_name": "Alice Upd
 assert profile["id"] == updated["id"]
 assert updated["identity_id"] == owner_a
 expect(404, request("GET", "/v1/users/me", token=b))
-wallet = wallet_result(request("POST", "/v1/wallets", {"currency": "EUR"}, a,
+wallet = wallet_result(request("POST", "/v1/wallets", {"currency": "AED"}, a,
     {"X-Identity-Id": owner_b, "X-User-Id": owner_b, "X-Service-Key": "forged"}))
 assert wallet["owner_id"] == owner_a
-retry = wallet_result(request("POST", "/v1/wallets", {"currency": "EUR"}, a))
+retry = wallet_result(request("POST", "/v1/wallets", {"currency": "AED"}, a))
 assert retry["id"] == wallet["id"]
 assert len(expect(200, request("GET", "/v1/wallets", token=a))["wallets"]) == 1
 assert expect(200, request("GET", "/v1/wallets", token=b))["wallets"] == []
-expect(400, request("POST", "/v1/wallets", {"currency": "EUR", "owner_id": owner_b}, a))
-expect(400, request("POST", "/v1/wallets", {"currency": "XYZ"}, a))
+expect(400, request("POST", "/v1/wallets", {"currency": "AED", "owner_id": owner_b}, a))
+for unsupported in ("USD", "EUR", "GBP", "XYZ", "aed"):
+    expect(400, request("POST", "/v1/wallets", {"currency": unsupported}, a))
+assert wallet["currency"] == "AED"
 expect(204, request("POST", "/v1/auth/logout", token=a))
 expect(401, request("GET", "/v1/users/me", token=a))
 expect(401, request("GET", "/v1/wallets", token=a))
-expect(401, request("POST", "/v1/wallets", {"currency": "USD"}, a))
+expect(401, request("POST", "/v1/wallets", {"currency": "AED"}, a))
 assert expect(200, request("GET", "/v1/wallets", token=b))["wallets"] == []
 expect(204, request("POST", "/v1/auth/logout", token=b))
 print("Profile update, wallet retries, owner isolation and session revocation passed through gateway")

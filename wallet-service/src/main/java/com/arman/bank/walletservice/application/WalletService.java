@@ -10,7 +10,7 @@ public final class WalletService {
     public List<Wallet> list(UUID owner) { return store.list(owner); }
     public Optional<Wallet> find(UUID id) { return store.find(id); }
     public Optional<Wallet> find(UUID owner, String currency) {
-        if (!java.util.Set.of("EUR", "USD", "GBP").contains(currency)) throw new IllegalArgumentException("Unsupported currency");
+        if (!"AED".equals(currency)) throw new IllegalArgumentException("Unsupported currency");
         return store.find(owner, currency);
     }
 }

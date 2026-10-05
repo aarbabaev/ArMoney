@@ -62,17 +62,16 @@ struct ContentView: View {
 
 struct WalletsView: View {
     @ObservedObject var model: AppModel
-    @State private var currency = "EUR"
     var body: some View {
         List {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(model.profile.map { "Hello, \($0.displayName)" } ?? "Welcome to ArMoney").font(.title2.bold())
-                    Text("A clear view of each currency.").foregroundStyle(.secondary)
+                    Text("Your AED account and balance.").foregroundStyle(.secondary)
                 }.padding(.vertical, 12)
             }
             Section("Your wallets") {
-                if model.wallets.isEmpty { ContentUnavailableView("No wallets yet", systemImage: "wallet.bifold", description: Text("Open your first currency wallet below.")) }
+                if model.wallets.isEmpty { ContentUnavailableView("No wallets yet", systemImage: "wallet.bifold", description: Text("Open your AED wallet below.")) }
                 ForEach(model.wallets) { wallet in
                     VStack(alignment: .leading, spacing: 10) {
                         Label(wallet.currency, systemImage: "wallet.bifold.fill").font(.headline).foregroundStyle(.tint)
@@ -86,9 +85,8 @@ struct WalletsView: View {
                     }.padding(.vertical, 12).accessibilityElement(children: .combine)
                 }
             }
-            Section("Open a currency wallet") {
-                Picker("Currency", selection: $currency) { ForEach(["EUR", "USD", "GBP"], id: \.self) { Text($0).tag($0) } }
-                Button("Open \(currency) wallet") { Task { await model.createWallet(currency) } }.disabled(model.busy)
+            Section("AED wallet") {
+                Button("Open AED wallet") { Task { await model.createWallet() } }.disabled(model.busy)
             }
             Section { Text("Balances come from the ledger. An unavailable balance is never shown as zero.").font(.footnote).foregroundStyle(.secondary) }
         }
@@ -103,7 +101,7 @@ struct TransfersView: View {
     @State private var walletID = ""
     @State private var amount = ""
     @State private var confirm = false
-    private var eligible: [Wallet] { model.wallets.filter { $0.status == "ACTIVE" && $0.provisioningStatus == "READY" } }
+    private var eligible: [Wallet] { model.wallets.filter { $0.currency == "AED" && $0.status == "ACTIVE" && $0.provisioningStatus == "READY" } }
     private var selected: Wallet? { eligible.first { $0.id == walletID } }
     var body: some View {
         List {

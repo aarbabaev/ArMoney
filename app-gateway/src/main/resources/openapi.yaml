@@ -290,9 +290,7 @@ paths:
                 currency:
                   type: string
                   enum:
-                  - EUR
-                  - USD
-                  - GBP
+                  - AED
       responses:
         '200':
           description: Confirmed READY wallet or existing CLOSED wallet
@@ -694,9 +692,7 @@ components:
         currency:
           type: string
           enum:
-          - EUR
-          - USD
-          - GBP
+          - AED
         status:
           type: string
           enum:
@@ -837,9 +833,7 @@ components:
         currency:
           type: string
           enum:
-          - EUR
-          - USD
-          - GBP
+          - AED
         balance_minor:
           type: integer
           format: int64
@@ -866,9 +860,7 @@ components:
         currency:
           type: string
           enum:
-          - EUR
-          - USD
-          - GBP
+          - AED
         amount_minor:
           type: integer
           format: int64
@@ -910,9 +902,7 @@ components:
         currency:
           type: string
           enum:
-          - EUR
-          - USD
-          - GBP
+          - AED
         amount_minor:
           type: integer
           format: int64
@@ -964,9 +954,7 @@ components:
         currency:
           type: string
           enum:
-          - EUR
-          - USD
-          - GBP
+          - AED
         amount_minor:
           type: integer
           format: int64

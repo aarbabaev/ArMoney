@@ -28,28 +28,28 @@ class LedgerHttpIntegrationSpec extends Specification {
             builder.method(method, payload == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(InternalHttp.JSON.writeValueAsString(payload)))
             client.send(builder.build(), HttpResponse.BodyHandlers.ofString())
         }
-        def body = [wallet_id: UUID.randomUUID().toString(), currency: 'EUR']
+        def body = [wallet_id: UUID.randomUUID().toString(), currency: 'AED']
         expect:
         call('POST', '/v1/ledger/accounts', body, alice, null).statusCode() == 401
         call('POST', '/v1/ledger/accounts', body, null, key).statusCode() == 401
         when:
         def opened = call('POST', '/v1/ledger/accounts', body, alice, key)
         def id = InternalHttp.JSON.readTree(opened.body()).get('id').asText()
-        def recipient = service.open(bob, UUID.randomUUID(), 'EUR')
+        def recipient = service.open(bob, UUID.randomUUID(), 'AED')
         def command = [payment_id: UUID.randomUUID().toString(), debit_account_id: id, credit_account_id: recipient.id().toString(),
-                       currency:'EUR', amount_minor: 10]
+                       currency:'AED', amount_minor: 10]
         then:
         opened.statusCode() == 200
         InternalHttp.JSON.readTree(opened.body()).with {
             assert get('wallet_id').asText() == body.wallet_id
             assert get('owner_id').asText() == alice.toString()
-            assert get('currency').asText() == 'EUR'
+            assert get('currency').asText() == 'AED'
             assert get('balance_minor').longValue() == 0L
             true
         }
         call('POST', '/v1/ledger/accounts', body, alice, key).body() == opened.body()
         call('POST', '/v1/ledger/accounts', body, bob, key).statusCode() == 409
-        call('POST', '/v1/ledger/accounts', body + [currency:'USD'], alice, key).statusCode() == 409
+        call('POST', '/v1/ledger/accounts', body + [currency:'USD'], alice, key).statusCode() == 400
         call('GET', '/v1/ledger/accounts/' + id, null, bob, key).statusCode() == 404
         call('GET', '/v1/ledger/accounts/' + id, null, alice, key).statusCode() == 200
         call('POST', '/v1/ledger/transfers', command, alice, key).statusCode() == 409
@@ -58,6 +58,10 @@ class LedgerHttpIntegrationSpec extends Specification {
         call('POST', '/v1/ledger/transfers', command + [amount_minor:11], alice, key).statusCode() == 409
         [0, -1, 1.5, '10', 9223372036854775808G].every {
             call('POST', '/v1/ledger/transfers', command + [amount_minor:it], alice, key).statusCode() == 400
+        }
+        ['USD', 'EUR', 'GBP'].every { unsupported ->
+            call('POST', '/v1/ledger/accounts', body + [currency:unsupported], alice, key).statusCode() == 400 &&
+            call('POST', '/v1/ledger/transfers', command + [currency:unsupported], alice, key).statusCode() == 400
         }
         call('POST', '/v1/ledger/transfers', command + [owner_id:bob.toString()], alice, key).statusCode() == 400
         call('POST', '/v1/ledger/accounts', body + [balance_minor:100], alice, key).statusCode() == 400
@@ -73,7 +77,7 @@ class LedgerHttpIntegrationSpec extends Specification {
         replay.statusCode() == 200
         InternalHttp.JSON.readTree(replay.body()) == InternalHttp.JSON.readTree(opened.body())
         call('POST', '/v1/ledger/accounts', body, bob, key).statusCode() == 409
-        call('POST', '/v1/ledger/accounts', body + [currency:'USD'], alice, key).statusCode() == 409
+        call('POST', '/v1/ledger/accounts', body + [currency:'USD'], alice, key).statusCode() == 400
         call('GET', '/v1/ledger/accounts/' + id, null, bob, key).statusCode() == 404
         db.transaction {
             it.fetchOne('select count(*) from accounts where wallet_id = ?', UUID.fromString(body.wallet_id)).get(0, Integer)

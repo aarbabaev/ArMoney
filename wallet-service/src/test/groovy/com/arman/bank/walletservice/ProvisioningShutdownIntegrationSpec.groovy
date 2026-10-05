@@ -20,7 +20,7 @@ class ProvisioningShutdownIntegrationSpec extends Specification {
         postgres.start()
         def db = new Database(postgres.jdbcUrl, postgres.username, postgres.password)
         def store = new PostgresWallets(db)
-        def wallet = new WalletService(store).open(UUID.randomUUID(), 'EUR')
+        def wallet = new WalletService(store).open(UUID.randomUUID(), 'AED')
         def blocker = DriverManager.getConnection(postgres.jdbcUrl, postgres.username, postgres.password)
         blocker.autoCommit = false
         def statement = blocker.createStatement()

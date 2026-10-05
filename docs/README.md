@@ -53,3 +53,6 @@ extends the original metadata-only scope in ADR 0004.
 
 Role TOMLs live under `.codex/agents/`; executable skill instructions live under
 `.agents/skills/`. These are on-demand instructions, not background services.
+
+- [AED-only policy and rollout](adr/0011-aed-only.md): one currency, integer fils,
+  append-only constraints and safe handling of existing data.

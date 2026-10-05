@@ -27,7 +27,10 @@ stored. `/v1/auth/sso` exchanges the access token for an opaque bank session;
 
 Wallets, exact-phone recipient review, confirmed transfers, recent history and
 details, foreground in-app notifications, profile name/phone and sign-out use
-the gateway contract. Amounts use exact signed-64-bit minor units. Balance errors
+the gateway contract. AED is the only currency for new wallets and transfers, with
+a single Open AED wallet action and no currency selector or conversion. Amounts
+use exact signed-64-bit fils (100 fils = 1 AED). Non-AED wallets cannot be
+selected for a new transfer. Balance errors
 display unavailable. No funding, SMS or push provider is added. Refresh while
 foregrounded or manually; payment status remains pending until the server reports
 ledger confirmation.
@@ -36,12 +39,16 @@ Keystore AES-GCM encrypts atomic records in no-backup storage. Saved transfer
 keys and payloads are scoped to origin and verified identity, and an attempt
 marker is persisted before HTTP. Timeouts and unknown responses preserve the
 same command for retry. A later refusal cannot erase earlier uncertainty.
+Previously saved non-AED commands retain their original currency, payload and key;
+they are never converted, relabeled or discarded by the AED-only change.
 Logout preserves pending payments and removes the local bank session, with
 best-effort server revocation. Browser SSO may remain active. Uninstalling or
 clearing application data destroys local recovery information; consult payment
 history before sending a replacement. Unreadable storage fails closed.
 
-JVM tests cover exact money, input/identity, callback and refusal policy.
+JVM tests cover exact money, AED-only wallet eligibility, rejection of unsupported
+new currencies, input/identity, callback, refusal policy and preservation of legacy
+non-AED uncertain commands.
 Instrumentation tests exercise real Android Keystore persistence, scope isolation
 and the native sign-in screen. These tests do not constitute real-user browser,
 LAN certificate or physical-device acceptance. See [Android contract](../docs/android-contract.md)

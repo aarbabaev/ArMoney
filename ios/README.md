@@ -24,7 +24,7 @@ Sign-out clears the local session, attempts `/v1/auth/logout`, then opens Keyclo
 
 ## Banking screens
 
-- **Wallets:** lists each EUR/USD/GBP wallet separately, shows its provisioning state and its real ledger-backed balance, and opens a currency wallet. A failed balance request shows unavailable, never a fabricated zero. There is no combined balance across currencies or exchange-rate calculation.
+- **Wallets:** shows the AED wallet, shows its provisioning state and its real ledger-backed balance, and opens an AED wallet. A failed balance request shows unavailable, never a fabricated zero. AED is the only supported currency; there is no currency selector or foreign exchange.
 - **Transfers:** resolves an exact international phone number, displays the recipient's name and number, then requires an explicit confirmation before submitting from a ready wallet in the same currency. Amounts use positive Int64 minor units; decimal input accepts a dot and at most two fractional digits, without floating-point conversion or rounding. Recent history contains at most 100 visible transfers; incoming entries appear only after completion. Details show status, dates, and payment reference. Refresh to obtain a pending payment's latest outcome.
 - **Notifications:** shows at most 100 owner-scoped durable transfer notifications and allows marking each as read. Refresh happens on app opening, foreground entry, or manual refresh. These are in-app updates, not OS push notifications or guaranteed background delivery. Notifications do not independently establish that money moved.
 - **Profile:** edits the display name and saves an E.164 phone number, shows the saved number's verified/unverified state, and provides identity details and sign-out.

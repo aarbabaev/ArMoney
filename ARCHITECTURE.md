@@ -266,7 +266,7 @@ flowchart LR
 | --- | --- |
 | auth-db | `identities`: nullable email/password_hash pair for SSO-only principals, unique non-null email; `external_identities`: (issuer, subject) PK and unique local identity mapping; `sessions`: token_hash PK, FK identity_id, expires_at; `auth_attempts`: persistent limits |
 | user-db | `profiles`: unique identity_id, display_name, pending/verified E.164 phone; unique verified number; operator audit and persistent lookup quota |
-| wallet-db | `wallets`: unique(owner_id,currency), EUR/USD/GBP, ACTIVE/CLOSED, PENDING/READY, unique ledger_account_id, durable retry lease; no balance |
+| wallet-db | `wallets`: unique(owner_id,currency), AED, ACTIVE/CLOSED, PENDING/READY, unique ledger_account_id, durable retry lease; no balance |
 | payment-db | `payments`: unique(requester_id,idempotency_key), request_hash, wallet IDs, amount/currency, PENDING/COMPLETED/REJECTED, recipient/account snapshot, fenced lease/backoff; notifications unique(owner,payment,type) |
 | ledger-db | `accounts`: unique wallet_id, owner, CUSTOMER/CLEARING, balance_minor; `transfers`: payment_id PK and account/currency FKs; `transfer_requests`: durable payload/outcome; `postings`: view |
 | Every database | `flyway_schema_history`: technical record of applied migrations |
@@ -303,8 +303,10 @@ sequenceDiagram
     end
 ```
 
-Money is represented as integer minor units and a currency: for EUR/USD/GBP, `100` equals
-one currency unit. The amount must be positive, CUSTOMER balances cannot be negative,
+AED is the only supported currency. Money is represented as integer fils: `100` equals
+1 AED. Wallet creation, payments and ledger posting reject other currencies.
+Append-only migrations enforce this rule and refuse non-AED historical data without
+conversion; see [ADR 0011](docs/adr/0011-aed-only.md). The amount must be positive, CUSTOMER balances cannot be negative,
 and overflow is prohibited. One immutable transfer produces two opposite entries in the
 postings view. The posting, balances, and terminal result commit in one PostgreSQL transaction.
 Deferred constraints prevent committing an unfinished PENDING request.

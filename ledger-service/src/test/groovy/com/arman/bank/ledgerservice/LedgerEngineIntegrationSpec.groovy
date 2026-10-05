@@ -6,6 +6,7 @@ import com.arman.bank.ledgerservice.infrastructure.PostgresLedger
 import org.testcontainers.containers.PostgreSQLContainer
 import org.jooq.exception.DataAccessException
 import spock.lang.Specification
+import spock.lang.Unroll
 import java.util.concurrent.*
 import static com.arman.bank.ledgerservice.domain.TransferResult.Outcome.*
 
@@ -22,8 +23,8 @@ class LedgerEngineIntegrationSpec extends Specification {
         postgres.start()
         db = new Database(postgres.jdbcUrl, postgres.username, postgres.password)
         service = new LedgerService(new PostgresLedger(db))
-        a = service.open(alice, UUID.randomUUID(), 'EUR')
-        b = service.open(bob, UUID.randomUUID(), 'EUR')
+        a = service.open(alice, UUID.randomUUID(), 'AED')
+        b = service.open(bob, UUID.randomUUID(), 'AED')
     }
     def cleanup() { db?.close(); postgres?.stop() }
     def fund(Account target, long amount) {
@@ -36,7 +37,7 @@ class LedgerEngineIntegrationSpec extends Specification {
                 UUID.randomUUID(), reserve, target.id(), target.currency(), amount)
         }
     }
-    Transfer transfer(long amount, UUID payment = UUID.randomUUID(), UUID debit = a.id(), UUID credit = b.id(), String currency = 'EUR') {
+    Transfer transfer(long amount, UUID payment = UUID.randomUUID(), UUID debit = a.id(), UUID credit = b.id(), String currency = 'AED') {
         new Transfer(payment, debit, credit, Currency.getInstance(currency), amount)
     }
     long balance(UUID owner, Account account) { service.account(owner, account.id()).get().balanceMinor() }
@@ -164,14 +165,13 @@ class LedgerEngineIntegrationSpec extends Specification {
         assertReconciled()
     }
 
-    def "overflow wrong currency missing account and unauthorized debit do not move funds"() {
+    def "overflow missing account and unauthorized debit do not move funds"() {
         given:
         fund(a, 100)
         fund(b, Long.MAX_VALUE)
         expect:
         service.post(alice, transfer(1)).outcome() == BALANCE_LIMIT
         service.post(bob, transfer(1)).outcome() == INVALID_ACCOUNT
-        service.post(alice, transfer(1, UUID.randomUUID(), a.id(), b.id(), 'USD')).outcome() == INVALID_ACCOUNT
         service.post(alice, transfer(1, UUID.randomUUID(), a.id(), UUID.randomUUID())).outcome() == INVALID_ACCOUNT
         balance(alice, a) == 100
         balance(bob, b) == Long.MAX_VALUE
@@ -205,24 +205,64 @@ class LedgerEngineIntegrationSpec extends Specification {
         assertReconciled()
     }
 
+    @Unroll
+    def "unsupported #currency cannot open accounts or move funds through application or SQL"() {
+        given:
+        fund(a, 100)
+        def payment = UUID.randomUUID()
+        when:
+        service.open(alice, UUID.randomUUID(), currency)
+        then:
+        thrown(IllegalArgumentException)
+        when:
+        service.post(alice, transfer(1, payment, a.id(), b.id(), currency))
+        then:
+        thrown(IllegalArgumentException)
+        when:
+        db.transaction { it.execute('insert into accounts(id,wallet_id,owner_id,currency) values (?,?,?,?)',
+            UUID.randomUUID(), UUID.randomUUID(), alice, currency) }
+        then:
+        def accountFailure = thrown(DataAccessException)
+        accountFailure.message.contains('accounts_aed_only')
+        when:
+        db.transaction { it.execute('insert into transfers(payment_id,debit_account_id,credit_account_id,currency,amount_minor) values (?,?,?,?,?)',
+            payment, a.id(), b.id(), currency, 1L) }
+        then:
+        def transferFailure = thrown(DataAccessException)
+        transferFailure.message.contains('transfers_aed_only')
+        when:
+        db.transaction { it.execute("insert into transfer_requests(payment_id,requester_id,debit_account_id,credit_account_id,currency,amount_minor,outcome) values (?,?,?,?,?,?,'INVALID_ACCOUNT')",
+            payment, alice, a.id(), b.id(), currency, 1L) }
+        then:
+        def requestFailure = thrown(DataAccessException)
+        requestFailure.message.contains('transfer_requests_aed_only')
+        balance(alice, a) == 100
+        balance(bob, b) == 0
+        service.result(alice, payment).isEmpty()
+        cleanup:
+        assertReconciled()
+        where:
+        currency << ['USD', 'EUR', 'GBP']
+    }
+
     def "account provisioning retries converge and reject owner currency remapping"() {
         given:
         def wallet = UUID.randomUUID()
         def executor = Executors.newFixedThreadPool(8)
         when:
-        def accounts = (1..16).collect { executor.submit({ service.open(alice, wallet, 'GBP') } as Callable) }
+        def accounts = (1..16).collect { executor.submit({ service.open(alice, wallet, 'AED') } as Callable) }
             .collect { it.get(20, TimeUnit.SECONDS) }
         then:
         accounts*.id().unique().size() == 1
         accounts.every { it.balanceMinor() == 0 }
         when:
-        service.open(bob, wallet, 'GBP')
+        service.open(bob, wallet, 'AED')
         then:
         thrown(LedgerConflict)
         when:
-        service.open(alice, wallet, 'EUR')
+        service.open(alice, wallet, 'USD')
         then:
-        thrown(LedgerConflict)
+        thrown(IllegalArgumentException)
         cleanup:
         executor?.shutdownNow()
     }
@@ -230,14 +270,14 @@ class LedgerEngineIntegrationSpec extends Specification {
     def "database rejects direct overdraft even outside application and unfinished commands cannot commit"() {
         when:
         db.transaction { it.execute('insert into transfers(payment_id, debit_account_id, credit_account_id, currency, amount_minor) values (?, ?, ?, ?, ?)',
-            UUID.randomUUID(), a.id(), b.id(), 'EUR', 1L) }
+            UUID.randomUUID(), a.id(), b.id(), 'AED', 1L) }
         then:
         thrown(DataAccessException)
         balance(alice, a) == 0
         balance(bob, b) == 0
         when:
         db.transaction { it.execute("insert into transfer_requests values (?, ?, ?, ?, ?, ?, 'PENDING', current_timestamp)",
-            UUID.randomUUID(), alice, a.id(), b.id(), 'EUR', 1L) }
+            UUID.randomUUID(), alice, a.id(), b.id(), 'AED', 1L) }
         then:
         thrown(DataAccessException)
         cleanup:

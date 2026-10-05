@@ -18,7 +18,7 @@ class PaymentMigrationIntegrationSpec extends Specification {
         def legacy = UUID.randomUUID()
         def connection = DriverManager.getConnection(postgres.jdbcUrl, postgres.username, postgres.password)
         def insert = connection.prepareStatement("insert into payments(id,requester_id,idempotency_key,request_hash,source_wallet_id,destination_wallet_id,currency,amount_minor,status) values (?,?,?,?,?,?,?,?,'PENDING')")
-        [legacy, owner, 'legacy', '0' * 64, UUID.randomUUID(), UUID.randomUUID(), 'EUR', 125L].eachWithIndex { value, index -> insert.setObject(index + 1, value) }
+        [legacy, owner, 'legacy', '0' * 64, UUID.randomUUID(), UUID.randomUUID(), 'AED', 125L].eachWithIndex { value, index -> insert.setObject(index + 1, value) }
         insert.executeUpdate()
         insert.close()
         connection.close()
@@ -40,5 +40,58 @@ class PaymentMigrationIntegrationSpec extends Specification {
         connection?.close()
         db?.close()
         postgres?.stop()
+    }
+
+    def 'AED migration refuses existing non-AED #source without modifying monetary data'() {
+        given:
+        def postgres = new PostgreSQLContainer('postgres:17.6-alpine')
+        postgres.start()
+        def flyway = Class.forName('org.flywaydb.core.Flyway').getMethod('configure').invoke(null)
+        flyway.dataSource(postgres.jdbcUrl, postgres.username, postgres.password).locations('classpath:db/migration').target('2').load().migrate()
+        def payment = UUID.randomUUID()
+        def owner = UUID.randomUUID()
+        def connection = DriverManager.getConnection(postgres.jdbcUrl, postgres.username, postgres.password)
+        connection.prepareStatement("insert into payments(id,requester_id,idempotency_key,request_hash,source_wallet_id,destination_wallet_id,currency,amount_minor,status) values (?,?,?,?,?,?,?,?,'PENDING')").withCloseable { insert ->
+            [payment, owner, 'legacy', '0' * 64, UUID.randomUUID(), UUID.randomUUID(), source == 'payments' ? 'EUR' : 'AED', 125L].eachWithIndex { value, index -> insert.setObject(index + 1, value) }
+            insert.executeUpdate()
+        }
+        if (source == 'notifications') {
+            connection.prepareStatement("insert into notifications(id,owner_id,payment_id,type,currency,amount_minor) values (?,?,?,'PAYMENT_COMPLETED','EUR',125)").withCloseable { insert ->
+                [UUID.randomUUID(), owner, payment].eachWithIndex { value, index -> insert.setObject(index + 1, value) }
+                insert.executeUpdate()
+            }
+        }
+        when:
+        new Database(postgres.jdbcUrl, postgres.username, postgres.password)
+        then:
+        def failure = thrown(RuntimeException)
+        failure.message.contains('AED-only migration requires no non-AED payments or notifications')
+        connection.createStatement().withCloseable { statement ->
+            statement.executeQuery('select currency, amount_minor, status from payments').withCloseable { rows ->
+                assert rows.next()
+                assert rows.getString('currency') == (source == 'payments' ? 'EUR' : 'AED')
+                assert rows.getLong('amount_minor') == 125L
+                assert rows.getString('status') == 'PENDING'
+                assert !rows.next()
+            }
+            if (source == 'notifications') {
+                statement.executeQuery('select currency, amount_minor from notifications').withCloseable { rows ->
+                    assert rows.next()
+                    assert rows.getString('currency') == 'EUR'
+                    assert rows.getLong('amount_minor') == 125L
+                    assert !rows.next()
+                }
+            }
+            statement.executeQuery('select max(version::integer) from flyway_schema_history where success').withCloseable { rows ->
+                assert rows.next()
+                assert rows.getInt(1) == 2
+            }
+            true
+        }
+        cleanup:
+        connection?.close()
+        postgres?.stop()
+        where:
+        source << ['payments', 'notifications']
     }
 }

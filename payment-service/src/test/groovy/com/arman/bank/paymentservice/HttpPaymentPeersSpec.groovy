@@ -26,10 +26,10 @@ class HttpPaymentPeersSpec extends Specification {
     }
     def cleanup() { peers?.close(); server?.stop(0) }
     Payment payment() {
-        def request = new PaymentRequest(source, bob, '+15551234567', 'EUR', 125L)
+        def request = new PaymentRequest(source, bob, '+15551234567', 'AED', 125L)
         new Payment(UUID.randomUUID(), alice, request, destination, debit, credit, request.hash(), 'PENDING', null, Instant.now(), Instant.now())
     }
-    Map result(Payment p) { [payment_id:p.id().toString(), debit_account_id:debit.toString(), credit_account_id:credit.toString(), currency:'EUR', amount_minor:125, outcome:'POSTED'] }
+    Map result(Payment p) { [payment_id:p.id().toString(), debit_account_id:debit.toString(), credit_account_id:credit.toString(), currency:'AED', amount_minor:125, outcome:'POSTED'] }
     void route(String path, int status, Object response, Closure inspect = {}) {
         server.createContext(path) { exchange ->
             try {
@@ -55,6 +55,7 @@ class HttpPaymentPeersSpec extends Specification {
         captured.get().key == key
         captured.get().body.get('payment_id').asText() == p.id().toString()
         captured.get().body.get('amount_minor').longValue() == 125L
+        captured.get().body.get('currency').asText() == 'AED'
     }
 
     @Unroll
@@ -72,6 +73,8 @@ class HttpPaymentPeersSpec extends Specification {
         'debit_account_id'  | UUID.randomUUID().toString()
         'credit_account_id' | UUID.randomUUID().toString()
         'currency'          | 'USD'
+        'currency'          | 'EUR'
+        'currency'          | 'GBP'
         'amount_minor'      | 126
         'amount_minor'      | 125.0
         'amount_minor'      | '125'
@@ -105,8 +108,8 @@ class HttpPaymentPeersSpec extends Specification {
         given:
         def p = payment()
         route('/v1/users/resolve-phone', 200, [identity_id:bob.toString(), display_name:'Bob', phone_number:'+15551234567'])
-        route('/v1/internal/wallets/' + source, 200, [id:source.toString(),owner_id:alice.toString(),currency:'EUR',status:'ACTIVE',provisioning_status:'READY',ledger_account_id:debit.toString()])
-        route('/v1/internal/wallets/by-owner/' + bob + '/currency/EUR', 200, [id:destination.toString(),owner_id:bob.toString(),currency:'EUR',status:'ACTIVE',provisioning_status:'READY',ledger_account_id:credit.toString()])
+        route('/v1/internal/wallets/' + source, 200, [id:source.toString(),owner_id:alice.toString(),currency:'AED',status:'ACTIVE',provisioning_status:'READY',ledger_account_id:debit.toString()])
+        route('/v1/internal/wallets/by-owner/' + bob + '/currency/AED', 200, [id:destination.toString(),owner_id:bob.toString(),currency:'AED',status:'ACTIVE',provisioning_status:'READY',ledger_account_id:credit.toString()])
         expect:
         peers.resolve(alice, p.request()) == new PaymentPeers.Mapping(destination, debit, credit)
     }
@@ -126,7 +129,7 @@ class HttpPaymentPeersSpec extends Specification {
     def 'invalid source wallet is rejected: #field'() {
         given:
         route('/v1/users/resolve-phone', 200, [identity_id:bob.toString(),display_name:'Bob',phone_number:'+15551234567'])
-        route('/v1/internal/wallets/' + source, 200, [id:source.toString(),owner_id:alice.toString(),currency:'EUR',status:'ACTIVE',provisioning_status:'READY',ledger_account_id:debit.toString()] + [(field):value])
+        route('/v1/internal/wallets/' + source, 200, [id:source.toString(),owner_id:alice.toString(),currency:'AED',status:'ACTIVE',provisioning_status:'READY',ledger_account_id:debit.toString()] + [(field):value])
         when:
         peers.resolve(alice, payment().request())
         then:
@@ -137,6 +140,8 @@ class HttpPaymentPeersSpec extends Specification {
         'owner_id'            | UUID.randomUUID().toString() | 404
         'id'                  | UUID.randomUUID().toString() | 404
         'currency'            | 'USD'                        | 409
+        'currency'            | 'EUR'                        | 409
+        'currency'            | 'GBP'                        | 409
         'status'              | 'CLOSED'                     | 409
         'provisioning_status' | 'PENDING'                    | 409
     }

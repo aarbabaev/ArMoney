@@ -3,7 +3,7 @@ info:
   title: ledger-service
   version: 0.1.0
   description: Private ledger API for trusted services. Not exposed by gateway. Positive
-    integer minor units; no top-up endpoint.
+    integer fils (100 fils = 1 AED); AED is the only supported currency; no top-up endpoint.
 paths:
   /health/live:
     get:
@@ -70,9 +70,7 @@ paths:
                   currency: &id002
                     type: string
                     enum:
-                    - EUR
-                    - USD
-                    - GBP
+                    - AED
                   balance_minor:
                     type: integer
                     format: int64

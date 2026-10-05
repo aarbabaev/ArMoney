@@ -23,7 +23,7 @@
 - Use parameterized jOOQ queries; never concatenate client input into SQL.
 
 ## Money and security
-- Represent money in integer minor units with a currency; never float/double.
+- AED is the only supported currency. Represent money in integer fils (100 fils = 1 AED); never float/double. No currency conversion or relabeling of existing monetary records.
 - Ledger owns balance correctness. A payment is not completed before ledger confirmation.
 - Ledger posting must be atomic, balanced, immutable and idempotent by payment ID.
 - Require concurrency, retry, insufficient-funds and rollback tests before exposing transfers.

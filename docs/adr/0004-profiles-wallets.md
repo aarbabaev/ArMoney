@@ -43,3 +43,6 @@ can be introduced when the financial queries need a richer generated model.
 Tests cover PostgreSQL persistence/migrations, concurrent creation, retry of closed
 wallets, profile upsert, input rejection and owner isolation. Gateway tests and
 Compose acceptance cover forged headers, missing/revoked sessions and auth outage.
+
+Currency policy update: [ADR 0011](0011-aed-only.md) supersedes the original
+EUR/USD/GBP policy with AED only. Published migrations remain unchanged.

@@ -32,13 +32,14 @@ class PaymentHttpIntegrationSpec extends Specification {
             builder.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(InternalHttp.JSON.writeValueAsString(body)))
             client.send(builder.build(), HttpResponse.BodyHandlers.ofString())
         }
-        def payload = [source_wallet_id:UUID.randomUUID().toString(),recipient_id:bob.toString(),recipient_phone:'+15551234567',currency:'EUR',amount_minor:125]
+        def payload = [source_wallet_id:UUID.randomUUID().toString(),recipient_id:bob.toString(),recipient_phone:'+15551234567',currency:'AED',amount_minor:125]
         expect:
         call('POST','/v1/payments',payload,alice,null).statusCode() == 401
         call('POST','/v1/payments',payload,null,key).statusCode() == 401
         call('POST','/v1/payments',payload,alice,key,null).statusCode() == 400
         call('POST','/v1/payments',payload,alice,key,'bad key').statusCode() == 400
         [0,-1,1.5,'125',9223372036854775808G].every { call('POST','/v1/payments',payload + [amount_minor:it]).statusCode() == 400 }
+        ['USD','EUR','GBP','aed',null].every { call('POST','/v1/payments',payload + [currency:it]).statusCode() == 400 }
         call('POST','/v1/payments',payload + [requester_id:alice.toString()]).statusCode() == 400
         call('POST','/v1/payments',payload + [recipient_id:alice.toString()]).statusCode() == 400
         call('POST','/v1/payments',payload + [recipient_phone:'5551234567']).statusCode() == 400
@@ -48,6 +49,8 @@ class PaymentHttpIntegrationSpec extends Specification {
         def id = InternalHttp.JSON.readTree(accepted.body()).get('id').asText()
         then:
         accepted.statusCode() == 202
+        InternalHttp.JSON.readTree(accepted.body()).get('currency').asText() == 'AED'
+        InternalHttp.JSON.readTree(accepted.body()).get('amount_minor').longValue() == 125L
         call('POST','/v1/payments',payload).statusCode() == 202
         call('POST','/v1/payments',payload + [amount_minor:126]).statusCode() == 409
         call('GET','/v1/payments/' + id,null,bob).statusCode() == 404
@@ -64,6 +67,8 @@ class PaymentHttpIntegrationSpec extends Specification {
         call('GET','/v1/payments/' + id,null,bob).statusCode() == 200
         call('GET','/v1/payments/' + id,null,third).statusCode() == 404
         notifications.size() == 1
+        notifications.get(0).get('currency').asText() == 'AED'
+        notifications.get(0).get('amount_minor').longValue() == 125L
         call('POST','/v1/notifications/' + notificationId + '/read',null,alice).statusCode() == 404
         call('POST','/v1/notifications/' + notificationId + '/read',[:],bob).statusCode() == 400
         firstRead.statusCode() == 200

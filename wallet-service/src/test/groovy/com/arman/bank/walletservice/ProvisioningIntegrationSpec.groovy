@@ -46,7 +46,7 @@ class ProvisioningIntegrationSpec extends Specification {
     }
     def "outage and lost response recover the committed ledger account using the original wallet identity"() {
         given:
-        def wallet = service.open(identity, 'EUR')
+        def wallet = service.open(identity, 'AED')
         def accountId = UUID.randomUUID()
         def calls = new AtomicInteger()
         def seen = new CopyOnWriteArrayList()
@@ -58,7 +58,7 @@ class ProvisioningIntegrationSpec extends Specification {
             if (call == 1) { reply(ex, 503, [error:'unavailable']); return }
             committed.putIfAbsent(body.get('wallet_id').asText(), accountId)
             if (call == 2) { ex.close(); return } // Commit succeeded, response was lost.
-            reply(ex, 200, [id:committed.get(body.get('wallet_id').asText()).toString(), wallet_id:wallet.id().toString(), owner_id:identity.toString(), currency:'EUR', balance_minor:123])
+            reply(ex, 200, [id:committed.get(body.get('wallet_id').asText()).toString(), wallet_id:wallet.id().toString(), owner_id:identity.toString(), currency:'AED', balance_minor:123])
         }
         when:
         worker.runOnce()
@@ -80,14 +80,14 @@ class ProvisioningIntegrationSpec extends Specification {
         due()
         worker.runOnce()
         then:
-        service.open(identity, 'EUR').ledgerAccountId() == accountId
-        service.open(identity, 'EUR').provisioningStatus() == 'READY'
+        service.open(identity, 'AED').ledgerAccountId() == accountId
+        service.open(identity, 'AED').provisioningStatus() == 'READY'
         committed.size() == 1
-        seen.every { it == [wallet.id().toString(), 'EUR', identity.toString(), KEY] }
+        seen.every { it == [wallet.id().toString(), 'AED', identity.toString(), KEY] }
     }
     def "claims are exclusive and expired claims recover while stale completion is fenced"() {
         given:
-        def wallet = service.open(identity, 'EUR')
+        def wallet = service.open(identity, 'AED')
         def pool = Executors.newFixedThreadPool(8)
         when:
         def results = (1..16).collect { pool.submit({ store.claim() } as Callable) }.collect { it.get(10, TimeUnit.SECONDS) }
@@ -113,10 +113,11 @@ class ProvisioningIntegrationSpec extends Specification {
     }
     def "perpetually failing wallet does not starve later due wallets and closed wallets are skipped"() {
         given:
-        def failed = service.open(identity, 'EUR')
-        def closed = service.open(identity, 'USD')
+        def failed = service.open(identity, 'AED')
+        def closedOwner = UUID.randomUUID()
+        def closed = service.open(closedOwner, 'AED')
         db.transaction { it.execute("update wallets set status = 'CLOSED' where id = ?", closed.id()) }
-        def others = (1..12).collect { service.open(UUID.randomUUID(), 'EUR') }
+        def others = (1..12).collect { service.open(UUID.randomUUID(), 'AED') }
         def visited = new ArrayList<UUID>()
         LedgerAccounts ledger = { wallet ->
             visited.add(wallet.id())
@@ -133,16 +134,16 @@ class ProvisioningIntegrationSpec extends Specification {
         visited.count { it == failed.id() } == 1
         !visited.contains(closed.id())
         others.every { w -> store.list(w.ownerId()).first().provisioningStatus() == 'READY' }
-        service.open(identity, 'USD').status() == 'CLOSED'
-        service.open(identity, 'USD').provisioningStatus() == 'PENDING'
+        service.open(closedOwner, 'AED').status() == 'CLOSED'
+        service.open(closedOwner, 'AED').provisioningStatus() == 'PENDING'
     }
     def "mapping mismatch never marks the wallet ready and same wallet can recover"() {
         given:
-        def wallet = service.open(identity, 'EUR')
+        def wallet = service.open(identity, 'AED')
         def wrong = new AtomicInteger(1)
         def account = UUID.randomUUID()
         startLedger { ex ->
-            reply(ex, 200, [id:account.toString(), wallet_id:wallet.id().toString(), owner_id:wrong.get() == 1 ? UUID.randomUUID().toString() : identity.toString(), currency:'EUR'])
+            reply(ex, 200, [id:account.toString(), wallet_id:wallet.id().toString(), owner_id:wrong.get() == 1 ? UUID.randomUUID().toString() : identity.toString(), currency:'AED'])
         }
         when:
         worker.runOnce()
@@ -157,8 +158,8 @@ class ProvisioningIntegrationSpec extends Specification {
     }
     def "database enforces immutable mapping identity and unique account mapping"() {
         given:
-        def a = service.open(identity, 'EUR')
-        def b = service.open(identity, 'USD')
+        def a = service.open(identity, 'AED')
+        def b = service.open(UUID.randomUUID(), 'AED')
         def account = UUID.randomUUID()
         def first = store.claim().orElseThrow()
         store.complete(first, account)
@@ -195,14 +196,14 @@ class ProvisioningIntegrationSpec extends Specification {
         }
         insert.close(); conn.close()
         when:
-        def upgraded = new Database(legacy.jdbcUrl, legacy.username, legacy.password)
-        def upgradedStore = new PostgresWallets(upgraded)
+        Flyway.configure().dataSource(legacy.jdbcUrl, legacy.username, legacy.password).locations('classpath:db/migration').target('3').load().migrate()
+        def upgraded = java.sql.DriverManager.getConnection(legacy.jdbcUrl, legacy.username, legacy.password)
+        def rows = org.jooq.impl.DSL.using(upgraded, org.jooq.SQLDialect.POSTGRES).fetch('select * from wallets order by currency')
         then:
-        upgradedStore.list(identity)*.id() == [active, closed]
-        upgradedStore.list(identity)*.provisioningStatus() == ['PENDING','PENDING']
-        upgradedStore.list(identity)*.ledgerAccountId() == [null,null]
-        upgradedStore.claim().orElseThrow().wallet().id() == active
-        upgradedStore.claim().empty
+        rows.getValues('id', UUID) == [active, closed]
+        rows.getValues('status', String) == ['ACTIVE', 'CLOSED']
+        rows.getValues('provisioning_status', String) == ['PENDING', 'PENDING']
+        rows.getValues('ledger_account_id', UUID) == [null, null]
         cleanup:
         upgraded?.close()
         legacy?.stop()

@@ -15,7 +15,7 @@ class RecoveryTest {
     }
     private val owner = "b3848dc9-a620-4be7-bd69-e594ab0ad72e"
     private val other = "88c149b3-885c-4d43-a185-84c25afdb199"
-    private val draft = Pending("https://bank.example", owner, "immutable-key", PaymentCommand("347637d3-a560-43d3-acd1-4c3f36e1ad9c", other, "+12025550123", "EUR", 1234))
+    private val draft = Pending("https://bank.example", owner, "immutable-key", PaymentCommand("347637d3-a560-43d3-acd1-4c3f36e1ad9c", other, "+12025550123", "AED", 1234))
     @Test fun timeoutThenRestartLogoutAndRefusalPreserveExactCommand() = runBlocking {
         val disk = Disk(); val first = PaymentRecovery(draft.origin, disk); first.save(draft)
         val firstError = runCatching { first.execute(owner) {
@@ -44,6 +44,22 @@ class RecoveryTest {
         runCatching { recovery.execute(owner) { throw HttpFailure(404, "not_found") } }
         assertNull(recovery.load(owner))
     }
+    @Test fun legacyUncertainCurrencyIsNeverRelabeledOrDiscarded() = runBlocking {
+        val disk = Disk()
+        val legacy = draft.copy(command = draft.command.copy(currency = "EUR"), attempted = true)
+        // This record predates AED-only creation; load must retain its historical intent.
+        disk.write("payment|${draft.origin}|$owner", kotlinx.serialization.json.Json.encodeToString(Pending.serializer(), legacy))
+        val restarted = PaymentRecovery(draft.origin, disk)
+        assertEquals(legacy, restarted.load(owner))
+        assertEquals("EUR 12.34", money(legacy.command.amount_minor, legacy.command.currency))
+        val failure = runCatching { restarted.execute(owner) { saved ->
+            assertEquals(legacy, saved)
+            throw HttpFailure(400, "invalid_request")
+        } }.exceptionOrNull()
+        assertTrue(failure is HttpFailure)
+        assertEquals(legacy, PaymentRecovery(draft.origin, disk).load(owner))
+        assertTrue(runCatching { restarted.save(draft) }.isFailure)
+    }
     @Test fun corruptStorageNeverBecomesANewDraft() {
         val disk = Disk(); val recovery = PaymentRecovery(draft.origin, disk)
         disk.write("payment|${draft.origin}|$owner", "corrupt")
@@ -53,7 +69,7 @@ class RecoveryTest {
     @Test fun malformedOrMismatchedTerminalResponsePreservesAttempt() = runBlocking {
         val disk = Disk(); val recovery = PaymentRecovery(draft.origin, disk); recovery.save(draft)
         val malformed = Payment("23771763-68c5-4e1f-8533-6ce62c708268", owner, other, draft.command.source_wallet_id,
-            "045659e0-c697-4faa-9fbc-f8ba12801a5d", draft.command.recipient_phone, "EUR", 1234, "REJECTED", null, "2026-10-01T00:00:00Z", "2026-10-01T00:00:00Z")
+            "045659e0-c697-4faa-9fbc-f8ba12801a5d", draft.command.recipient_phone, "AED", 1234, "REJECTED", null, "2026-10-01T00:00:00Z", "2026-10-01T00:00:00Z")
         assertTrue(runCatching { recovery.execute(owner) { malformed } }.isFailure)
         assertNotNull(recovery.load(owner))
         assertTrue(runCatching { recovery.execute(owner) { malformed.copy(status = "COMPLETED", amount_minor = 999) } }.isFailure)
