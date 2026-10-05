@@ -7,11 +7,11 @@ import java.util.Objects;
 
 public final class ServiceRuntime implements AutoCloseable {
     private final Javalin app;
-    private final Database database;
+    private final AutoCloseable resources;
 
-    private ServiceRuntime(Javalin app, Database database) {
+    private ServiceRuntime(Javalin app, AutoCloseable resources) {
         this.app = app;
-        this.database = database;
+        this.resources = resources;
     }
 
     public static ServiceRuntime start(String service, int port, Database database) throws IOException {
@@ -19,6 +19,13 @@ public final class ServiceRuntime implements AutoCloseable {
     }
 
     public static ServiceRuntime start(String service, int port, Database database,
+            java.util.function.Consumer<io.javalin.config.JavalinConfig> routes) throws IOException {
+        return start(service, port, () -> database == null || database.ready(), database, routes);
+    }
+
+    /** Technical lifecycle/readiness hooks for services owning multiple resources. */
+    public static ServiceRuntime start(String service, int port,
+            java.util.function.BooleanSupplier readiness, AutoCloseable resources,
             java.util.function.Consumer<io.javalin.config.JavalinConfig> routes) throws IOException {
         String contract;
         try (var input = Objects.requireNonNull(
@@ -30,14 +37,16 @@ public final class ServiceRuntime implements AutoCloseable {
             config.routes.get("/health/live", ctx -> ctx.contentType("application/json")
                     .result("{\"status\":\"UP\"}"));
             config.routes.get("/health/ready", ctx -> {
-                boolean ready = database == null || database.ready();
+                boolean ready;
+                try { ready = readiness.getAsBoolean(); }
+                catch (RuntimeException unavailable) { ready = false; }
                 ctx.status(ready ? 200 : 503).contentType("application/json")
                         .result(ready ? "{\"status\":\"UP\"}" : "{\"status\":\"DOWN\"}");
             });
             config.routes.get("/openapi.yaml", ctx -> ctx.contentType("application/yaml").result(contract));
         });
         app.start(port);
-        return new ServiceRuntime(app, database);
+        return new ServiceRuntime(app, resources);
     }
 
     public static void launch(String service, boolean persistent) throws IOException {
@@ -60,6 +69,13 @@ public final class ServiceRuntime implements AutoCloseable {
     public int port() { return app.port(); }
 
     @Override public void close() {
-        try { app.stop(); } finally { if (database != null) database.close(); }
+        try { app.stop(); }
+        finally {
+            if (resources != null) {
+                try { resources.close(); }
+                catch (RuntimeException e) { throw e; }
+                catch (Exception e) { throw new IllegalStateException("Resource shutdown failed", e); }
+            }
+        }
     }
 }

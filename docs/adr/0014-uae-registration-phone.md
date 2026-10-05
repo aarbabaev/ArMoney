@@ -31,9 +31,11 @@ identity reservation; login/token-exchange retries reuse it. Do not compensate b
 deleting an identity after an uncertain response.
 
 User-service stores a registration claim separately from the optional display-name
-profile. Creating the profile copies the registered phone; registration does not
-invent a display name. Profiles and claims each enforce phone uniqueness, and their
-write paths serialize collision checks. The existing public phone endpoint accepts
+profile. Creating the profile copies the registered phone into the primary directory;
+registration does not invent a display name or pin a shard. The central directory
+and claims each enforce phone uniqueness, and their write paths serialize collision
+checks. Optional profile shards retain display names and immutable placement;
+phone state is overlaid from the primary directory. No transaction spans shard I/O. The existing public phone endpoint accepts
 only an identical registered value; self-service changes are unavailable.
 
 ## Ownership and transfers
@@ -53,9 +55,11 @@ keep their original payload, read and idempotent replay semantics.
 
 ## Existing records and rollout
 
-Published migrations are unchanged; new constraints and claim records are additive.
+Published main migrations are unchanged; new constraints and claim records are additive.
+User-service V5 follows the existing V4 profile-shard directory. The original draft
+V4 registration migration was renumbered before merge/deployment to avoid a version collision.
 Do not clear users, rewrite phones or choose a winner among duplicate historical
-profile numbers. The new global profile index intentionally fails migration when
+profile numbers. The new global directory index intentionally fails migration when
 duplicates exist. Resolve such conflicts explicitly before rollout, retaining
 identity IDs and verification evidence. Stop old phone-writing service versions
 before enabling the new claim writer.

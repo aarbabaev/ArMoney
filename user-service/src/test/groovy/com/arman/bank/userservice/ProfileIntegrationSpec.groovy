@@ -24,15 +24,23 @@ class ProfileIntegrationSpec extends Specification {
         client = HttpClient.newHttpClient()
     }
     def cleanup() { client?.close(); runtime?.close(); db?.close(); postgres?.stop() }
-    def req(String method, String path, UUID owner = alice, String body = null, String key = KEY) {
+    def req(String method, String path, UUID owner = alice, String body = null, String key = KEY, String email = null) {
         def b = HttpRequest.newBuilder(URI.create("http://localhost:${runtime.port()}" + path)).timeout(Duration.ofSeconds(10))
         if (key != null) b.header('X-Service-Key', key)
         if (owner != null) b.header('X-Identity-Id', owner.toString())
+        if (email != null) b.header('X-Identity-Email', email)
         if (body != null) b.header('Content-Type', 'application/json')
         b.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body))
         client.send(b.build(), HttpResponse.BodyHandlers.ofString())
     }
     def json(response) { InternalHttp.JSON.readTree(response.body()) }
+
+    def "trusted email validation rejects malformed header before reserving profile"() {
+        expect:
+        req('PUT', '/v1/users/me', alice, '{"display_name":"Synthetic"}', KEY, 'invalid-email').statusCode() == 400
+        db.transaction { it.fetchCount(org.jooq.impl.DSL.table('profile_directory')) } == 0
+        req('PUT', '/v1/users/me', alice, '{"display_name":"Synthetic"}', KEY, '.a@example.123').statusCode() == 200
+    }
 
     def "profile upsert preserves ID, persists after restart and isolates users"() {
         expect:
@@ -105,7 +113,7 @@ class ProfileIntegrationSpec extends Specification {
         given:
         def store = new PostgresProfiles(db)
         store.save(new com.arman.bank.userservice.domain.Profile(UUID.randomUUID(), alice, 'Original'))
-        db.transaction { it.execute('update profiles set phone_number = ?, phone_verified = true where identity_id = ?', '+971501234567', alice) }
+        db.transaction { it.execute('update profiles set phone_number = ?, phone_verified = true where identity_id = ?', '+971501234567', alice); it.execute('update profile_directory set phone_number = ?, phone_verified = true where identity_id = ?', '+971501234567', alice) }
         expect:
         req('POST', '/v1/users/resolve-phone', bob, '{"phone_number":"+971501234567"}').statusCode() == 404
         req('PUT', '/v1/users/me/phone', alice, '{"phone_number":"+971501234567"}').statusCode() == 409

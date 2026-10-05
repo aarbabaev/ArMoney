@@ -1,7 +1,7 @@
 # ArMoney  -  System and Agent Team Architecture
 
-> The main project map. Checked against source code on **2026-10-01**, based on main
-> `513a028877f47b41a0f759cc7e8b35147600c865` plus this Android implementation.
+> The main project map. Registration-phone integration review on **2026-10-05**, based on main
+> `3c929fa3c8472ee2939e1a611e4e76ced96a44ee` plus this phone-registration change.
 > Describes the source code, not the guaranteed state of running containers.
 
 ## Navigation
@@ -29,7 +29,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | SSO | Optional Keycloak realm, browser authorization code + PKCE | Production identity controls, MFA, email verification |
 | iOS | Existing native SwiftUI login, wallets/balances, transfers/history, notifications and profile (iOS 18+); feature development paused | Physical iPhone validation paused; regression CI retained |
 | Android | Native Kotlin/Compose SSO, wallets/balances, phone transfers/history, inbox and profile (API26+) | Physical-device/LAN acceptance; exact-revision CI evidence in the delivery PR |
-| User | Profile and immutable unique UAE registration-phone directory | Automated ownership proof requires a separate approved provider |
+| User | Profile, optional immutable email-prefix sharding and central unique UAE registration-phone directory | Prefixes do not guarantee uniform load; automated ownership proof requires a separate approved provider |
 | Wallet | Metadata, durable ledger provisioning, owner-scoped live balances | Lifecycle controls |
 | Ledger | Private accounts, balances, atomic postings, wallet/payment integration | Operational hardening |
 | Payment | Durable P2P, requester idempotency, recovery, history and notifications | Pagination and operational reconciliation tooling |
@@ -62,7 +62,9 @@ flowchart TB
         L["ledger-service: private API"]
         W -->|"Durable account provisioning and balance reads"| L
         A --> AD[("auth-db")]
-        U --> UD[("user-db")]
+        U --> UD[("user-db: placement and phone directory; legacy profiles")]
+        U --> US1[("Optional user-shard-s1: profile data")]
+        U --> US2[("Optional user-shard-s2: profile data")]
         W --> WD[("wallet-db")]
         P --> PD[("payment-db")]
         L --> LD[("ledger-db")]
@@ -73,7 +75,7 @@ flowchart TB
 | --- | --- | --- |
 | app-gateway | External routes, session validation, header sanitization | No database or financial logic |
 | auth-service | Credentials, SSO identity mapping, sessions, limits | Does not own profiles |
-| user-service | Profile and registered UAE phone directory | Does not issue tokens or claim SMS proof |
+| user-service | Profile placement, sharded display names and central registered UAE phone directory | Does not issue tokens or claim SMS proof; owns all profile shards |
 | wallet-service | Owner, currency, lifecycle and durable ledger mapping | Not the source of balances |
 | payment-service | Transfer intent, client idempotency, recovery and notifications | Completion requires matching ledger confirmation |
 | ledger-service | Accounts, balances, immutable paired postings | No public funding API |
@@ -240,12 +242,45 @@ The gateway validates every protected business request through auth, replaces th
 identity with the trusted identity, and does not forward the bearer token to user/wallet/payment.
 Authorization failure blocks the request.
 
+Only profile PUT receives `X-Identity-Email`, derived from the authenticated auth
+response and normalized by the gateway. Client email headers are discarded;
+malformed auth email metadata fails closed. Missing/null email is valid for SSO
+and uses the configured profile default shard.
+
 Ledger requires `X-Service-Key` and a trusted `X-Identity-Id`; the gateway does not proxy it.
 The shared service key does not isolate compromised services from one another.
-A persistent service's readiness checks only its own database; gateway readiness checks
+A persistent service's readiness checks its own database; user-service checks the
+primary directory and all configured profile shards. Gateway readiness checks
 only the gateway itself. `UP` does not prove downstream availability or P2P correctness.
 
 ## Data and ledger
+
+### User profile placement
+
+Optional [profile sharding](docs/adr/0012-user-profile-sharding.md) selects a physical
+database at the first profile PUT using two normalized email characters and a
+configured prefix map. The primary directory permanently pins identity UUID,
+profile UUID and shard. Existing profiles are backfilled as `primary` without
+moving data. Changes to email or the map affect no previously pinned identity.
+Missing or unavailable assigned databases never trigger fallback writes.
+
+Registration remains in auth-service and binds a central phone claim through
+user-service; it does not provision a profile or choose a shard. Unmapped,
+non-alphanumeric prefixes and email-less identities use the configured default.
+The directory, registration claims, global phone uniqueness, attestation audit and lookup quota remain
+centralized. Reservations and shard writes are separate durable transactions;
+failed first writes require retry with the same pin. Prefix placement does not
+guarantee balanced load or remove the primary directory dependency.
+
+```mermaid
+flowchart LR
+    G["Gateway: verified identity and email"] --> U["user-service"]
+    U -->|"Reserve or read immutable placement; phone state"| D[("Primary user-db")]
+    U -->|"Pinned profile data"| S1[("Profile shard s1")]
+    U -->|"Pinned profile data"| S2[("Profile shard s2")]
+    U -->|"Legacy or default profile data"| D
+```
+
 
 UUIDs shared across services are **logical references**, not cross-database foreign keys.
 `owner_id` means the auth identity UUID, not the profile ID.
@@ -267,7 +302,8 @@ flowchart LR
 | Database | Tables / guarantees |
 | --- | --- |
 | auth-db | `identities`: nullable email/password_hash pair for SSO-only principals, unique non-null email and registration_phone (null for historical unenrolled users); `external_identities`: (issuer, subject) PK and unique local identity mapping; `sessions`: token_hash PK, FK identity_id, expires_at; `auth_attempts`: persistent limits |
-| user-db | `profiles`: unique identity_id and non-null phone; `registration_phone_claims`: unique identity and UAE phone; operator audit and persistent lookup quota |
+| user-db | Existing `profiles` remain in place; `profile_directory` pins identity/profile UUID and shard and owns authoritative globally unique non-null phone state; `registration_phone_claims` binds unique identity and UAE phone before profile creation; operator audit and persistent lookup quota remain central |
+| Optional user shards | `profiles`: display name keyed by pinned profile/identity UUID; phone state is overlaid from the primary directory |
 | wallet-db | `wallets`: unique(owner_id,currency), AED, ACTIVE/CLOSED, PENDING/READY, unique ledger_account_id, durable retry lease; no balance |
 | payment-db | `payments`: unique(requester_id,idempotency_key), request_hash, wallet IDs, amount/currency, PENDING/COMPLETED/REJECTED, recipient/account snapshot, fenced lease/backoff; notifications unique(owner,payment,type) |
 | ledger-db | `accounts`: unique wallet_id, owner, CUSTOMER/CLEARING, balance_minor; `transfers`: payment_id PK and account/currency FKs; `transfer_requests`: durable payload/outcome; `postings`: view |
@@ -393,8 +429,9 @@ sequenceDiagram
 
 ## Phone P2P and notifications
 
-[HTTP contract](docs/p2p-contract.md) and [ADR 0009](docs/adr/0009-phone-p2p-payments.md)
-cover the implemented boundary and local operator procedure.
+[HTTP contract](docs/p2p-contract.md) and [ADR 0014](docs/adr/0014-uae-registration-phone.md)
+cover current phone admission and recipient eligibility. [ADR 0009](docs/adr/0009-phone-p2p-payments.md)
+retains the durable payment design and optional local operator procedure.
 
 ```mermaid
 sequenceDiagram

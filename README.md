@@ -133,6 +133,26 @@ Profile and wallet routes require a valid session through gateway. Wallets store
 Gateway also requires USER_BASE_URL and WALLET_BASE_URL (provided by Compose).
 Run `python3 scripts/onboarding-smoke.py` after updating the containers.
 
+Optional Users DB sharding uses
+`docker compose -f compose.yaml -f compose.users-sharding.yaml up --build -d`.
+The example places `al` prefixes on `s1`, `bo`/`ch` on `s2`, and others on
+`primary`. It chooses placement at the first profile creation; old profiles and
+all UUIDs remain unchanged. A durable directory preserves placement after map or
+email changes. Keep all databases referenced by that directory configured.
+Phone verification, global uniqueness and lookup quotas remain in `user-db`.
+See [configuration and limitations](docs/adr/0012-user-profile-sharding.md).
+
+For disposable acceptance, use explicit files and a dedicated project:
+
+```sh
+docker compose -p armoney-shards-test-local -f compose.yaml -f compose.users-sharding.yaml -f compose.users-sharding-smoke.yaml up --build -d
+python3 scripts/users-sharding-smoke.py --project armoney-shards-test-local
+```
+
+This smoke uses synthetic profiles and port 18080, without funding any account.
+Never point it at the persistent project. It requires the example prefix map.
+
+
 ## Private ledger
 
 Ledger now supports zero-balance accounts, owner-scoped balance reads and atomic,

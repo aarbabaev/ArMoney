@@ -20,7 +20,7 @@ paths:
       operationId: readiness
       responses:
         '200':
-          description: Service can access its database (gateway has no database)
+          description: Service can access primary and every configured profile shard
           content:
             application/json:
               schema:
@@ -44,7 +44,7 @@ paths:
   /internal/registrations/me:
     put:
       operationId: registerPhone
-      description: Auth-service supplies its verified identity and immutable registration phone. Identical retries are durable and idempotent. No profile is fabricated. Existing profiles can bind only a missing or identical phone, preserving name and verification. Legacy profiles without a claim remain undiscoverable until explicit enrollment.
+      description: Auth-service supplies its verified identity and immutable registration phone. Identical retries are durable and idempotent. Claims and phone ownership are stored on the primary directory database. No profile or shard placement is fabricated. Existing profiles can bind only a missing or identical phone, preserving name and verification. Legacy profiles without a claim remain undiscoverable until explicit enrollment.
       security:
       - ServiceKey: []
         VerifiedIdentity: []
@@ -99,7 +99,18 @@ paths:
     put:
       operationId: saveProfile
       description: Create or update the current identity profile. Stable profile ID;
-        last committed write wins. New profiles bind the immutable registration phone when present.
+        last committed write wins. The primary directory binds the immutable registration phone when present. Optional gateway-verified X-Identity-Email selects
+        the initial email-prefix shard; placement remains pinned. Missing email uses
+        the configured default shard (primary by default). Client JSON cannot select a shard.
+      parameters:
+      - in: header
+        name: X-Identity-Email
+        required: false
+        description: Gateway identity email; public client headers are discarded.
+        schema:
+          type: string
+          format: email
+
       requestBody:
         required: true
         content:
@@ -178,7 +189,7 @@ paths:
       security: *id001
       description: Exact registered phone with a matching profile only; phone_verified is not required. Discloses recipient display name to
         authenticated callers. Database-backed limit of 30 lookups per requester per
-        60 seconds includes misses.
+        60 seconds includes misses. Lookup loads the pinned profile shard and fails closed if it is unavailable.
       requestBody:
         required: true
         content:

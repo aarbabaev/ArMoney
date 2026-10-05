@@ -8,6 +8,85 @@ import java.time.Clock
 import java.util.concurrent.atomic.AtomicInteger
 
 class ProtectedProxySpec extends Specification {
+    def "gateway derives profile email only from verified identity: #label"() {
+        given:
+        def key = 'gateway-internal-service-key-32-characters'
+        def owner = UUID.randomUUID().toString()
+        def calls = new AtomicInteger()
+        def seen = [:]
+        def auth = HttpServer.create(new InetSocketAddress('127.0.0.1', 0), 0)
+        auth.createContext('/v1/auth/me') { ex ->
+            def identity = [id: owner]
+            if (includeEmail) identity.email = authEmail
+            def bytes = InternalHttp.JSON.writeValueAsBytes(identity)
+            ex.sendResponseHeaders(200, bytes.length)
+            ex.responseBody.withCloseable { it.write(bytes) }
+        }
+        auth.start()
+        def backend = HttpServer.create(new InetSocketAddress('127.0.0.1', 0), 0)
+        backend.createContext('/') { ex ->
+            calls.incrementAndGet()
+            seen.email = ex.requestHeaders.getFirst('X-Identity-Email')
+            seen.owner = ex.requestHeaders.getFirst('X-Identity-Id')
+            seen.key = ex.requestHeaders.getFirst('X-Service-Key')
+            ex.requestBody.close()
+            def bytes = '{"ok":true}'.bytes
+            ex.sendResponseHeaders(200, bytes.length)
+            ex.responseBody.withCloseable { it.write(bytes) }
+        }
+        backend.start()
+        def target = URI.create("http://127.0.0.1:${backend.address.port}")
+        def proxy = new ProtectedProxy(URI.create("http://127.0.0.1:${auth.address.port}"), target, target, target, key)
+        def runtime = ServiceRuntime.start('app-gateway', 0, null, { proxy.configure(it) })
+        def client = HttpClient.newHttpClient()
+
+        when:
+        def request = HttpRequest.newBuilder(URI.create("http://localhost:${runtime.port()}" + path))
+            .header('Authorization', 'Bearer ' + ('a' * 43))
+            .header('X-Identity-Email', 'attacker@example.test')
+            .header('X-Identity-Id', UUID.randomUUID().toString())
+            .header('X-Service-Key', 'forged')
+            .header('Content-Type', 'application/json')
+        def body = method == 'GET' ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString('{}')
+        def response = client.send(request.method(method, body).build(), HttpResponse.BodyHandlers.ofString())
+
+        then:
+        response.statusCode() == expectedStatus
+        calls.get() == (expectedStatus == 200 ? 1 : 0)
+        seen.email == expectedEmail
+        if (expectedStatus == 200) {
+            assert seen.owner == owner
+            assert seen.key == key
+        } else {
+            assert response.body() == '{"error":"service_unavailable"}'
+        }
+
+        cleanup:
+        client?.close(); runtime?.close(); proxy?.close()
+        auth?.stop(0); backend?.stop(0)
+
+        where:
+        label              | includeEmail | authEmail                     | method | path                    | expectedStatus | expectedEmail
+        'normalized'       | true         | '  Alice@Example.TEST  '      | 'PUT'  | '/v1/users/me'          | 200            | 'alice@example.test'
+        'null SSO'         | true         | null                          | 'PUT'  | '/v1/users/me'          | 200            | null
+        'missing legacy'   | false        | null                          | 'PUT'  | '/v1/users/me'          | 200            | null
+        'blank'            | true         | ' '                           | 'PUT'  | '/v1/users/me'          | 503            | null
+        'invalid grammar'  | true         | 'alice@localhost'             | 'PUT'  | '/v1/users/me'          | 503            | null
+        'header injection' | true         | 'alice@example.test\r\nx: y' | 'PUT'  | '/v1/users/me'          | 503            | null
+        'oversized'        | true         | ('a' * 242) + '@example.test'  | 'PUT'  | '/v1/users/me'          | 503            | null
+        'maximum length'   | true         | ('a' * 241) + '@example.test'  | 'PUT'  | '/v1/users/me'          | 200            | ('a' * 241) + '@example.test'
+        'numeric'          | true         | 42                            | 'PUT'  | '/v1/users/me'          | 503            | null
+        'object'           | true         | [value: 'alice@example.test'] | 'PUT'  | '/v1/users/me'          | 503            | null
+        'array'            | true         | ['alice@example.test']        | 'PUT'  | '/v1/users/me'          | 503            | null
+        'profile read'     | true         | 'alice@example.test'          | 'GET'  | '/v1/users/me'          | 200            | null
+        'phone update'     | true         | 'alice@example.test'          | 'PUT'  | '/v1/users/me/phone'    | 200            | null
+        'recipient lookup' | true         | 'alice@example.test'          | 'POST' | '/v1/recipients/resolve' | 200           | null
+        'wallet create'    | true         | 'alice@example.test'          | 'POST' | '/v1/wallets'           | 200            | null
+        'payment history'  | true         | 'alice@example.test'          | 'GET'  | '/v1/payments'          | 200            | null
+        'notifications'    | true         | 'alice@example.test'          | 'GET'  | '/v1/notifications'     | 200            | null
+        'malformed wallet' | true         | 'invalid'                     | 'GET'  | '/v1/wallets'           | 503            | null
+    }
+
     def "gateway overwrites identity and never forwards a failed or revoked session"() {
         given:
         def key = 'gateway-internal-service-key-32-characters'

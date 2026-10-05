@@ -216,7 +216,10 @@ paths:
     put:
       operationId: saveProfile
       description: Create or update the current identity profile. Stable profile ID;
-        last committed write wins.
+        last committed write wins. Gateway derives optional profile email metadata
+        from the revalidated session identity; client identity headers are ignored.
+        Malformed authentication identity metadata returns 503. Email is omitted
+        for identities without an email, including SSO identities.
       requestBody:
         required: true
         content:
