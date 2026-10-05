@@ -118,7 +118,7 @@ class BankModel(application: Application) : AndroidViewModel(application) {
     fun openWallet(currency: String) = authenticated { s, _ -> supportedCurrency(currency); http.send("/v1/wallets", "POST", json("currency", currency), s.session.access_token); load(s) }
     fun resolve(value: String) = authenticated { s, epoch ->
         recipient = null
-        val p = phone(value)
+        val p = recipientPhone(value)
         val result = wire.decodeFromString<Recipient>(http.send("/v1/recipients/resolve", "POST", json("phone_number", p), s.session.access_token))
         uuid(result.identity_id); require(result.identity_id != s.identity.id && result.phone_number == p)
         if (generation == epoch) recipient = result
@@ -155,7 +155,6 @@ class BankModel(application: Application) : AndroidViewModel(application) {
     fun closeDetails() { detail = null }
     fun readNotice(id: String) = authenticated { s, _ -> http.send("/v1/notifications/${uuid(id)}/read", "POST", token = s.session.access_token); load(s) }
     fun saveName(value: String) = authenticated { s, _ -> require(value.trim().length in 1..100); http.send("/v1/users/me", "PUT", json("display_name", value.trim()), s.session.access_token); load(s) }
-    fun savePhone(value: String) = authenticated { s, _ -> http.send("/v1/users/me/phone", "PUT", json("phone_number", phone(value)), s.session.access_token); load(s) }
     fun logout() = task {
         val s = session ?: return@task
         store.remove(sessionScope); store.remove(Login.scope(config.origin))

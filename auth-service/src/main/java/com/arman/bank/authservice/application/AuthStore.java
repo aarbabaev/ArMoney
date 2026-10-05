@@ -6,9 +6,9 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface AuthStore {
-    Identity externalIdentity(String issuer, String subject);
+    Identity externalIdentity(String issuer, String subject, String phone);
     record Credentials(Identity identity, String passwordHash) {}
-    void register(Identity identity, String passwordHash);
+    Identity register(Identity identity, String passwordHash);
     Optional<Credentials> findByEmail(String email);
     boolean allowAttempt(String subjectHash, Instant now);
     void saveSession(String tokenHash, UUID identityId, Instant now, Instant expiresAt);

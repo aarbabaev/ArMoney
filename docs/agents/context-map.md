@@ -19,6 +19,7 @@ Java package names and paths retain `arman` compatibility.
 | Native Android slice | Assigned `android/` source/tests, [Android contract](../android-contract.md), gateway contract and [bank-android](../../.agents/skills/bank-android/SKILL.md) |
 | Native iOS slice | Assigned `ios/` project/source/tests and frozen gateway contract; [bank-ios](../../.agents/skills/bank-ios/SKILL.md) |
 | Keycloak slice | Assigned `sso-service/` configuration and explicit auth adapter lease; [bank-sso](../../.agents/skills/bank-sso/SKILL.md) |
+| Registration phone and recipient eligibility | [ADR 0014](../adr/0014-uae-registration-phone.md), auth registration claim, user private binding and [P2P contract](../p2p-contract.md) |
 
 Ellipses abbreviate module Java package paths; use `rg --files <module>` to locate
 one named file. Search without generated `build/` outputs. The native-client/SSO rows are

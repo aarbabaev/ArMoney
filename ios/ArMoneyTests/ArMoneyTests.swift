@@ -133,7 +133,12 @@ final class BankingSafetyTests: XCTestCase {
         XCTAssertEqual(Money.format(1, currency: "AED"), "0.01 AED")
     }
     func testPhoneRequiresExactE164() {
-        XCTAssertTrue(Money.validPhone("+441234567890"))
+        for input in ["+971501234567", "+971521234567", "+971541234567", "+971551234567", "+971561234567", "+971581234567"] {
+            XCTAssertTrue(Money.validPhone(input))
+        }
+        for input in ["+441234567890", "+971571234567", "0501234567", "+9715012345678"] {
+            XCTAssertFalse(Money.validPhone(input))
+        }
         for input in ["441234567890", "+0123456789", "+44 1234567890", "+441234567890\n", "123", "+1234567890123456"] {
             XCTAssertFalse(Money.validPhone(input), input)
         }

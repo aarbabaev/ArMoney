@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: auth-service
   version: 0.1.0
-  description: Operational API and identity registration/session API. Email ownership is not yet verified.
+  description: Operational API and identity registration/session API. New registrations require an immutable unique UAE mobile claim. Email and phone ownership are not verified.
 paths:
   /health/live:
     get:
@@ -43,13 +43,13 @@ paths:
   /v1/auth/register:
     post:
       operationId: register
-      description: Registers an identity; duplicates return the same response without changing the password.
+      description: Reserves a unique canonical UAE mobile number and provisions its user-service claim. An identical email and phone retry preserves the identity and password. Conflicting email or phone claims return a generic conflict. A dependency failure may leave a durable identity for a later registration or credential-authenticated login retry.
       security: [{ServiceKey: []}]
       requestBody:
-        $ref: '#/components/requestBodies/Credentials'
+        $ref: '#/components/requestBodies/Registration'
       responses:
         '202':
-          description: Registration processed (also returned for an existing email)
+          description: Registration processed and user-service acknowledged the immutable claim (also returned for an identical email and phone retry)
           content:
             application/json:
               schema:
@@ -61,6 +61,8 @@ paths:
                     enum: [registration_processed]
         '400':
           $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '413':
@@ -72,6 +74,7 @@ paths:
   /v1/auth/login:
     post:
       operationId: login
+      description: Verifies credentials and reasserts the registered phone in user-service before issuing a session. Historical identities with no registered phone retain login compatibility without automatic enrollment.
       security: [{ServiceKey: []}]
       requestBody:
         $ref: '#/components/requestBodies/Credentials'
@@ -84,6 +87,8 @@ paths:
                 $ref: '#/components/schemas/Session'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '413':
@@ -95,7 +100,7 @@ paths:
   /v1/auth/sso:
     post:
       operationId: exchangeSsoToken
-      description: Validates a Keycloak access token and creates an independent 30-minute opaque local session. No email account linking.
+      description: Validates a Keycloak access token and creates an independent 30-minute opaque local session after user-service acknowledges the phone claim. New issuer/subject mappings require a canonical UAE phone_number from trusted introspection. An existing registered phone must match exactly and cannot be omitted. Historical phone-less mappings remain compatible without automatic enrollment. No email or phone account linking; possession is not verified.
       security: [{ServiceKey: []}]
       requestBody:
         required: true
@@ -120,6 +125,8 @@ paths:
                 $ref: '#/components/schemas/Session'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '413':
@@ -203,6 +210,27 @@ components:
         expires_at:
           type: string
           format: date-time
+    Registration:
+      type: object
+      additionalProperties: false
+      required: [email, password, phone_number]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: Trimmed and lowercased; ASCII email addresses only.
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 15
+          maxLength: 128
+          description: At least 15 Unicode code points, at most 128 UTF-16 code units; never trimmed.
+        phone_number:
+          type: string
+          pattern: '^\+9715[024568][0-9]{7}$'
+          description: Exact canonical UAE mobile claim; immutable and unique across legacy and SSO identities. Does not attest possession.
     Credentials:
       type: object
       additionalProperties: false
@@ -236,6 +264,12 @@ components:
       in: header
       name: X-Service-Key
   requestBodies:
+    Registration:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Registration'
     Credentials:
       required: true
       content:
@@ -244,7 +278,13 @@ components:
             $ref: '#/components/schemas/Credentials'
   responses:
     BadRequest:
-      description: Malformed JSON, invalid email or password
+      description: Malformed JSON, invalid email, password or registration phone
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Generic registration_conflict; an email, phone or durable user-service claim conflicts. No account linking or credential replacement occurs.
       content:
         application/json:
           schema:

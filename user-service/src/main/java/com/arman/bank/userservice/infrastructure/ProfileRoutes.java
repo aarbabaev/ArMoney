@@ -7,12 +7,25 @@ import io.javalin.http.NotFoundResponse;
 import java.util.Map;
 import java.util.LinkedHashMap;
 import com.arman.bank.userservice.application.LookupLimitExceeded;
+import com.arman.bank.userservice.application.RegistrationConflict;
 public final class ProfileRoutes {
     private final ProfileService service;
     private final String key;
     public ProfileRoutes(ProfileService service, String key) { this.service = service; this.key = key; }
     public void configure(JavalinConfig config) {
         InternalHttp.configure(config, key);
+        config.routes.exception(RegistrationConflict.class, (e, ctx) ->
+            InternalHttp.reply(ctx, 409, Map.of("error", "registration_phone_conflict")));
+        config.routes.put("/internal/registrations/me", ctx -> {
+            ctx.header("Cache-Control", "no-store");
+            String supplied = ctx.header("X-Service-Key");
+            if (supplied == null || supplied.length() > 256 || !java.security.MessageDigest.isEqual(
+                key.getBytes(java.nio.charset.StandardCharsets.UTF_8), supplied.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+                throw new io.javalin.http.UnauthorizedResponse();
+            var identity = InternalHttp.owner(ctx);
+            service.registerPhone(identity, InternalHttp.body(ctx, "phone_number").get("phone_number").textValue());
+            ctx.status(204);
+        });
         config.routes.exception(LookupLimitExceeded.class, (e, ctx) -> {
             ctx.header("Retry-After", "60");
             InternalHttp.reply(ctx, 429, Map.of("error", "lookup_limit_exceeded"));

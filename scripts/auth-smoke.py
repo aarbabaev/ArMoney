@@ -8,8 +8,9 @@ origin = "http://localhost:8080"
 email = f"smoke-{uuid.uuid4()}@example.test"
 password = "smoke-only-long-password"
 
-def request(method, path, body=None, token=None):
+def request(method, path, body=None, token=None, extra=None):
     headers = {"Content-Type": "application/json"}
+    headers.update(extra or {})
     if token:
         headers["Authorization"] = "Bearer " + token
     req = urllib.request.Request(origin + path, data=None if body is None else json.dumps(body).encode(),
@@ -20,12 +21,18 @@ def request(method, path, body=None, token=None):
         response = error
     with response:
         raw = response.read()
-        assert response.headers.get("Cache-Control") == "no-store"
+        if path.startswith("/v1/"):
+            assert response.headers.get("Cache-Control") == "no-store"
         return response.status, json.loads(raw) if raw else None
 
 credentials = {"email": email, "password": password}
-assert request("POST", "/v1/auth/register", credentials)[0] == 202
-assert request("POST", "/v1/auth/register", credentials)[0] == 202
+assert request("POST", "/v1/auth/register", credentials)[0] == 400
+for invalid_phone in ("+15551234567", "+971570000001", "0501234567", "", None):
+    assert request("POST", "/v1/auth/register", dict(credentials, phone_number=invalid_phone))[0] == 400
+assert request("POST", "/v1/auth/register", dict(credentials, phone_number="+971580000001"))[0] == 202
+assert request("POST", "/v1/auth/register", dict(credentials, phone_number="+971580000001"))[0] == 202
+assert request("POST", "/v1/auth/register", dict(credentials, phone_number="+971580000002"))[0] == 409
+assert request("POST", "/v1/auth/register", dict(credentials, email=f"other-{uuid.uuid4()}@example.test", phone_number="+971580000001"))[0] == 409
 assert request("POST", "/v1/auth/login", {"email": email, "password": "incorrect-long-password"})[0] == 401
 status, session = request("POST", "/v1/auth/login", credentials)
 assert status == 200
@@ -33,6 +40,8 @@ token = session["access_token"]
 assert session["expires_in"] == 1800
 status, identity = request("GET", "/v1/auth/me", token=token)
 assert status == 200 and identity["email"] == email
+assert request("PUT", "/internal/registrations/me", {"phone_number": "+971580000002"}, token=token,
+               extra={"X-Identity-Id": str(uuid.uuid4()), "X-Service-Key": "forged"})[0] == 404
 assert request("GET", "/v1/auth/me")[0] == 401
 assert request("POST", "/v1/auth/logout", token=token)[0] == 204
 assert request("GET", "/v1/auth/me", token=token)[0] == 401

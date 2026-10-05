@@ -24,9 +24,9 @@ Native clients live in [ios/](ios/README.md) (SwiftUI) and [android/](android/RE
 (Kotlin/Jetpack Compose). Optional Keycloak SSO and
 local HTTPS setup are documented in [docs/sso-and-ios.md](docs/sso-and-ios.md).
 Identity registration, login, current identity and logout now work through gateway.
-Profiles and operator-attested phone recipients, live wallet balances, durable P2P transfers,
+Profiles and registered UAE phone recipients, live wallet balances, durable P2P transfers,
 history and in-app notifications are implemented. See the [P2P contract](docs/p2p-contract.md)
-and [operator procedure](docs/adr/0009-phone-p2p-payments.md). No SMS or push provider is connected.
+and [registration policy](docs/adr/0014-uae-registration-phone.md). No SMS or push provider is connected.
 
 ## Run
 
@@ -65,7 +65,7 @@ for persistent services, then run `./gradlew :ledger-service:run`.
 Each service must use a different PORT when started outside Compose.
 Gateway needs PORT, AUTH_BASE_URL, USER_BASE_URL, WALLET_BASE_URL, PAYMENT_BASE_URL
 and INTERNAL_AUTH_KEY; payment needs USER_BASE_URL, WALLET_BASE_URL, LEDGER_BASE_URL
-and INTERNAL_AUTH_KEY; auth-service also needs
+and INTERNAL_AUTH_KEY; auth-service also needs USER_BASE_URL and
 INTERNAL_AUTH_KEY with the same value (at least 32 random characters). For an existing
 installation, append INTERNAL_AUTH_KEY to .env without changing LOCAL_DB_PASSWORD.
 
@@ -103,7 +103,7 @@ distributed orchestration, observability backend, MFA and email verification.
 
 | Method | Path | Result |
 | --- | --- | --- |
-| POST | /v1/auth/register | 202 for new or existing email; no password overwrite |
+| POST | /v1/auth/register | Required unique UAE phone; existing-email retries do not overwrite credentials |
 | POST | /v1/auth/login | 200 with access_token, token_type, expires_in and expires_at |
 | POST | /v1/auth/sso | Exchange a verified Keycloak access token for a local session; optional SSO configuration required |
 | GET | /v1/auth/me | Current identity; requires Authorization: Bearer <access_token> |

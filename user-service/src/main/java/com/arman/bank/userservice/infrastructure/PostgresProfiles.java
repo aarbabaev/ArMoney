@@ -1,6 +1,7 @@
 package com.arman.bank.userservice.infrastructure;
 import com.arman.bank.userservice.application.ProfileStore;
 import com.arman.bank.userservice.application.LookupLimitExceeded;
+import com.arman.bank.userservice.application.RegistrationConflict;
 import com.arman.bank.userservice.domain.Profile;
 import com.arman.bank.runtime.Database;
 import java.util.Optional;
@@ -8,12 +9,37 @@ import java.util.UUID;
 public final class PostgresProfiles implements ProfileStore {
     private final Database database;
     public PostgresProfiles(Database database) { this.database = database; }
+    // All profile/claim writers take this lock before reading either table.
+    private static void lockRegistration(org.jooq.DSLContext sql) {
+        sql.fetch("select pg_advisory_xact_lock(725631904128::bigint)");
+    }
+    public void registerPhone(UUID identity, String phone) {
+        Profile.validatePhone(phone);
+        database.transaction(sql -> {
+            lockRegistration(sql);
+            var claim = sql.fetchOne("select phone_number from registration_phone_claims where identity_id = ?", identity);
+            if (claim != null && !phone.equals(claim.get("phone_number", String.class))) throw new RegistrationConflict();
+            if (sql.fetchOne("select identity_id from registration_phone_claims where phone_number = ? and identity_id <> ?", phone, identity) != null ||
+                sql.fetchOne("select identity_id from profiles where phone_number = ? and identity_id <> ?", phone, identity) != null)
+                throw new RegistrationConflict();
+            var profile = sql.fetchOne("select phone_number from profiles where identity_id = ?", identity);
+            if (profile != null && profile.get("phone_number") != null && !phone.equals(profile.get("phone_number", String.class)))
+                throw new RegistrationConflict();
+            sql.execute("insert into registration_phone_claims(identity_id, phone_number) values (?, ?) on conflict(identity_id) do nothing", identity, phone);
+            sql.execute("update profiles set phone_number = ? where identity_id = ? and phone_number is null", phone, identity);
+            return null;
+        });
+    }
     public Profile save(Profile profile) {
-        return database.transaction(sql -> read(sql.fetchOne("""
-            insert into profiles(id, identity_id, display_name) values (?, ?, ?)
-            on conflict(identity_id) do update set display_name = excluded.display_name
-            returning *
-            """, profile.id(), profile.identityId(), profile.displayName())));
+        return database.transaction(sql -> {
+            lockRegistration(sql);
+            return read(sql.fetchOne("""
+                insert into profiles(id, identity_id, display_name, phone_number)
+                values (?, ?, ?, (select phone_number from registration_phone_claims where identity_id = ?))
+                on conflict(identity_id) do update set display_name = excluded.display_name
+                returning *
+                """, profile.id(), profile.identityId(), profile.displayName(), profile.identityId()));
+        });
     }
     public Optional<Profile> find(UUID identity) {
         return database.transaction(sql -> Optional.ofNullable(sql.fetchOne(
@@ -21,10 +47,12 @@ public final class PostgresProfiles implements ProfileStore {
     }
     public Optional<Profile> changePhone(UUID identity, String phone) {
         Profile.validatePhone(phone);
-        return database.transaction(sql -> Optional.ofNullable(sql.fetchOne("""
-            update profiles set phone_verified = case when phone_number = ? then phone_verified else false end,
-                phone_number = ? where identity_id = ? returning *
-            """, phone, phone, identity)).map(PostgresProfiles::read));
+        return database.transaction(sql -> {
+            lockRegistration(sql);
+            var claim = sql.fetchOne("select phone_number from registration_phone_claims where identity_id = ?", identity);
+            if (claim == null || !phone.equals(claim.get("phone_number", String.class))) throw new RegistrationConflict();
+            return Optional.ofNullable(sql.fetchOne("select * from profiles where identity_id = ?", identity)).map(PostgresProfiles::read);
+        });
     }
     public Optional<Profile> resolvePhone(UUID requester, String phone) {
         Profile.validatePhone(phone);
@@ -42,7 +70,7 @@ public final class PostgresProfiles implements ProfileStore {
         });
         if (!allowed) throw new LookupLimitExceeded();
         return database.transaction(sql -> Optional.ofNullable(sql.fetchOne(
-            "select * from profiles where phone_number = ? and phone_verified", phone)).map(PostgresProfiles::read));
+            "select p.* from profiles p join registration_phone_claims c on c.identity_id = p.identity_id and c.phone_number = p.phone_number where c.phone_number = ?", phone)).map(PostgresProfiles::read));
     }
     /** Operator-only entry point: the HTTP service never invokes this method. */
     public void verifyPendingPhone(UUID identity, String expectedPhone, String operator, String evidence) {

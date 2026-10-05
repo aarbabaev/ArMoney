@@ -57,9 +57,9 @@ def until(function, predicate, timeout=90):
     raise AssertionError('Bounded acceptance wait timed out')
 
 
-def make_user(label):
+def make_user(label, phone):
     creds = {'email': f'p2p-{uuid.uuid4()}@example.test', 'password': 'p2p-only-long-password'}
-    expect(202, call('POST', '/v1/auth/register', body=creds))
+    expect(202, call('POST', '/v1/auth/register', body=dict(creds, phone_number=phone)))
     token = expect(200, call('POST', '/v1/auth/login', body=creds))['access_token']
     owner = expect(200, call('GET', '/v1/auth/me', token))['id']
     expect(200, call('PUT', '/v1/users/me', token, {'display_name': label}))
@@ -70,16 +70,16 @@ def make_user(label):
     return token, owner, wallet
 
 
-alice, alice_id, a = make_user('P2P Alice')
-bob, bob_id, b = make_user('P2P Bob')
-outsider, outsider_id, _ = make_user('P2P Other')
-phone = '+1555' + str(uuid.uuid4().int % 10**7).zfill(7)
+alice, alice_id, a = make_user('P2P Alice', '+971560000001')
+bob, bob_id, b = make_user('P2P Bob', '+971560000002')
+outsider, outsider_id, _ = make_user('P2P Other', '+971560000003')
+phone = '+971560000002'
 pending = expect(200, call('PUT', '/v1/users/me/phone', bob, {'phone_number': phone}))
 assert pending['phone_verified'] is False
-expect(404, call('POST', '/v1/recipients/resolve', alice, {'phone_number': phone}))
-# Only the local operator CLI may attest ownership. This is synthetic CI, never real phone ownership.
-compose('exec', '-T', 'user-service', 'java', '-cp', '/opt/service/lib/*',
-    'com.arman.bank.userservice.VerifyPhoneMain', bob_id, phone, 'ci-operator', 'synthetic-case', '--confirm-out-of-band')
+# Registration claims are discoverable without SMS or fabricated verification.
+expect(409, call('PUT', '/v1/users/me/phone', bob, {'phone_number': '+971560000004'}))
+for invalid_phone in ('+15551234567', '+971570000001', '0560000002'):
+    expect(400, call('POST', '/v1/recipients/resolve', alice, {'phone_number': invalid_phone}))
 recipient = expect(200, call('POST', '/v1/recipients/resolve', alice, {'phone_number': phone}))
 assert recipient['identity_id'] == bob_id and recipient['display_name'] == 'P2P Bob'
 assert 'email' not in recipient

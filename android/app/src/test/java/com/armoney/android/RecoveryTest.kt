@@ -66,6 +66,23 @@ class RecoveryTest {
         assertTrue(runCatching { recovery.load(owner) }.isFailure)
         assertTrue(runCatching { recovery.save(draft) }.isFailure)
     }
+    @Test fun historicalForeignPhoneReplaysWithoutNewInputAdmission() = runBlocking {
+        val disk = Disk()
+        val legacy = draft.copy(attempted = true)
+        assertTrue(runCatching { phone(legacy.command.recipient_phone) }.isFailure)
+        disk.write("payment|${draft.origin}|$owner", kotlinx.serialization.json.Json.encodeToString(Pending.serializer(), legacy))
+        val recovery = PaymentRecovery(draft.origin, disk)
+        val failure = runCatching { recovery.execute(owner) { saved ->
+            assertEquals(legacy, saved)
+            throw HttpFailure(400, "invalid_request")
+        } }.exceptionOrNull()
+        assertTrue(failure is HttpFailure)
+        assertEquals(legacy, PaymentRecovery(draft.origin, disk).load(owner))
+        val accepted = Payment("23771763-68c5-4e1f-8533-6ce62c708268", owner, other, draft.command.source_wallet_id,
+            "045659e0-c697-4faa-9fbc-f8ba12801a5d", draft.command.recipient_phone, "AED", 1234, "PENDING", null, "2026-10-01T00:00:00Z", "2026-10-01T00:00:00Z")
+        assertEquals(accepted, recovery.execute(owner) { saved -> assertEquals(legacy, saved); accepted })
+        assertEquals(legacy, recovery.load(owner))
+    }
     @Test fun malformedOrMismatchedTerminalResponsePreservesAttempt() = runBlocking {
         val disk = Disk(); val recovery = PaymentRecovery(draft.origin, disk); recovery.save(draft)
         val malformed = Payment("23771763-68c5-4e1f-8533-6ce62c708268", owner, other, draft.command.source_wallet_id,

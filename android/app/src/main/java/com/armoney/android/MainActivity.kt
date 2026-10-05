@@ -8,10 +8,12 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 
 class MainActivity : ComponentActivity() {
@@ -88,7 +90,7 @@ class MainActivity : ComponentActivity() {
             Button(onClick = model::retry, enabled = !model.busy) { Text("Retry saved transfer") }
         } }
     } else {
-        OutlinedTextField(value = phone, onValueChange = { phone = it; model.clearRecipient() }, label = { Text("Recipient phone (+country code)") }, modifier = Modifier.fillMaxWidth(), enabled = !model.busy, singleLine = true)
+        RecipientPhoneField(phone, { phone = it; model.clearRecipient() }, !model.busy)
         Button(onClick = { model.resolve(phone) }, enabled = !model.busy) { Text("Find recipient") }
         model.recipient?.let { recipient ->
             Text("Recipient: ${recipient.display_name} · ${recipient.phone_number}")
@@ -122,16 +124,29 @@ class MainActivity : ComponentActivity() {
 }
 @Composable private fun ProfileScreen(model: BankModel) {
     var name by remember(model.profile?.display_name) { mutableStateOf(model.profile?.display_name.orEmpty()) }
-    var phone by remember(model.profile?.phone_number) { mutableStateOf(model.profile?.phone_number.orEmpty()) }
     OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Display name") }, enabled = !model.busy)
     Button(onClick = { model.saveName(name) }, enabled = !model.busy && name.isNotBlank()) { Text("Save name") }
-    OutlinedTextField(value = phone, onValueChange = { phone = it }, label = { Text("Phone number") }, enabled = !model.busy)
-    Button(onClick = { model.savePhone(phone) }, enabled = !model.busy) { Text("Save phone") }
-    Text(if (model.profile?.phone_verified == true) "Phone verified" else "Phone not verified")
-    Text("Phone verification requires an operator to check ownership. Changing your number clears verification.")
+    RegisteredPhone(model.profile)
     HorizontalDivider(); Text("Account", style = MaterialTheme.typography.titleMedium)
     Text(model.session?.identity?.email ?: "No email supplied by your identity provider")
     Text("Identity: ${model.session?.identity?.id}")
     Button(onClick = model::logout, enabled = !model.busy) { Text("Sign out") }
     Text("Sign-out removes this device's bank session. The browser SSO session may remain active. Uncertain transfers stay saved for this account.", style = MaterialTheme.typography.bodySmall)
+}
+
+@Composable internal fun RecipientPhoneField(value: String, onValueChange: (String) -> Unit, enabled: Boolean) {
+    Text("United Arab Emirates · +971")
+    OutlinedTextField(value = value, onValueChange = onValueChange, label = { Text("Recipient mobile number") },
+        prefix = { Text("+971 ") }, supportingText = { Text("9 digits, starting with 50, 52, 54, 55, 56 or 58") },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+        modifier = Modifier.fillMaxWidth(), enabled = enabled, singleLine = true)
+}
+
+@Composable internal fun RegisteredPhone(profile: Profile?) {
+    Text("Registration phone number")
+    Text(profile?.phone_number ?: "No registration phone available")
+    if (profile?.phone_number != null) {
+        Text(if (profile.phone_verified) "Phone verified" else "Registered · ownership not verified")
+        Text("Your registration number cannot be changed here. No SMS verification is provided. Transfers do not require phone verification.")
+    }
 }
