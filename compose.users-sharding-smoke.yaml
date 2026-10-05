@@ -1,0 +1,4 @@
+# Disposable acceptance only. Use an explicit unique project and all three files.
+services:
+  app-gateway:
+    ports: !override ["127.0.0.1:18080:8080"]

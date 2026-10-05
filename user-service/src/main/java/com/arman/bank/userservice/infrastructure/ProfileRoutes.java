@@ -18,7 +18,8 @@ public final class ProfileRoutes {
             InternalHttp.reply(ctx, 429, Map.of("error", "lookup_limit_exceeded"));
         });
         config.routes.put("/v1/users/me", ctx -> {
-            var profile = service.save(InternalHttp.owner(ctx), InternalHttp.body(ctx, "display_name").get("display_name").asText());
+            if (java.util.Collections.list(ctx.req().getHeaders("X-Identity-Email")).size() > 1) throw new IllegalArgumentException("Ambiguous identity email");
+            var profile = service.save(InternalHttp.owner(ctx), InternalHttp.body(ctx, "display_name").get("display_name").asText(), ctx.header("X-Identity-Email"));
             InternalHttp.reply(ctx, 200, view(profile));
         });
         config.routes.get("/v1/users/me", ctx -> InternalHttp.reply(ctx, 200,

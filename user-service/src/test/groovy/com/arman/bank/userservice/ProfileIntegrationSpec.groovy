@@ -24,15 +24,23 @@ class ProfileIntegrationSpec extends Specification {
         client = HttpClient.newHttpClient()
     }
     def cleanup() { client?.close(); runtime?.close(); db?.close(); postgres?.stop() }
-    def req(String method, String path, UUID owner = alice, String body = null, String key = KEY) {
+    def req(String method, String path, UUID owner = alice, String body = null, String key = KEY, String email = null) {
         def b = HttpRequest.newBuilder(URI.create("http://localhost:${runtime.port()}" + path)).timeout(Duration.ofSeconds(10))
         if (key != null) b.header('X-Service-Key', key)
         if (owner != null) b.header('X-Identity-Id', owner.toString())
+        if (email != null) b.header('X-Identity-Email', email)
         if (body != null) b.header('Content-Type', 'application/json')
         b.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body))
         client.send(b.build(), HttpResponse.BodyHandlers.ofString())
     }
     def json(response) { InternalHttp.JSON.readTree(response.body()) }
+
+    def "trusted email validation rejects malformed header before reserving profile"() {
+        expect:
+        req('PUT', '/v1/users/me', alice, '{"display_name":"Synthetic"}', KEY, 'invalid-email').statusCode() == 400
+        db.transaction { it.fetchCount(org.jooq.impl.DSL.table('profile_directory')) } == 0
+        req('PUT', '/v1/users/me', alice, '{"display_name":"Synthetic"}', KEY, '.a@example.123').statusCode() == 200
+    }
 
     def "profile upsert preserves ID, persists after restart and isolates users"() {
         expect:

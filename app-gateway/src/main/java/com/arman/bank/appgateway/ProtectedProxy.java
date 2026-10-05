@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.*;
 import java.util.Map;
 import java.util.UUID;
@@ -78,14 +79,25 @@ public final class ProtectedProxy implements AutoCloseable {
             if (identity.statusCode() == 401) { error(ctx, 401); return; }
             if (identity.statusCode() != 200) { error(ctx, 503); return; }
             String owner;
+            String email = null;
             try {
                 var data = InternalHttp.JSON.readTree(identity.body());
                 String id = data.path("id").asText();
                 owner = UUID.fromString(id).toString();
                 if (!owner.equalsIgnoreCase(id)) throw new IllegalArgumentException("Invalid identity");
+                var authEmail = data.get("email");
+                if (authEmail != null && !authEmail.isNull()) {
+                    if (!authEmail.isTextual()) throw new IllegalArgumentException("Invalid identity");
+                    email = authEmail.textValue().strip().toLowerCase(Locale.ROOT);
+                    // Same grammar as auth-service; no cross-service class dependency.
+                    if (email.length() > 254 || !email.matches("[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+"))
+                        throw new IllegalArgumentException("Invalid identity");
+                }
             } catch (Exception invalidIdentity) { error(ctx, 503); return; }
             var builder = HttpRequest.newBuilder(target.resolve(path)).timeout(Duration.ofSeconds(createPayment ? 20 : 8))
                 .header("X-Service-Key", key).header("X-Identity-Id", owner);
+            if (email != null && path.equals("/v1/users/me") && ctx.method().name().equals("PUT"))
+                builder.header("X-Identity-Email", email);
             if (createPayment) builder.header("Idempotency-Key", idempotencyKey);
             if (hasBody) {
                 String type = ctx.contentType();

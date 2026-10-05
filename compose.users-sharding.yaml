@@ -1,0 +1,47 @@
+# Opt-in only; the existing user-db and its volume remain the primary directory.
+services:
+  user-service:
+    environment:
+      USER_SHARD_IDS: s1,s2
+      USER_SHARD_S1_DB_URL: jdbc:postgresql://user-shard-s1:5432/bank
+      USER_SHARD_S1_DB_USER: bank
+      USER_SHARD_S1_DB_PASSWORD: ${LOCAL_DB_PASSWORD:?Set LOCAL_DB_PASSWORD}
+      USER_SHARD_S2_DB_URL: jdbc:postgresql://user-shard-s2:5432/bank
+      USER_SHARD_S2_DB_USER: bank
+      USER_SHARD_S2_DB_PASSWORD: ${LOCAL_DB_PASSWORD:?Set LOCAL_DB_PASSWORD}
+      USER_SHARD_PREFIX_MAP: ${USER_SHARD_PREFIX_MAP:-al:s1,bo:s2,ch:s2}
+      USER_SHARD_DEFAULT: primary
+    depends_on:
+      user-shard-s1:
+        condition: service_healthy
+      user-shard-s2:
+        condition: service_healthy
+  user-shard-s1:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: bank
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?Set LOCAL_DB_PASSWORD}
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U bank -d bank]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    volumes: [user-shard-s1:/var/lib/postgresql/data]
+    networks: [bank]
+  user-shard-s2:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: bank
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?Set LOCAL_DB_PASSWORD}
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U bank -d bank]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    volumes: [user-shard-s2:/var/lib/postgresql/data]
+    networks: [bank]
+volumes:
+  user-shard-s1:
+  user-shard-s2:
