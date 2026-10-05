@@ -5,7 +5,7 @@ import org.testcontainers.containers.PostgreSQLContainer
 import spock.lang.Specification
 
 class DatabaseIntegrationSpec extends Specification {
-    def "V3 upgrades populated legacy identities and sessions without changing ownership"() {
+    def "V3 and V4 upgrade populated legacy identities and sessions without changing ownership"() {
         given:
         def postgres = new PostgreSQLContainer('postgres:17.6-alpine')
         postgres.start()
@@ -25,11 +25,38 @@ class DatabaseIntegrationSpec extends Specification {
         then:
         store.findSession('a' * 64, java.time.Instant.now()).orElseThrow().id() == id
         store.findByEmail('legacy@example.com').orElseThrow().identity().id() == id
-        store.externalIdentity('https://issuer.example/realm', 'subject').id() != id
+        store.findByEmail('legacy@example.com').orElseThrow().identity().registrationPhone() == null
+        store.externalIdentity('https://issuer.example/realm', 'subject', '+971501234567').id() != id
 
         cleanup:
         database?.close()
         connection?.close()
+        postgres?.stop()
+    }
+
+    def 'registration phone constraints reject noncanonical and duplicate values while allowing historical nulls'() {
+        given:
+        def postgres = new PostgreSQLContainer('postgres:17.6-alpine')
+        postgres.start()
+        def database = new Database(postgres.jdbcUrl, postgres.username, postgres.password)
+        database.transaction { sql ->
+            sql.execute('insert into identities(id) values (?), (?)', UUID.randomUUID(), UUID.randomUUID())
+            sql.execute('insert into identities(id,registration_phone) values (?,?)', UUID.randomUUID(), '+971501234567')
+        }
+
+        when:
+        database.transaction { sql -> sql.execute('insert into identities(id,registration_phone) values (?,?)', UUID.randomUUID(), '+12025550123') }
+        then:
+        thrown(org.jooq.exception.DataAccessException)
+
+        when:
+        database.transaction { sql -> sql.execute('insert into identities(id,registration_phone) values (?,?)', UUID.randomUUID(), '+971501234567') }
+        then:
+        thrown(org.jooq.exception.DataAccessException)
+        database.transaction { sql -> sql.fetchOne('select count(*) from identities').get(0, Long) } == 3
+
+        cleanup:
+        database?.close()
         postgres?.stop()
     }
 

@@ -3,7 +3,7 @@
 Native Kotlin/Jetpack Compose in a separate android/ Gradle build. Functional
 scope matches the iOS slice: browser SSO, wallets/open/balances, exact phone
 recipient confirmation, P2P/history/details, in-app notifications/read, profile
-name/phone/verification status and account/sign-out. See p2p-contract.md and the
+name/immutable registration phone/verification status and account/sign-out. See p2p-contract.md and the
 gateway OpenAPI. No new external provider or backend financial behavior.
 
 Android 8/API26 minimum; compile/target36. AGP8.13.2, Kotlin2.2.21, Compose compiler

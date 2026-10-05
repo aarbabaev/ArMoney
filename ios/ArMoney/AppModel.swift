@@ -136,7 +136,7 @@ final class AppModel: ObservableObject {
         await updateProfile(path: "v1/users/me", body: ["display_name": trimmed])
     }
     func savePhone(_ phone: String) async {
-        guard Money.validPhone(phone) else { message = "Use an international number such as +441234567890, without spaces."; return }
+        guard Money.validPhone(phone) else { message = "Use a UAE mobile number such as +971501234567."; return }
         await updateProfile(path: "v1/users/me/phone", body: ["phone_number": phone])
     }
     private func updateProfile(path: String, body: [String: String]) async {
@@ -165,7 +165,7 @@ final class AppModel: ObservableObject {
     func resolve(_ phone: String) async {
         guard !busy, pending == nil, recoveryReady else { return }
         recipient = nil
-        guard Money.validPhone(phone) else { message = "Enter a complete international phone number, including + and country code."; return }
+        guard Money.validPhone(phone) else { message = "Enter a UAE mobile number beginning with +971."; return }
         let current = generation; busy = true; message = nil
         defer { if generation == current { busy = false } }
         do {

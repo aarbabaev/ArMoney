@@ -8,19 +8,19 @@ class PaymentRequestSpec extends Specification {
         given:
         def source = UUID.randomUUID()
         def recipient = UUID.randomUUID()
-        def request = new PaymentRequest(source, recipient, '+15551234567', 'AED', amount)
+        def request = new PaymentRequest(source, recipient, '+971501234567', 'AED', amount)
         expect:
         request.currency() == 'AED'
         request.amountMinor() == amount
-        request.hash() == new PaymentRequest(source, recipient, '+15551234567', 'AED', amount).hash()
-        request.hash() != new PaymentRequest(source, recipient, '+15551234567', 'AED', amount == 1L ? 2L : 1L).hash()
+        request.hash() == new PaymentRequest(source, recipient, '+971501234567', 'AED', amount).hash()
+        request.hash() != new PaymentRequest(source, recipient, '+971501234567', 'AED', amount == 1L ? 2L : 1L).hash()
         where:
         amount << [1L, 100L, 125L, Long.MAX_VALUE]
     }
 
     def 'unsupported currency is rejected: #currency'() {
         when:
-        new PaymentRequest(UUID.randomUUID(), UUID.randomUUID(), '+15551234567', currency, 100L)
+        new PaymentRequest(UUID.randomUUID(), UUID.randomUUID(), '+971501234567', currency, 100L)
         then:
         thrown(IllegalArgumentException)
         where:

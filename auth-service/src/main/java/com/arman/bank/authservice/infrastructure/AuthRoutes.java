@@ -49,12 +49,14 @@ public final class AuthRoutes {
             int status = switch (error.kind()) {
                 case BAD_INPUT -> 400;
                 case UNAUTHORIZED -> 401;
+                case CONFLICT -> 409;
                 case RATE_LIMITED -> 429;
                 case UNAVAILABLE -> 503;
             };
             if (status == 429) ctx.header("Retry-After", "900");
             respond(ctx, status, Map.of("error", switch (status) {
                 case 400 -> "invalid_request";
+                case 409 -> "registration_conflict";
                 case 429 -> "too_many_attempts";
                 case 503 -> "service_unavailable";
                 default -> "invalid_credentials";
@@ -65,12 +67,12 @@ public final class AuthRoutes {
         config.routes.exception(Exception.class, (error, ctx) ->
                 respond(ctx, 503, Map.of("error", "service_unavailable")));
         config.routes.post("/v1/auth/register", ctx -> withHashSlot(ctx, () -> {
-            var body = credentials(ctx);
-            service.register(body.get("email").asText(), body.get("password").asText());
+            var body = credentials(ctx, true);
+            service.register(body.get("email").asText(), body.get("password").asText(), body.get("phone_number").textValue());
             respond(ctx, 202, Map.of("message", "registration_processed"));
         }));
         config.routes.post("/v1/auth/login", ctx -> withHashSlot(ctx, () -> {
-            var body = credentials(ctx);
+            var body = credentials(ctx, false);
             var session = service.login(body.get("email").asText(), body.get("password").asText());
             respond(ctx, 200, Map.of("access_token", session.accessToken(), "token_type", "Bearer",
                     "expires_in", 1800, "expires_at", session.expiresAt().toString()));
@@ -103,16 +105,17 @@ public final class AuthRoutes {
         try { action.run(); } finally { hashingSlots.release(); }
     }
 
-    private static JsonNode credentials(Context ctx) {
+    private static JsonNode credentials(Context ctx, boolean registration) {
         if (ctx.bodyAsBytes().length > 4096) throw new io.javalin.http.HttpResponseException(413, "Request too large");
         var type = ctx.contentType();
         if (type == null || !type.split(";", 2)[0].strip().equalsIgnoreCase("application/json"))
             throw new AuthFailure(BAD_INPUT);
         try {
             var body = JSON.readTree(ctx.body());
-            if (body == null || !body.isObject() || body.size() != 2 ||
+            if (body == null || !body.isObject() || body.size() != (registration ? 3 : 2) ||
                     !body.hasNonNull("email") || !body.get("email").isTextual() ||
-                    !body.hasNonNull("password") || !body.get("password").isTextual())
+                    !body.hasNonNull("password") || !body.get("password").isTextual() ||
+                    (registration && (!body.hasNonNull("phone_number") || !body.get("phone_number").isTextual())))
                 throw new AuthFailure(BAD_INPUT);
             return body;
         } catch (JsonProcessingException e) { throw new AuthFailure(BAD_INPUT); }

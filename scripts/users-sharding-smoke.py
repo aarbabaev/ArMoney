@@ -70,10 +70,10 @@ def ready():
     raise AssertionError('Bounded readiness wait expired')
 
 
-def user(prefix, expected_shard, physical):
+def user(prefix, expected_shard, physical, phone):
     creds = {'email': prefix + str(uuid.uuid4()) + '@example.test',
              'password': 'synthetic-sharding-smoke-password'}
-    expect(202, call('POST', '/v1/auth/register', body=creds))
+    expect(202, call('POST', '/v1/auth/register', body={**creds, 'phone_number': phone}))
     token = expect(200, call('POST', '/v1/auth/login', body=creds))['access_token']
     owner = str(uuid.UUID(expect(200, call('GET', '/v1/auth/me', token))['id']))
     first = expect(200, call('PUT', '/v1/users/me', token, {'display_name': prefix + ' Synthetic'},
@@ -87,18 +87,20 @@ def user(prefix, expected_shard, physical):
 
 
 ready()
-alice = user('al', 's1', 'user-shard-s1')
-bob = user('bo', 's2', 'user-shard-s2')
-fallback = user('zz', 'primary', 'user-db')
+alice = user('al', 's1', 'user-shard-s1', '+971580000021')
+bob = user('bo', 's2', 'user-shard-s2', '+971580000022')
+fallback = user('zz', 'primary', 'user-db', '+971580000023')
 assert sql('user-db', f"select count(*) from profiles where identity_id in ('{alice[1]}','{bob[1]}');") == '0'
 assert sql('user-shard-s1', f"select count(*) from profiles where identity_id = '{bob[1]}';") == '0'
 
-# Operator verification remains central, including for physically sharded profiles.
-phone = '+1555' + str(uuid.uuid4().int % 10**7).zfill(7)
+# Registered numbers resolve across shards without fabricated ownership verification.
+phone = '+971580000021'
 expect(200, call('PUT', '/v1/users/me/phone', alice[0], {'phone_number': phone}))
-compose('exec', '-T', 'user-service', 'java', '-cp', '/opt/service/lib/*',
-        'com.arman.bank.userservice.VerifyPhoneMain', alice[1], phone,
-        'smoke-operator', 'sharding-smoke', '--confirm-out-of-band')
+expect(409, call('PUT', '/v1/users/me/phone', bob[0], {'phone_number': phone}))
+expect(409, call('POST', '/v1/auth/register', body={
+    'email': 'duplicate-' + str(uuid.uuid4()) + '@example.test',
+    'password': 'synthetic-sharding-smoke-password', 'phone_number': phone}))
+assert not expect(200, call('GET', '/v1/users/me', alice[0]))['phone_verified']
 recipient = expect(200, call('POST', '/v1/recipients/resolve', bob[0], {'phone_number': phone}))
 assert recipient['identity_id'] == alice[1]
 assert expect(200, call('GET', '/v1/users/me', bob[0]))['id'] == bob[2]
@@ -107,7 +109,7 @@ assert expect(200, call('GET', '/v1/users/me', bob[0]))['id'] == bob[2]
 compose('restart', 'user-service')
 ready()
 assert expect(200, call('GET', '/v1/users/me', alice[0]))['id'] == alice[2]
-assert expect(200, call('GET', '/v1/users/me', alice[0]))['phone_verified']
+assert not expect(200, call('GET', '/v1/users/me', alice[0]))['phone_verified']
 
 # An unavailable pinned shard cannot fall back to primary or another shard.
 compose('stop', 'user-shard-s1')
@@ -122,3 +124,4 @@ finally:
 ready()
 assert expect(200, call('GET', '/v1/users/me', alice[0]))['id'] == alice[2]
 print('Physical placement, spoof rejection, central phone lookup, restart and shard outage passed')
+

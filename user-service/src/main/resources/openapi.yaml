@@ -2,8 +2,8 @@ openapi: 3.0.3
 info:
   title: user-service
   version: 0.1.0
-  description: Private owner-scoped profiles and exact verified-phone recipient lookup.
-    Verification is an explicit operator action, not SMS verification.
+  description: Private owner-scoped profiles and exact registered UAE phone lookup.
+    Registration claims do not prove phone ownership. No SMS verification is performed.
 paths:
   /health/live:
     get:
@@ -41,6 +41,38 @@ paths:
             application/yaml:
               schema:
                 type: string
+  /internal/registrations/me:
+    put:
+      operationId: registerPhone
+      description: Auth-service supplies its verified identity and immutable registration phone. Identical retries are durable and idempotent. Claims and phone ownership are stored on the primary directory database. No profile or shard placement is fabricated. Existing profiles can bind only a missing or identical phone, preserving name and verification. Legacy profiles without a claim remain undiscoverable until explicit enrollment.
+      security:
+      - ServiceKey: []
+        VerifiedIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [phone_number]
+              properties:
+                phone_number:
+                  type: string
+                  pattern: ^\+9715[024568][0-9]{7}$
+      responses:
+        '204':
+          description: Durable matching registration claim
+        '400':
+          description: Invalid exact JSON or UAE mobile
+        '401':
+          description: Missing or invalid service key or verified identity
+        '409':
+          description: Phone already claimed or present on another legacy profile, or identity has a different phone
+        '413':
+          description: Request exceeds 4096 bytes
+        '503':
+          description: Database unavailable; retry the identical command
   /v1/users/me:
     get:
       operationId: getProfile
@@ -67,7 +99,7 @@ paths:
     put:
       operationId: saveProfile
       description: Create or update the current identity profile. Stable profile ID;
-        last committed write wins. Optional gateway-verified X-Identity-Email selects
+        last committed write wins. The primary directory binds the immutable registration phone when present. Optional gateway-verified X-Identity-Email selects
         the initial email-prefix shard; placement remains pinned. Missing email uses
         the configured default shard (primary by default). Client JSON cannot select a shard.
       parameters:
@@ -78,6 +110,7 @@ paths:
         schema:
           type: string
           format: email
+
       requestBody:
         required: true
         content:
@@ -117,8 +150,7 @@ paths:
       security: &id001
       - ServiceKey: []
         VerifiedIdentity: []
-      description: Requires an existing profile. Changing the phone clears verification;
-        repeating it preserves verification. No verification endpoint exists.
+      description: Requires an existing profile and registration claim. Only an identical registered phone retry is accepted; changes or missing claims return 409.
       requestBody:
         required: true
         content:
@@ -131,7 +163,7 @@ paths:
               properties:
                 phone_number: &id002
                   type: string
-                  pattern: ^\+[1-9][0-9]{7,14}$
+                  pattern: ^\+9715[024568][0-9]{7}$
       responses:
         '200':
           description: Updated profile
@@ -140,22 +172,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/Profile'
         '400': &id003
-          description: Invalid exact JSON or canonical E.164 value
+          description: Invalid exact JSON or canonical UAE mobile value
         '401': &id004
           description: Missing service key or trusted identity
+        '409':
+          description: Immutable registration phone mismatch or no claim
         '404': &id005
-          description: Profile or verified recipient not found
+          description: Profile or registered recipient not found
         '413': &id006
           description: Request exceeds 4096 bytes
         '503': &id007
           description: Database unavailable
   /v1/users/resolve-phone:
     post:
-      operationId: resolveVerifiedPhone
+      operationId: resolveRegisteredPhone
       security: *id001
-      description: Exact verified phone only. Discloses recipient display name to
+      description: Exact registered phone with a matching profile only; phone_verified is not required. Discloses recipient display name to
         authenticated callers. Database-backed limit of 30 lookups per requester per
-        60 seconds includes misses.
+        60 seconds includes misses. Lookup loads the pinned profile shard and fails closed if it is unavailable.
       requestBody:
         required: true
         content:
@@ -169,7 +203,7 @@ paths:
                 phone_number: *id002
       responses:
         '200':
-          description: Verified recipient
+          description: Registered recipient (ownership unverified)
           content:
             application/json:
               schema:

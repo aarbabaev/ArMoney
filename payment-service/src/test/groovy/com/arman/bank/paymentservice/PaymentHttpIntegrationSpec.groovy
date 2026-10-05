@@ -32,7 +32,7 @@ class PaymentHttpIntegrationSpec extends Specification {
             builder.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(InternalHttp.JSON.writeValueAsString(body)))
             client.send(builder.build(), HttpResponse.BodyHandlers.ofString())
         }
-        def payload = [source_wallet_id:UUID.randomUUID().toString(),recipient_id:bob.toString(),recipient_phone:'+15551234567',currency:'AED',amount_minor:125]
+        def payload = [source_wallet_id:UUID.randomUUID().toString(),recipient_id:bob.toString(),recipient_phone:'+971501234567',currency:'AED',amount_minor:125]
         expect:
         call('POST','/v1/payments',payload,alice,null).statusCode() == 401
         call('POST','/v1/payments',payload,null,key).statusCode() == 401

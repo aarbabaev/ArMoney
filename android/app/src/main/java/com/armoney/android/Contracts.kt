@@ -11,7 +11,12 @@ val wire = Json { ignoreUnknownKeys = true }
 const val SUPPORTED_CURRENCY = "AED"
 fun supportedCurrency(value: String): String = value.also { require(it == SUPPORTED_CURRENCY) { "Only AED is supported for new wallets and transfers." } }
 fun uuid(value: String): String = value.also { require(UUID.fromString(it).toString() == it) }
-fun phone(value: String): String = value.also { require(it.matches(Regex("\\+[1-9][0-9]{7,14}"))) { "Use an international number, such as +12025550123." } }
+// Admission for new recipients only. Never apply this policy to saved commands.
+fun phone(value: String): String = value.also { require(it.matches(Regex("\\+9715[024568][0-9]{7}"))) { "Enter a UAE mobile number beginning with +971." } }
+fun recipientPhone(localDigits: String): String {
+    require(localDigits.matches(Regex("5[024568][0-9]{7}"))) { "Enter 9 UAE mobile digits, starting with 50, 52, 54, 55, 56 or 58." }
+    return phone("+971$localDigits")
+}
 fun minor(value: String): Long {
     require(value.matches(Regex("[0-9]+(?:\\.[0-9]{1,2})?"))) { "Enter a positive amount with at most two decimals." }
     return BigDecimal(value).movePointRight(2).longValueExact().also { require(it > 0) }

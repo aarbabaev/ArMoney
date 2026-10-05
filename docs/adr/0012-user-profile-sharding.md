@@ -1,6 +1,6 @@
 # ADR 0012: Immutable email-prefix placement for user profiles
 
-Status: accepted
+Status: accepted; phone admission/uniqueness policy superseded by ADR 0014.
 
 ## Context
 
@@ -34,7 +34,7 @@ profile UUID and shard and perform an idempotent upsert; confirmation marks the
 directory initialized. No SQL transaction spans remote database I/O. There is
 no distributed atomic commit or background provisioning worker in this slice.
 
-Global pending/verified phone state, unique verified numbers, operator audit and
+Global phone state, unique non-null numbers and registration claims (ADR 0014), operator audit and
 lookup quotas remain in the primary directory database. Profile display names
 are read from their assigned database. Credentials, sessions and financial
 databases retain their existing ownership and placement.
@@ -66,3 +66,4 @@ environment configuration and must never be committed.
 Real PostgreSQL tests and disposable Compose acceptance must verify placement,
 upgrades, concurrent retries, outages, owner isolation and global phone behavior.
 Running source implementation is not proof of deployment or passing CI.
+

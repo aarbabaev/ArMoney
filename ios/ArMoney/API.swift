@@ -206,7 +206,7 @@ enum Money {
         return "\(value < 0 ? "−" : "")\(magnitude / 100).\(String(format: "%02llu", magnitude % 100)) \(currency)"
     }
     static func validPhone(_ value: String) -> Bool {
-        value.utf8.allSatisfy({ (48...57).contains($0) || $0 == 43 }) && value.range(of: "^\\+[1-9][0-9]{7,14}$", options: .regularExpression) != nil
+        value.utf8.allSatisfy({ (48...57).contains($0) || $0 == 43 }) && value.range(of: "^\\+9715[024568][0-9]{7}$", options: .regularExpression) != nil
     }
 }
 

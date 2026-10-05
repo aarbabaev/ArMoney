@@ -89,35 +89,43 @@ class ProfileShardingIntegrationSpec extends Specification {
         executor?.shutdownNow()
     }
 
-    def 'verified phone uniqueness audit and lookup quota remain global across physical shards'() {
+    def 'registered phone uniqueness unverified discovery audit and lookup quota remain global across physical shards'() {
         given:
         def left = UUID.randomUUID()
         def right = UUID.randomUUID()
         service.save(left, 'Primary', 'zz@example.test')
         service.save(right, 'East', 'ab@example.test')
-        [left, right].each { service.changePhone(it, '+15550000007') }
-        store.verifyPendingPhone(right, '+15550000007', 'synthetic-operator', 'case-shards')
+        service.registerPhone(right, '+971501234567')
         expect:
-        service.resolvePhone(left, '+15550000007').get().identityId() == right
-        count(primary, 'phone_verification_audit') == 1
+        service.resolvePhone(left, '+971501234567').get().identityId() == right
+        !service.find(right).get().phoneVerified()
+        count(primary, 'registration_phone_claims') == 1
+        count(shard, 'registration_phone_claims') == 0
+        count(primary, 'phone_verification_audit') == 0
         count(shard, 'phone_verification_audit') == 0
         when:
-        store.verifyPendingPhone(left, '+15550000007', 'synthetic-operator', 'case-conflict')
+        service.registerPhone(left, '+971501234567')
         then:
-        thrown(org.jooq.exception.DataAccessException)
-        !service.find(left).get().phoneVerified()
-        count(primary, 'phone_verification_audit') == 1
+        thrown(RegistrationConflict)
+        service.find(left).get().phoneNumber() == null
         when:
-        (1..29).each { service.resolvePhone(left, '+15559999999') }
-        service.resolvePhone(left, '+15550000007')
+        (1..29).each { service.resolvePhone(left, '+971509999999') }
+        service.resolvePhone(left, '+971501234567')
         then:
         thrown(LookupLimitExceeded)
         when:
-        service.changePhone(right, '+15550000008')
+        service.changePhone(right, '+971501234568')
         then:
-        !service.resolvePhone(right, '+15550000007').present
-        service.find(right).get().phoneNumber() == '+15550000008'
+        thrown(RegistrationConflict)
+        service.changePhone(right, '+971501234567').get().phoneNumber() == '+971501234567'
+        service.resolvePhone(right, '+971501234567').get().identityId() == right
         count(primary, 'profiles') == 1
+        when:
+        store.verifyPendingPhone(right, '+971501234567', 'synthetic-operator', 'case-shards')
+        then:
+        service.find(right).get().phoneVerified()
+        count(primary, 'phone_verification_audit') == 1
+        count(shard, 'phone_verification_audit') == 0
     }
 
     def 'invalid trusted emails cause no directory reservation and legacy clients use default'() {
@@ -152,6 +160,7 @@ class ProfileShardingIntegrationSpec extends Specification {
     def 'shard commit before failed primary confirmation recovers original UUID and placement'() {
         given:
         def owner = UUID.randomUUID()
+        service.registerPhone(owner, '+971501234567')
         primary.transaction {
             it.execute('''create function synthetic_reject_confirmation() returns trigger language plpgsql as $$
                 begin if new.initialized and not old.initialized then raise exception 'Synthetic confirmation outage'; end if; return new; end; $$''')
@@ -164,6 +173,7 @@ class ProfileShardingIntegrationSpec extends Specification {
         count(shard, 'profiles') == 1
         count(primary, 'profiles') == 0
         !service.find(owner).present
+        !service.resolvePhone(UUID.randomUUID(), '+971501234567').present
         when:
         def pinned = primary.transaction { it.fetchOne('select profile_id from profile_directory where identity_id = ?', owner).get(0, UUID) }
         primary.transaction { it.execute('drop trigger synthetic_confirmation_failure on profile_directory'); it.execute('drop function synthetic_reject_confirmation()') }
@@ -172,6 +182,9 @@ class ProfileShardingIntegrationSpec extends Specification {
         then:
         recovered.id() == pinned
         recovered.displayName() == 'Recovered East'
+        recovered.phoneNumber() == '+971501234567'
+        !recovered.phoneVerified()
+        reconfigured.resolvePhone(UUID.randomUUID(), '+971501234567').get().id() == pinned
         count(shard, 'profiles') == 1
         count(primary, 'profiles') == 0
         reconfigured.find(owner).get().id() == pinned
@@ -188,20 +201,19 @@ class ProfileShardingIntegrationSpec extends Specification {
         !pools.ready()
     }
 
-    def 'phone revocation during remote shard read prevents stale recipient disclosure'() {
+    def 'central claim mismatch during remote shard read prevents stale recipient disclosure'() {
         given:
         def owner = UUID.randomUUID()
         def requester = UUID.randomUUID()
         service.save(owner, 'East Recipient', 'ab@example.test')
-        service.changePhone(owner, '+15550000010')
-        store.verifyPendingPhone(owner, '+15550000010', 'synthetic-operator', 'race-case')
+        service.registerPhone(owner, '+971501234570')
         def connection = java.sql.DriverManager.getConnection(shardContainer.jdbcUrl, shardContainer.username, shardContainer.password)
         connection.autoCommit = false
         def statement = connection.createStatement()
         statement.execute('lock table profiles in access exclusive mode')
         def executor = Executors.newSingleThreadExecutor()
         when:
-        def result = executor.submit({ service.resolvePhone(requester, '+15550000010') } as Callable)
+        def result = executor.submit({ service.resolvePhone(requester, '+971501234570') } as Callable)
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
         boolean blocked = false
         while (!blocked && System.nanoTime() < deadline) {
@@ -209,14 +221,164 @@ class ProfileShardingIntegrationSpec extends Specification {
             if (!blocked) Thread.sleep(25)
         }
         assert blocked : 'Expected resolver shard read to block after directory snapshot'
-        // Isolated fixture commits the same authoritative revocation as changePhone without waiting on the deliberately locked shard.
-        primary.transaction { it.execute('update profile_directory set phone_number = ?, phone_verified = false where identity_id = ?', '+15550000011', owner) }
+        // Isolated operator fixture creates central inconsistency during IO; immutable public APIs cannot do this.
+        primary.transaction { it.execute('update profile_directory set phone_number = ?, phone_verified = false where identity_id = ?', '+971501234571', owner) }
         connection.commit()
         then:
         !result.get(10, TimeUnit.SECONDS).present
         !service.find(owner).get().phoneVerified()
         cleanup:
         connection?.rollback(); statement?.close(); connection?.close(); executor?.shutdownNow()
+    }
+
+    def 'cross shard concurrent claims choose one owner and retries preserve names and shard UUIDs'() {
+        given:
+        def left = UUID.randomUUID()
+        def right = UUID.randomUUID()
+        def original = [service.save(left, 'Primary', 'zz@example.test'), service.save(right, 'East', 'ab@example.test')]
+        def executor = Executors.newFixedThreadPool(2)
+        def gate = new CountDownLatch(1)
+        when:
+        def futures = [left, right].collect { owner -> executor.submit({
+            gate.await(10, TimeUnit.SECONDS)
+            try { service.registerPhone(owner, '+971501234567'); return owner }
+            catch (RegistrationConflict expected) { return null }
+        } as Callable) }
+        gate.countDown()
+        def results = futures.collect { it.get(15, TimeUnit.SECONDS) }
+        def winner = results.find { it != null }
+        then:
+        results.count { it != null } == 1
+        count(primary, 'registration_phone_claims') == 1
+        count(shard, 'registration_phone_claims') == 0
+        when:
+        service.registerPhone(winner, '+971501234567')
+        def resolved = service.resolvePhone(UUID.randomUUID(), '+971501234567').get()
+        then:
+        resolved.identityId() == winner
+        !resolved.phoneVerified()
+        original.each { old ->
+            assert service.find(old.identityId()).get().id() == old.id()
+            assert service.find(old.identityId()).get().displayName() == old.displayName()
+        }
+        cleanup:
+        executor?.shutdownNow()
+    }
+
+    def 'claim before failed shard creation survives restart and remains undiscoverable until confirmation'() {
+        given:
+        def owner = UUID.randomUUID()
+        service.registerPhone(owner, '+971501234567')
+        shard.close()
+        when:
+        service.save(owner, 'Recover Registered', 'ab@example.test')
+        then:
+        thrown(org.jooq.exception.DataAccessException)
+        !service.resolvePhone(UUID.randomUUID(), '+971501234567').present
+        when:
+        def pinned = primary.transaction { it.fetchOne('select profile_id from profile_directory where identity_id = ?', owner).get(0, UUID) }
+        service.registerPhone(owner, '+971501234567')
+        shard = new Database(shardContainer.jdbcUrl, shardContainer.username, shardContainer.password)
+        def restarted = new ProfileService(new PostgresProfiles(new ProfileShards([primary: primary, east: shard], [ab: 'primary'], 'primary')))
+        def recovered = restarted.save(owner, 'Recovered Registered', 'zz@example.test')
+        then:
+        recovered.id() == pinned
+        recovered.phoneNumber() == '+971501234567'
+        !recovered.phoneVerified()
+        restarted.resolvePhone(UUID.randomUUID(), '+971501234567').get().identityId() == owner
+        count(primary, 'profiles') == 0
+        count(shard, 'profiles') == 1
+    }
+
+    def 'registration during shard outage is durable centrally while lookup fails closed and recovers'() {
+        given:
+        def owner = UUID.randomUUID()
+        def saved = service.save(owner, 'East Recipient', 'ab@example.test')
+        shard.close()
+        when:
+        service.registerPhone(owner, '+971501234567')
+        service.registerPhone(owner, '+971501234567')
+        service.resolvePhone(UUID.randomUUID(), '+971501234567')
+        then:
+        thrown(org.jooq.exception.DataAccessException)
+        count(primary, 'registration_phone_claims') == 1
+        when:
+        shard = new Database(shardContainer.jdbcUrl, shardContainer.username, shardContainer.password)
+        def restarted = new ProfileService(new PostgresProfiles(new ProfileShards([primary: primary, east: shard], [:], 'primary')))
+        def resolved = restarted.resolvePhone(UUID.randomUUID(), '+971501234567').get()
+        then:
+        resolved.id() == saved.id()
+        resolved.displayName() == 'East Recipient'
+        !resolved.phoneVerified()
+        count(primary, 'phone_verification_audit') == 0
+    }
+
+    def 'legacy directory phone collision on another shard cannot be claimed'() {
+        given:
+        def legacy = UUID.randomUUID()
+        def newcomer = UUID.randomUUID()
+        service.save(legacy, 'Legacy East', 'ab@example.test')
+        primary.transaction { it.execute('update profile_directory set phone_number = ? where identity_id = ?', '+971501234567', legacy) }
+        when:
+        service.registerPhone(newcomer, '+971501234567')
+        then:
+        thrown(RegistrationConflict)
+        count(primary, 'registration_phone_claims') == 0
+        !service.resolvePhone(newcomer, '+971501234567').present
+        when:
+        service.registerPhone(legacy, '+971501234567')
+        then:
+        service.resolvePhone(newcomer, '+971501234567').get().identityId() == legacy
+        service.find(legacy).get().displayName() == 'Legacy East'
+        !service.find(legacy).get().phoneVerified()
+    }
+
+    def 'registration racing a blocked shard creation binds the reserved directory without holding primary locks across IO'() {
+        given:
+        def owner = UUID.randomUUID()
+        def connection = java.sql.DriverManager.getConnection(shardContainer.jdbcUrl, shardContainer.username, shardContainer.password)
+        connection.autoCommit = false
+        def statement = connection.createStatement()
+        statement.execute('lock table profiles in access exclusive mode')
+        def executor = Executors.newFixedThreadPool(2)
+        when:
+        def saving = executor.submit({ service.save(owner, 'Concurrent East', 'ab@example.test') } as Callable)
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        boolean blocked = false
+        while (!blocked && System.nanoTime() < deadline) {
+            blocked = shard.transaction { it.fetchOne("select count(*) from pg_stat_activity where wait_event_type = 'Lock' and query like '%insert into profiles%'").get(0, Integer) > 0 }
+            if (!blocked) Thread.sleep(25)
+        }
+        assert blocked : 'Expected creation to block after durable directory reservation'
+        executor.submit({ service.registerPhone(owner, '+971501234567'); return true } as Callable).get(10, TimeUnit.SECONDS)
+        connection.commit()
+        def saved = saving.get(10, TimeUnit.SECONDS)
+        then:
+        saved.phoneNumber() == '+971501234567'
+        !saved.phoneVerified()
+        service.resolvePhone(UUID.randomUUID(), '+971501234567').get().id() == saved.id()
+        count(primary, 'profiles') == 0
+        count(shard, 'profiles') == 1
+        cleanup:
+        connection?.rollback(); statement?.close(); connection?.close(); executor?.shutdownNow()
+    }
+
+    def 'primary outage never permits shard-only registration or recipient lookup'() {
+        given:
+        def owner = UUID.randomUUID()
+        service.registerPhone(owner, '+971501234567')
+        service.save(owner, 'East', 'ab@example.test')
+        primary.close()
+        when:
+        service.registerPhone(owner, '+971501234567')
+        then:
+        thrown(org.jooq.exception.DataAccessException)
+        when:
+        service.resolvePhone(UUID.randomUUID(), '+971501234567')
+        then:
+        thrown(org.jooq.exception.DataAccessException)
+        count(shard, 'registration_phone_claims') == 0
+        count(shard, 'profiles') == 1
     }
 
     def 'populated V3 upgrade backfills primary placement and phone state without changing UUIDs'() {
@@ -244,4 +406,5 @@ class ProfileShardingIntegrationSpec extends Specification {
         upgraded?.close(); legacy?.stop()
     }
 }
+
 

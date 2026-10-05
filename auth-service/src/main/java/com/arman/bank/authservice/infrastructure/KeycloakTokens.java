@@ -71,7 +71,10 @@ public final class KeycloakTokens implements SsoTokens, AutoCloseable {
                 !expiry.isIntegralNumber() || !expiry.canConvertToLong() || expiry.longValue() <= clock.instant().getEpochSecond() ||
                 (body.has("nbf") && (!body.path("nbf").isIntegralNumber() || !body.path("nbf").canConvertToLong() || body.path("nbf").longValue() > clock.instant().getEpochSecond())))
                 throw new AuthFailure(UNAUTHORIZED);
-            return new Principal(issuer, subject.textValue());
+            var phone = body.path("phone_number");
+            if (!phone.isMissingNode() && !phone.isNull() && !phone.isTextual()) throw new AuthFailure(UNAUTHORIZED);
+            // Auth persistence applies required/immutable phone rules using the existing mapping.
+            return new Principal(issuer, subject.textValue(), phone.textValue());
         } catch (AuthFailure e) { throw e; }
         catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new AuthFailure(UNAVAILABLE); }
         catch (Exception e) { throw new AuthFailure(UNAVAILABLE); }

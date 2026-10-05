@@ -15,7 +15,7 @@ class PaymentIntegrationSpec extends Specification {
     PostgresPayments store
     UUID alice = UUID.randomUUID()
     UUID bob = UUID.randomUUID()
-    PaymentRequest request = new PaymentRequest(UUID.randomUUID(), bob, '+15551234567', 'AED', 125L)
+    PaymentRequest request = new PaymentRequest(UUID.randomUUID(), bob, '+971501234567', 'AED', 125L)
     PaymentPeers.Mapping mapping = new PaymentPeers.Mapping(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())
 
     def setupSpec() {
@@ -215,6 +215,39 @@ class PaymentIntegrationSpec extends Specification {
         store.notifications(alice).size() == 100
         store.notifications(bob).size() == 100
         store.history(alice).first().createdAt() >= store.history(alice).last().createdAt()
+    }
+
+    def 'new non-UAE transfers fail before peer resolution but historical commands remain replayable'() {
+        given:
+        def old = new PaymentRequest(request.sourceWalletId(), bob, '+15551234567', 'AED', 125L)
+        def accepted = store.create(alice, 'historical', old, mapping)
+        def peers = Mock(PaymentPeers)
+        def service = new PaymentService(store, peers)
+        expect:
+        service.submit(alice, 'historical', old).id() == accepted.id()
+        service.payment(alice, accepted.id()).request().recipientPhone() == old.recipientPhone()
+        when:
+        service.submit(alice, 'new-foreign', old)
+        then:
+        def failure = thrown(PaymentFailure)
+        failure.status() == 400
+        0 * peers._
+        store.history(alice).size() == 1
+    }
+
+    def 'new transfer rejects unsupported UAE mobile prefix #phone'() {
+        given:
+        def peers = Mock(PaymentPeers)
+        def service = new PaymentService(store, peers)
+        when:
+        service.submit(alice, 'invalid-phone', new PaymentRequest(request.sourceWalletId(), bob, phone, 'AED', 125L))
+        then:
+        def failure = thrown(PaymentFailure)
+        failure.status() == 400
+        0 * peers._
+        store.history(alice).empty
+        where:
+        phone << ['+971570000001', '+971510000001', '+97141234567', '+9715012345678']
     }
 
     def 'database rejects non-AED payment and notification currency: #currency'() {

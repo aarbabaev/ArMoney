@@ -23,8 +23,17 @@ class ContractsTest {
         assertFalse(wallet.copy(provisioning_status = "PENDING").ready)
     }
     @Test fun exactPhoneAndIdentity() {
-        assertEquals("+12025550123", phone("+12025550123"))
-        listOf("2025550123", "+0123456789", "+1 2025550123", "+123").forEach { assertTrue(runCatching { phone(it) }.isFailure) }
+        listOf("50", "52", "54", "55", "56", "58").forEach { prefix ->
+            val local = "${prefix}1234567"
+            assertEquals("+971$local", recipientPhone(local))
+            assertEquals("+971$local", phone("+971$local"))
+        }
+        listOf("", "+12025550123", "2025550123", "+971511234567", "+971531234567", "+971571234567", "+971591234567", "+9715012345678", "501234567", "+97150 1234567", " +971501234567").forEach {
+            assertTrue(it, runCatching { phone(it) }.isFailure)
+        }
+        listOf("", "+12025550123", "+971501234567", "0501234567", "511234567", "531234567", "571234567", "591234567", "50123456", "5012345678", "50 1234567", " 501234567", "٥٠١٢٣٤٥٦٧").forEach {
+            assertTrue(it, runCatching { recipientPhone(it) }.isFailure)
+        }
         assertTrue(runCatching { uuid("1-1-1-1-1") }.isFailure)
         assertNull(wire.decodeFromString<Identity>("""{"id":"cb599d14-904a-4714-8504-280d1e689839","email":null}""").email)
     }

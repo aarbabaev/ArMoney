@@ -38,6 +38,7 @@ extends the original metadata-only scope in ADR 0004.
 | [0008](adr/0008-native-ios-and-keycloak-sso.md) | Native client and Keycloak SSO |
 | [0009](adr/0009-phone-p2p-payments.md) | Phone attestation, durable P2P and in-app notifications |
 | [0010](adr/0010-native-android.md) | Native Kotlin Android client and shared SSO identity |
+| [0014](adr/0014-uae-registration-phone.md) | Mandatory unique UAE registration phones and transfers without SMS verification |
 
 ## Agent workflow
 
