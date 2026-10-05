@@ -20,7 +20,7 @@ paths:
       operationId: readiness
       responses:
         '200':
-          description: Service can access its database (gateway has no database)
+          description: Service can access primary and every configured profile shard
           content:
             application/json:
               schema:
@@ -67,7 +67,17 @@ paths:
     put:
       operationId: saveProfile
       description: Create or update the current identity profile. Stable profile ID;
-        last committed write wins.
+        last committed write wins. Optional gateway-verified X-Identity-Email selects
+        the initial email-prefix shard; placement remains pinned. Missing email uses
+        the configured default shard (primary by default). Client JSON cannot select a shard.
+      parameters:
+      - in: header
+        name: X-Identity-Email
+        required: false
+        description: Gateway identity email; public client headers are discarded.
+        schema:
+          type: string
+          format: email
       requestBody:
         required: true
         content:

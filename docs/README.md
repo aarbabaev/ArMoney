@@ -56,3 +56,6 @@ Role TOMLs live under `.codex/agents/`; executable skill instructions live under
 
 - [AED-only policy and rollout](adr/0011-aed-only.md): one currency, integer fils,
   append-only constraints and safe handling of existing data.
+
+- [User profile sharding](adr/0012-user-profile-sharding.md): immutable email-prefix
+  placement for new profiles, legacy data preservation and central phone authority.
