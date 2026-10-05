@@ -29,8 +29,21 @@ class PhoneUiTest {
             MaterialTheme { Column { RegisteredPhone(Profile("owner", "Name", "+971501234567", false)) } }
         }
         compose.onNodeWithText("+971501234567").assertIsDisplayed().assertHasNoClickAction()
-        compose.onNodeWithText("Registered · ownership not verified").assertIsDisplayed()
+        compose.onNodeWithText("Ownership not verified").assertIsDisplayed()
         compose.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsActions.SetText)).assertCountEquals(0)
         compose.onNodeWithText("Save phone").assertDoesNotExist()
+    }
+
+    @Test fun historicalForeignPhoneDoesNotImplyRegistrationBinding() {
+        compose.setContent {
+            MaterialTheme { Column { RegisteredPhone(Profile("owner", "Name", "+12025550123", false)) } }
+        }
+        compose.onNodeWithText("Phone number").assertIsDisplayed()
+        compose.onNodeWithText("+12025550123").assertIsDisplayed().assertHasNoClickAction()
+        compose.onNodeWithText("Ownership not verified").assertIsDisplayed()
+        compose.onNodeWithText("Registration phone number").assertDoesNotExist()
+        compose.onNodeWithText("Registered", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("United Arab Emirates", substring = true).assertDoesNotExist()
+        compose.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsActions.SetText)).assertCountEquals(0)
     }
 }

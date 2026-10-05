@@ -380,14 +380,14 @@ sequenceDiagram
     C->>K: Register with required UAE phone and password
     K-->>C: Authorization code through PKCE
     C->>A: Exchange provider token through gateway
-    A->>A: Verify issuer and subject; reserve unique phone
+    A->>A: Verify issuer and subject then reserve unique phone
     A->>U: Bind identity and immutable phone privately
     alt Identical durable binding acknowledged
         U-->>A: 204
         A-->>C: Bank session
     else Conflict or unavailable
         U-->>A: 409 or unavailable
-        A-->>C: No new session; retry retained enrollment
+        A-->>C: No new session and retry retained enrollment
     end
 ```
 

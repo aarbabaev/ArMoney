@@ -40,7 +40,8 @@ country selector. Enter nine local mobile digits beginning with 50, 52, 54, 55,
 56 or 58; the API receives canonical +971 syntax. Other countries, national
 trunk prefixes and malformed input are rejected without silent normalization.
 Registration happens in the hosted browser form. The profile displays the
-immutable registration number and its actual verification state. Registration
+phone number and its actual verification state without implying that historical
+profiles have a registration binding. New registration numbers are immutable. Registration
 does not prove phone ownership; no SMS or operator verification is required to
 resolve an enrolled recipient with a profile. Transfers still require ready AED wallets.
 

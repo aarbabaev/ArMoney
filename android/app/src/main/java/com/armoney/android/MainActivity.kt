@@ -143,10 +143,10 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable internal fun RegisteredPhone(profile: Profile?) {
-    Text("Registration phone number")
-    Text(profile?.phone_number ?: "No registration phone available")
+    Text("Phone number")
+    Text(profile?.phone_number ?: "No phone number available")
     if (profile?.phone_number != null) {
-        Text(if (profile.phone_verified) "Phone verified" else "Registered · ownership not verified")
-        Text("Your registration number cannot be changed here. No SMS verification is provided. Transfers do not require phone verification.")
+        Text(if (profile.phone_verified) "Phone verified" else "Ownership not verified")
+        Text("Phone changes are unavailable here. No SMS verification is provided. Transfers do not require phone verification.")
     }
 }

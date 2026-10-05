@@ -233,13 +233,13 @@ struct ProfileView: View {
                 Button(model.needsProfile ? "Create profile" : "Save name") { Task { await model.saveProfile(name) } }.disabled(model.busy || name.isEmpty)
             }
             Section {
-                LabeledContent("UAE registration number", value: model.profile?.phoneNumber ?? "Not enrolled")
+                LabeledContent("Phone number", value: model.profile?.phoneNumber ?? "Not provided")
                 if let profile = model.profile {
                     Label(profile.phoneVerified ? "Verified" : "Not verified", systemImage: profile.phoneVerified ? "checkmark.seal.fill" : "exclamationmark.circle")
                     if let number = profile.phoneNumber { Text("Saved: \(number)").font(.footnote).foregroundStyle(.secondary) }
                 }
             } header: { Text("Receive money by phone") } footer: {
-                Text("Your registration number cannot be changed in the app. No SMS is sent; registration does not verify ownership.")
+                Text("Phone changes are unavailable in the app. New registrations require a UAE mobile number. No SMS is sent; registration does not verify ownership.")
             }
             Section("Account") {
                 if let identity = model.identity {

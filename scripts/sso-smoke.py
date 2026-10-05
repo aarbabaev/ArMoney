@@ -204,6 +204,13 @@ try:
         registered = expect(200, request("GET", ADMIN + "/admin/realms/armoney/users?" +
             urllib.parse.urlencode({"username": username, "exact": "true"}), token=admin))
         assert len(registered) == 1, "Duplicate phone registration must not create another provider identity"
+        # auth-smoke reserved this number in legacy auth. A provider registration
+        # cannot link to or create a second active bank identity for that phone.
+        collision_context = browser.new_context(ignore_https_errors=True)
+        collision_code, collision_verifier = authorize(collision_context.new_page(), "armoney-android", registration="+971580000001")
+        collision_oidc = expect(200, redeem(collision_code, collision_verifier, "armoney-android"))
+        expect(409, request("POST", PUBLIC + "/v1/auth/sso", {"access_token": collision_oidc["access_token"]}))
+        collision_context.close()
         sessions = {}
         principal_id = None
         for client_id in NATIVE_CLIENTS:
