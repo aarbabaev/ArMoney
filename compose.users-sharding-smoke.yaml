@@ -1,0 +1,21 @@
+# Disposable acceptance only. Use an explicit unique project and all three files.
+services:
+  app-gateway:
+    ports: !override ["127.0.0.1:18080:8080"]
+  # The image's temporary initialization server accepts Unix sockets only.
+  # Wait for TCP before starting clients on a fresh disposable volume.
+  auth-db:
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -h 127.0.0.1 -U bank -d bank]
+  user-db:
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -h 127.0.0.1 -U bank -d bank]
+  wallet-db:
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -h 127.0.0.1 -U bank -d bank]
+  payment-db:
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -h 127.0.0.1 -U bank -d bank]
+  ledger-db:
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -h 127.0.0.1 -U bank -d bank]

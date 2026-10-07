@@ -20,22 +20,25 @@ public final class AuthService {
     private final AuthStore store;
     private final PasswordHasher passwords;
     private final Clock clock;
+    private final RegistrationProfiles profiles;
     private final SecureRandom random = new SecureRandom();
     private final String dummyHash;
 
-    public AuthService(AuthStore store, PasswordHasher passwords, Clock clock) {
+    public AuthService(AuthStore store, PasswordHasher passwords, Clock clock, RegistrationProfiles profiles) {
         this.store = store;
         this.passwords = passwords;
         this.clock = clock;
+        this.profiles = java.util.Objects.requireNonNull(profiles);
         dummyHash = passwords.hash(UUID.randomUUID().toString());
     }
 
-    public void register(String email, String password) {
+    public void register(String email, String password, String phone) {
         email = normalizeEmail(email);
         validatePassword(password);
+        if (!canonicalPhone(phone)) throw new AuthFailure(BAD_INPUT);
         limit(email);
-        // Always hash; duplicate registration does not reveal existence or overwrite credentials.
-        store.register(new Identity(UUID.randomUUID(), email), passwords.hash(password));
+        // Always hash; an identical retry never overwrites the original credentials.
+        provision(store.register(new Identity(UUID.randomUUID(), email, phone), passwords.hash(password)));
     }
 
     public Session login(String email, String password) {
@@ -45,6 +48,7 @@ public final class AuthService {
         var credentials = store.findByEmail(email);
         boolean valid = passwords.verify(password, credentials.map(AuthStore.Credentials::passwordHash).orElse(dummyHash));
         if (!valid || credentials.isEmpty()) throw new AuthFailure(UNAUTHORIZED);
+        provision(credentials.get().identity());
         return createSession(credentials.get().identity().id());
     }
 
@@ -52,8 +56,18 @@ public final class AuthService {
         if (token == null || token.isBlank() || token.length() > 8192 || !token.matches("[A-Za-z0-9._~+/-]+=*"))
             throw new AuthFailure(BAD_INPUT);
         var principal = provider.verify(token);
-        var identity = store.externalIdentity(principal.issuer(), principal.subject());
+        var identity = store.externalIdentity(principal.issuer(), principal.subject(), principal.phoneNumber());
+        provision(identity);
         return createSession(identity.id());
+    }
+
+    private void provision(Identity identity) {
+        // Historical identities remain compatible. Never enroll them from an unverified retry.
+        if (identity.registrationPhone() != null) profiles.provision(identity.id(), identity.registrationPhone());
+    }
+
+    public static boolean canonicalPhone(String phone) {
+        return phone != null && phone.matches("\\+9715[024568][0-9]{7}");
     }
 
     private Session createSession(UUID identityId) {

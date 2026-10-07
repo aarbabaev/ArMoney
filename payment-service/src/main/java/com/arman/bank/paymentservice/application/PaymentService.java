@@ -16,6 +16,8 @@ public final class PaymentService {
         // A durable replay never consults mutable phone/wallet mappings or remote availability.
         var existing = store.findKey(requester, key, request);
         if (existing.isPresent()) return existing.get();
+        if (!request.recipientPhone().matches("\\+9715[024568][0-9]{7}"))
+            throw new PaymentFailure(400, "invalid_request");
         if (!resolutions.tryAcquire()) throw new PaymentFailure(503, "service_unavailable");
         try {
             var mapping = peers.resolve(requester, request);

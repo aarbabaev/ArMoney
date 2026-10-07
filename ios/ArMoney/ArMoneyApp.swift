@@ -119,7 +119,7 @@ struct TransfersView: View {
                 }
             } else {
                 Section {
-                    TextField("+441234567890", text: $phone).keyboardType(.phonePad).textContentType(.telephoneNumber).disabled(model.busy)
+                    TextField("+971501234567", text: $phone).keyboardType(.phonePad).textContentType(.telephoneNumber).disabled(model.busy)
                         .onChange(of: phone) { _, _ in model.resetRecipient() }
                     Button("Find recipient") { Task { await model.resolve(phone) } }.disabled(model.busy || !model.recoveryReady || !Money.validPhone(phone))
                     if let recipient = model.recipient {
@@ -134,7 +134,7 @@ struct TransfersView: View {
                         Button("Review transfer") { confirm = true }.buttonStyle(.borderedProminent)
                             .disabled(model.busy || selected == nil || Money.parse(amount) == nil)
                     }
-                } header: { Text("Send to a phone number") } footer: { Text("Only verified phone numbers can receive transfers. The recipient needs a ready wallet in the same currency.") }
+                } header: { Text("Send to a phone number") } footer: { Text("Use the recipient’s registered UAE mobile number. Check the recipient name before sending. A ready AED wallet is required.") }
             }
             if let last = model.lastPayment {
                 Section("Latest submission") { NavigationLink { PaymentDetail(model: model, original: last) } label: { PaymentRow(payment: last, identityID: model.identity?.id) } }
@@ -233,14 +233,13 @@ struct ProfileView: View {
                 Button(model.needsProfile ? "Create profile" : "Save name") { Task { await model.saveProfile(name) } }.disabled(model.busy || name.isEmpty)
             }
             Section {
-                TextField("International phone number", text: $phone).keyboardType(.phonePad).textContentType(.telephoneNumber)
+                LabeledContent("Phone number", value: model.profile?.phoneNumber ?? "Not provided")
                 if let profile = model.profile {
                     Label(profile.phoneVerified ? "Verified" : "Not verified", systemImage: profile.phoneVerified ? "checkmark.seal.fill" : "exclamationmark.circle")
                     if let number = profile.phoneNumber { Text("Saved: \(number)").font(.footnote).foregroundStyle(.secondary) }
                 }
-                Button("Save phone number") { Task { await model.savePhone(phone) } }.disabled(model.busy || !Money.validPhone(phone) || model.profile == nil)
             } header: { Text("Receive money by phone") } footer: {
-                Text("Saving does not verify ownership. An operator must verify your number after checking it outside the app. No SMS is sent. Changing your number removes its verified status.")
+                Text("Phone changes are unavailable in the app. New registrations require a UAE mobile number. No SMS is sent; registration does not verify ownership.")
             }
             Section("Account") {
                 if let identity = model.identity {

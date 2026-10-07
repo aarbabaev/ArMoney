@@ -17,7 +17,7 @@ class KeycloakTokensSpec extends Specification {
     int delay
 
     def setup() {
-        claims = [active:true, iss:ISSUER, sub:'stable-subject', aud:['armoney-api'], client_id:'armoney-ios', azp:'armoney-ios', token_type:'Bearer', exp:2000000000]
+        claims = [active:true, iss:ISSUER, sub:'stable-subject', phone_number:'+971501234567', aud:['armoney-api'], client_id:'armoney-ios', azp:'armoney-ios', token_type:'Bearer', exp:2000000000]
         server = HttpServer.create(new InetSocketAddress('127.0.0.1', 0), 0)
         server.createContext('/protocol/openid-connect/token/introspect') { exchange ->
             exchange.requestBody.readAllBytes()
@@ -40,6 +40,7 @@ class KeycloakTokensSpec extends Specification {
         expect:
         provider.verify('opaque-access-token').issuer() == ISSUER
         provider.verify('opaque-access-token').subject() == 'stable-subject'
+        provider.verify('opaque-access-token').phoneNumber() == '+971501234567'
         where:
         nativeClient      | authorizedParty
         'armoney-ios'     | true
@@ -93,6 +94,15 @@ class KeycloakTokensSpec extends Specification {
         'nbf'       | 2000000000
         'sub'       | ''
         'sub'       | null
+        'phone_number' | 971501234567
+        'phone_number' | ['+971501234567']
+    }
+
+    def 'absent phone is passed to the mapping policy for historical identity compatibility'() {
+        given:
+        claims.remove('phone_number')
+        expect:
+        provider.verify('opaque-access-token').phoneNumber() == null
     }
 
     def 'provider failures and unbounded or malformed responses fail unavailable'() {

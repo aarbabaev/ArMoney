@@ -1,7 +1,7 @@
 # ArMoney  -  System and Agent Team Architecture
 
-> The main project map. Source audit on **2026-10-05**, based on main
-> `3e2aaa4962c16815b5f977d91a7eafe9b7c060ce` plus this ledger-replication change.
+> The main project map. Ledger-replication integration review on **2026-10-07**, based on main
+> `7239bb035634802ce3d6c643f8a80b2b3505f0b5` plus this ledger-replication change.
 > Describes the source code, not the guaranteed state of running containers.
 
 ## Navigation
@@ -29,7 +29,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | SSO | Optional Keycloak realm, browser authorization code + PKCE | Production identity controls, MFA, email verification |
 | iOS | Existing native SwiftUI login, wallets/balances, transfers/history, notifications and profile (iOS 18+); feature development paused | Physical iPhone validation paused; regression CI retained |
 | Android | Native Kotlin/Compose SSO, wallets/balances, phone transfers/history, inbox and profile (API26+) | Physical-device/LAN acceptance; exact-revision CI evidence in the delivery PR |
-| User | Profile, pending phone, operator-attested phone directory | Automated ownership proof requires a separate approved provider |
+| User | Profile, optional immutable email-prefix sharding and central unique UAE registration-phone directory | Prefixes do not guarantee uniform load; automated ownership proof requires a separate approved provider |
 | Wallet | Metadata, durable ledger provisioning, owner-scoped live balances | Lifecycle controls |
 | Ledger | Private accounts, balances, atomic postings; optional two direct physical standbys and fenced balance reads | Manual failover; production HA and backup/PITR |
 | Payment | Durable P2P, requester idempotency, recovery, history and notifications | Pagination and operational reconciliation tooling |
@@ -55,13 +55,16 @@ flowchart TB
         G -->|"Profile"| U["user-service"]
         G -->|"Wallets and balances"| W["wallet-service"]
         G -->|"P2P, history, notifications"| P["payment-service"]
-        P -->|"Verified recipient"| U
+        P -->|"Registered UAE recipient"| U
+        A -->|"Private immutable phone binding"| U
         P -->|"Private wallet mapping"| W
         P -->|"Idempotent posting"| L
         L["ledger-service: private API"]
         W -->|"Durable account provisioning and balance reads"| L
         A --> AD[("auth-db")]
-        U --> UD[("user-db")]
+        U --> UD[("user-db: placement and phone directory; legacy profiles")]
+        U --> US1[("Optional user-shard-s1: profile data")]
+        U --> US2[("Optional user-shard-s2: profile data")]
         W --> WD[("wallet-db")]
         P --> PD[("payment-db")]
         L --> LD[("ledger-db")]
@@ -72,7 +75,7 @@ flowchart TB
 | --- | --- | --- |
 | app-gateway | External routes, session validation, header sanitization | No database or financial logic |
 | auth-service | Credentials, SSO identity mapping, sessions, limits | Does not own profiles |
-| user-service | Profile and operator-attested phone directory | Does not issue tokens or claim SMS proof |
+| user-service | Profile placement, sharded display names and central registered UAE phone directory | Does not issue tokens or claim SMS proof; owns all profile shards |
 | wallet-service | Owner, currency, lifecycle and durable ledger mapping | Not the source of balances |
 | payment-service | Transfer intent, client idempotency, recovery and notifications | Completion requires matching ledger confirmation |
 | ledger-service | Accounts, balances, immutable paired postings | No public funding API |
@@ -121,6 +124,7 @@ while DB wiring is created, before the HTTP listener opens. Migration failure pr
 Variables: `PORT`, `DB_URL`, `DB_USER`, `DB_PASSWORD`; protected internal APIs use
 `INTERNAL_AUTH_KEY`; the gateway uses `AUTH_BASE_URL`, `USER_BASE_URL`, `WALLET_BASE_URL`, `PAYMENT_BASE_URL`.
 Payment uses `USER_BASE_URL`, `WALLET_BASE_URL`, `LEDGER_BASE_URL`.
+Auth also requires `USER_BASE_URL` for idempotent registration-phone binding.
 Secrets come from local configuration; their values must not appear in documentation.
 A regular Java launch **does not read `.env` automatically**: configure environment
 variables/an env file in IDEA; Compose uses its own substitution mechanism.
@@ -204,7 +208,7 @@ Contracts are in each service's `src/main/resources/openapi.yaml`.
 | Gateway + Bearer | GET `/v1/auth/me`, POST `/v1/auth/logout` | Identity / revocation |
 | Gateway + Bearer | GET / PUT `/v1/users/me` | Own profile |
 | Gateway + Bearer | GET / POST `/v1/wallets`, GET `/v1/wallets/{id}/balance` | Own wallets and live balances |
-| Gateway + Bearer | PUT `/v1/users/me/phone`, POST `/v1/recipients/resolve` | Pending phone and exact verified recipient lookup |
+| Gateway + Bearer | PUT `/v1/users/me/phone`, POST `/v1/recipients/resolve` | Immutable registration phone and exact registered-recipient lookup |
 | Gateway + Bearer | POST / GET `/v1/payments`, GET `/v1/payments/{id}` | Idempotent transfers and participant history |
 | Gateway + Bearer | GET `/v1/notifications`, POST `/v1/notifications/{id}/read` | Own in-app inbox |
 | Private ledger | POST `/v1/ledger/accounts`, GET `/v1/ledger/accounts/{id}` | Account and balance |
@@ -238,12 +242,45 @@ The gateway validates every protected business request through auth, replaces th
 identity with the trusted identity, and does not forward the bearer token to user/wallet/payment.
 Authorization failure blocks the request.
 
+Only profile PUT receives `X-Identity-Email`, derived from the authenticated auth
+response and normalized by the gateway. Client email headers are discarded;
+malformed auth email metadata fails closed. Missing/null email is valid for SSO
+and uses the configured profile default shard.
+
 Ledger requires `X-Service-Key` and a trusted `X-Identity-Id`; the gateway does not proxy it.
 The shared service key does not isolate compromised services from one another.
-A persistent service's readiness checks only its own database; gateway readiness checks
+A persistent service's readiness checks its own database; user-service checks the
+primary directory and all configured profile shards. Gateway readiness checks
 only the gateway itself. `UP` does not prove downstream availability or P2P correctness.
 
 ## Data and ledger
+
+### User profile placement
+
+Optional [profile sharding](docs/adr/0012-user-profile-sharding.md) selects a physical
+database at the first profile PUT using two normalized email characters and a
+configured prefix map. The primary directory permanently pins identity UUID,
+profile UUID and shard. Existing profiles are backfilled as `primary` without
+moving data. Changes to email or the map affect no previously pinned identity.
+Missing or unavailable assigned databases never trigger fallback writes.
+
+Registration remains in auth-service and binds a central phone claim through
+user-service; it does not provision a profile or choose a shard. Unmapped,
+non-alphanumeric prefixes and email-less identities use the configured default.
+The directory, registration claims, global phone uniqueness, attestation audit and lookup quota remain
+centralized. Reservations and shard writes are separate durable transactions;
+failed first writes require retry with the same pin. Prefix placement does not
+guarantee balanced load or remove the primary directory dependency.
+
+```mermaid
+flowchart LR
+    G["Gateway: verified identity and email"] --> U["user-service"]
+    U -->|"Reserve or read immutable placement; phone state"| D[("Primary user-db")]
+    U -->|"Pinned profile data"| S1[("Profile shard s1")]
+    U -->|"Pinned profile data"| S2[("Profile shard s2")]
+    U -->|"Legacy or default profile data"| D
+```
+
 
 UUIDs shared across services are **logical references**, not cross-database foreign keys.
 `owner_id` means the auth identity UUID, not the profile ID.
@@ -264,8 +301,9 @@ flowchart LR
 
 | Database | Tables / guarantees |
 | --- | --- |
-| auth-db | `identities`: nullable email/password_hash pair for SSO-only principals, unique non-null email; `external_identities`: (issuer, subject) PK and unique local identity mapping; `sessions`: token_hash PK, FK identity_id, expires_at; `auth_attempts`: persistent limits |
-| user-db | `profiles`: unique identity_id, display_name, pending/verified E.164 phone; unique verified number; operator audit and persistent lookup quota |
+| auth-db | `identities`: nullable email/password_hash pair for SSO-only principals, unique non-null email and registration_phone (null for historical unenrolled users); `external_identities`: (issuer, subject) PK and unique local identity mapping; `sessions`: token_hash PK, FK identity_id, expires_at; `auth_attempts`: persistent limits |
+| user-db | Existing `profiles` remain in place; `profile_directory` pins identity/profile UUID and shard and owns authoritative globally unique non-null phone state; `registration_phone_claims` binds unique identity and UAE phone before profile creation; operator audit and persistent lookup quota remain central |
+| Optional user shards | `profiles`: display name keyed by pinned profile/identity UUID; phone state is overlaid from the primary directory |
 | wallet-db | `wallets`: unique(owner_id,currency), AED, ACTIVE/CLOSED, PENDING/READY, unique ledger_account_id, durable retry lease; no balance |
 | payment-db | `payments`: unique(requester_id,idempotency_key), request_hash, wallet IDs, amount/currency, PENDING/COMPLETED/REJECTED, recipient/account snapshot, fenced lease/backoff; notifications unique(owner,payment,type) |
 | ledger-db | `accounts`: unique wallet_id, owner, CUSTOMER/CLEARING, balance_minor; `transfers`: payment_id PK and account/currency FKs; `transfer_requests`: durable payload/outcome; `postings`: view |
@@ -397,10 +435,33 @@ response or wallet crash is recovered with the same wallet UUID. A valid replay 
 return a nonzero ledger balance; wallet only owns the mapping. Mismatched owner,
 wallet or currency never becomes READY. See [ADR 0007](docs/adr/0007-wallet-ledger-provisioning.md).
 
+## Registration phone binding
+
+```mermaid
+sequenceDiagram
+    participant C as Native client
+    participant K as Keycloak
+    participant A as Auth service
+    participant U as User service
+    C->>K: Register with required UAE phone and password
+    K-->>C: Authorization code through PKCE
+    C->>A: Exchange provider token through gateway
+    A->>A: Verify issuer and subject then reserve unique phone
+    A->>U: Bind identity and immutable phone privately
+    alt Identical durable binding acknowledged
+        U-->>A: 204
+        A-->>C: Bank session
+    else Conflict or unavailable
+        U-->>A: 409 or unavailable
+        A-->>C: No new session and retry retained enrollment
+    end
+```
+
 ## Phone P2P and notifications
 
-[HTTP contract](docs/p2p-contract.md) and [ADR 0009](docs/adr/0009-phone-p2p-payments.md)
-cover the implemented boundary and local operator procedure.
+[HTTP contract](docs/p2p-contract.md) and [ADR 0014](docs/adr/0014-uae-registration-phone.md)
+cover current phone admission and recipient eligibility. [ADR 0009](docs/adr/0009-phone-p2p-payments.md)
+retains the durable payment design and optional local operator procedure.
 
 ```mermaid
 sequenceDiagram
@@ -411,7 +472,7 @@ sequenceDiagram
     participant W as Wallet
     participant DB as Payment DB
     participant L as Ledger
-    C->>G: Resolve exact E.164 phone
+    C->>G: Resolve exact registered UAE phone
     G->>U: Authenticated lookup, persistent quota
     U-->>C: Verified identity and display name via gateway
     C->>C: Confirm recipient, save immutable command/key in Keychain
@@ -439,12 +500,16 @@ notifications commit with payment state, with unique constraints preventing dupl
 The recipient sees only completed incoming payments; the sender sees all its intents.
 History and inbox return the latest 100 entries, without pagination in this version.
 
-Phone updates are unverified until a local operator confirms ownership out of band
-and runs the audited CLI. No SMS, push provider or other external service is connected.
-Only verified numbers resolve; lookup is exact and limited to 30 attempts per requester
-per 60 seconds, including misses. It reveals the matched display name, not email or a
-user directory. Changing a number clears verification. Accepted payment snapshots are
-not redirected by later phone changes. No public verification or funding endpoint exists.
+New registrations require a unique immutable UAE mobile number. Auth reserves it
+across legacy and SSO identities, then idempotently binds it in user-service before
+issuing a session. Keycloak requires the number as its username. Registration is not
+ownership proof: claimed phones with a profile resolve even while phone_verified is
+false. No SMS, push provider or external verification service is connected. Lookup
+is exact and limited to 30 attempts per requester per 60 seconds, including misses.
+It reveals the matched display name, not email or a user directory. Public phone
+changes are disabled. Historical accepted payments remain readable and replayable.
+See [ADR 0014](docs/adr/0014-uae-registration-phone.md) for enrollment failure recovery,
+provider-account collisions and historical-user migration limits.
 
 The native clients expose wallets, transfers, notifications and profile. Amounts use
 exact Int64/Long minor units. An uncertain command/key is retained in device-only
@@ -493,7 +558,7 @@ flowchart LR
 | android_owner | android: native Kotlin/Compose client, browser SSO, gateway contracts and secure recovery |
 | ios_owner | ios: native SwiftUI client, gateway integration, browser authentication and tests |
 | sso_owner | sso-service: Keycloak/OIDC configuration; auth SSO adapter files only under an explicitly transferred lease |
-| user_owner | user-service: profiles, phone directory and operator attestation |
+| user_owner | user-service: profiles, immutable phone claims, recipient lookup and attestation |
 | wallet_owner | wallet-service: metadata/lifecycle, durable provisioning and live balances |
 | payment_owner | payment-service: orchestration/idempotency, recovery and notifications |
 | ledger_owner | ledger-service: accounts, balances, posting correctness |

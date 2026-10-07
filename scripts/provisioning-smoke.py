@@ -37,7 +37,7 @@ def expect(code, result):
 
 def identity():
     body = {"email": str(uuid.uuid4()) + "@example.test", "password": "synthetic provisioning password"}
-    expect(202, request("POST", "/v1/auth/register", body))
+    expect(202, request("POST", "/v1/auth/register", dict(body, phone_number="+97155" + str(uuid.uuid4().int % 10**7).zfill(7))))
     token = expect(200, request("POST", "/v1/auth/login", body))["access_token"]
     owner = expect(200, request("GET", "/v1/auth/me", token=token))["id"]
     return token, owner

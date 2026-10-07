@@ -26,7 +26,7 @@ stored. `/v1/auth/sso` exchanges the access token for an opaque bank session;
 `/v1/auth/me` establishes the stable owner. Email may be absent.
 
 Wallets, exact-phone recipient review, confirmed transfers, recent history and
-details, foreground in-app notifications, profile name/phone and sign-out use
+details, foreground in-app notifications, editable profile name, read-only registration phone and sign-out use
 the gateway contract. AED is the only currency for new wallets and transfers, with
 a single Open AED wallet action and no currency selector or conversion. Amounts
 use exact signed-64-bit fils (100 fils = 1 AED). Non-AED wallets cannot be
@@ -35,12 +35,24 @@ display unavailable. No funding, SMS or push provider is added. Refresh while
 foregrounded or manually; payment status remains pending until the server reports
 ledger confirmation.
 
+New recipient entry fixes the country to United Arab Emirates (+971), with no
+country selector. Enter nine local mobile digits beginning with 50, 52, 54, 55,
+56 or 58; the API receives canonical +971 syntax. Other countries, national
+trunk prefixes and malformed input are rejected without silent normalization.
+Registration happens in the hosted browser form. The profile displays the
+phone number and its actual verification state without implying that historical
+profiles have a registration binding. New registration numbers are immutable. Registration
+does not prove phone ownership; no SMS or operator verification is required to
+resolve an enrolled recipient with a profile. Transfers still require ready AED wallets.
+
 Keystore AES-GCM encrypts atomic records in no-backup storage. Saved transfer
 keys and payloads are scoped to origin and verified identity, and an attempt
 marker is persisted before HTTP. Timeouts and unknown responses preserve the
 same command for retry. A later refusal cannot erase earlier uncertainty.
 Previously saved non-AED commands retain their original currency, payload and key;
 they are never converted, relabeled or discarded by the AED-only change.
+Historical foreign-phone commands likewise bypass new-recipient admission during
+load and retry, preserving the original key and payload after uncertain outcomes.
 Logout preserves pending payments and removes the local bank session, with
 best-effort server revocation. Browser SSO may remain active. Uninstalling or
 clearing application data destroys local recovery information; consult payment
@@ -48,8 +60,9 @@ history before sending a replacement. Unreadable storage fails closed.
 
 JVM tests cover exact money, AED-only wallet eligibility, rejection of unsupported
 new currencies, input/identity, callback, refusal policy and preservation of legacy
-non-AED uncertain commands.
+non-AED and foreign-phone uncertain commands, and UAE mobile prefix admission.
 Instrumentation tests exercise real Android Keystore persistence, scope isolation
-and the native sign-in screen. These tests do not constitute real-user browser,
+and the native sign-in screen, fixed UAE entry and read-only registration phone.
+These tests do not constitute real-user browser,
 LAN certificate or physical-device acceptance. See [Android contract](../docs/android-contract.md)
 and [P2P contract](../docs/p2p-contract.md) for the frozen contract and integration evidence.

@@ -40,6 +40,7 @@ extends the original metadata-only scope in ADR 0004.
 | [0009](adr/0009-phone-p2p-payments.md) | Phone attestation, durable P2P and in-app notifications |
 | [0010](adr/0010-native-android.md) | Native Kotlin Android client and shared SSO identity |
 | [0013](adr/0013-ledger-replication.md) | Direct physical ledger replication and fenced balance reads |
+| [0014](adr/0014-uae-registration-phone.md) | Mandatory unique UAE registration phones and transfers without SMS verification |
 
 ## Agent workflow
 
@@ -58,3 +59,6 @@ Role TOMLs live under `.codex/agents/`; executable skill instructions live under
 
 - [AED-only policy and rollout](adr/0011-aed-only.md): one currency, integer fils,
   append-only constraints and safe handling of existing data.
+
+- [User profile sharding](adr/0012-user-profile-sharding.md): immutable email-prefix
+  placement for new profiles, legacy data preservation and central phone authority.

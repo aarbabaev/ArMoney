@@ -44,6 +44,19 @@ jobs:
         run: docker compose logs --no-color
         env:
           LOCAL_DB_PASSWORD: ci-only-password
+      - name: Isolated user-profile sharding acceptance
+        env:
+          LOCAL_DB_PASSWORD: ci-only-shard-password
+        run: |
+          docker compose -p armoney-shards-test-ci -f compose.yaml -f compose.users-sharding.yaml -f compose.users-sharding-smoke.yaml up --build -d
+          python3 scripts/users-sharding-smoke.py --project armoney-shards-test-ci
+      - name: Sharding diagnostics and cleanup
+        if: always()
+        env:
+          LOCAL_DB_PASSWORD: ci-only-shard-password
+        run: |
+          docker compose -p armoney-shards-test-ci -f compose.yaml -f compose.users-sharding.yaml -f compose.users-sharding-smoke.yaml logs --no-color --tail=80
+          docker compose -p armoney-shards-test-ci -f compose.yaml -f compose.users-sharding.yaml -f compose.users-sharding-smoke.yaml down --volumes
       - name: Isolated ledger physical replication acceptance
         run: python3 scripts/ledger-replication-smoke.py
       - name: Browser SSO against disposable Keycloak and HTTPS edge

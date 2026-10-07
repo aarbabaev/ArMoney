@@ -125,7 +125,7 @@ with ANY 1, replica2 may hold a more recent acknowledged commit.
    backup. Never simply restart it as a second writable primary.
 
 This is a manual recovery checklist, not a turnkey failover script or a measured
-10–30 second recovery guarantee. Multi-host HA, automatic election/fencing and
+10â€“30 second recovery guarantee. Multi-host HA, automatic election/fencing and
 reparenting require a separate tested operational design.
 
 ## Disposable verification

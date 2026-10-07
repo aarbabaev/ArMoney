@@ -8,8 +8,10 @@ paths:
   /v1/auth/sso:
     post:
       operationId: exchangeSsoToken
-      description: Exchange a verified Keycloak access token for an ArMoney session;
-        never links accounts by email.
+      description: Complete bank enrollment from a verified Keycloak access token
+        and immutable UAE phone claim. The phone is unique across legacy and SSO bank
+        identities. Never link accounts by email or phone; a conflicting provider
+        account cannot obtain a bank session.
       requestBody:
         required: true
         content:
@@ -42,6 +44,9 @@ paths:
           description: Attempt or concurrency limit
         '503':
           description: SSO disabled or unavailable
+        '409':
+          description: Registration phone is unavailable or conflicts with the existing
+            binding
   /health/live:
     get:
       operationId: liveness
@@ -81,11 +86,12 @@ paths:
   /v1/auth/register:
     post:
       operationId: register
-      description: Registers an identity; duplicates return the same response without
-        changing the password.
+      description: Register with an immutable, globally unique UAE mobile number.
+        Existing email retries never change credentials or phone. A number is a claim,
+        not proof of ownership.
       security: []
       requestBody:
-        $ref: '#/components/requestBodies/Credentials'
+        $ref: '#/components/requestBodies/Registration'
       responses:
         '202':
           description: Registration processed (also returned for an existing email)
@@ -110,6 +116,9 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '503':
           $ref: '#/components/responses/Unavailable'
+        '409':
+          description: Registration phone is unavailable or conflicts with the existing
+            binding
   /v1/auth/login:
     post:
       operationId: login
@@ -133,6 +142,9 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '503':
           $ref: '#/components/responses/Unavailable'
+        '409':
+          description: Registration phone is unavailable or conflicts with the existing
+            binding
   /v1/auth/me:
     get:
       operationId: currentIdentity
@@ -204,7 +216,10 @@ paths:
     put:
       operationId: saveProfile
       description: Create or update the current identity profile. Stable profile ID;
-        last committed write wins.
+        last committed write wins. Gateway derives optional profile email metadata
+        from the revalidated session identity; client identity headers are ignored.
+        Malformed authentication identity metadata returns 503. Email is omitted
+        for identities without an email, including SSO identities.
       requestBody:
         required: true
         content:
@@ -320,8 +335,9 @@ paths:
       operationId: changePhone
       security:
       - BearerAuth: []
-      description: Requires an existing profile. Changing the phone clears verification;
-        repeating it preserves verification. No verification endpoint exists.
+      description: Identical retry of the immutable registration number only. Requires
+        an existing profile and registered claim; changes or absent registration claims
+        return 409. Does not verify ownership.
       requestBody:
         required: true
         content:
@@ -334,7 +350,8 @@ paths:
               properties:
                 phone_number:
                   type: string
-                  pattern: ^\+[1-9][0-9]{7,14}$
+                  pattern: ^\+9715[024568][0-9]{7}$
+                  example: '+971501234567'
       responses:
         '200':
           description: Updated profile
@@ -343,26 +360,28 @@ paths:
               schema:
                 $ref: '#/components/schemas/Profile'
         '400':
-          description: Invalid exact JSON or canonical E.164 value
+          description: Invalid exact JSON or canonical UAE mobile value
         '401':
           description: Missing service key or trusted identity
         '404':
-          description: Profile or verified recipient not found
+          description: Profile or registered recipient not found
         '413':
           description: Request exceeds 4096 bytes
         '503':
           description: Database unavailable
         '429':
           description: 'Request or concurrency limit; Retry-After: 60'
+        '409':
+          description: Immutable registered number cannot be changed or is not enrolled
       parameters: []
   /v1/recipients/resolve:
     post:
       operationId: resolveVerifiedPhone
       security:
       - BearerAuth: []
-      description: Exact verified phone only. Discloses recipient display name to
-        authenticated callers. Database-backed limit of 30 lookups per requester per
-        60 seconds includes misses.
+      description: Exact registered UAE phone lookup. Requires a profile and registration
+        binding, but no SMS or operator verification. Reveals only the recipient display
+        name and bank identity; bounded per-requester lookup quota applies.
       requestBody:
         required: true
         content:
@@ -375,20 +394,21 @@ paths:
               properties:
                 phone_number:
                   type: string
-                  pattern: ^\+[1-9][0-9]{7,14}$
+                  pattern: ^\+9715[024568][0-9]{7}$
+                  example: '+971501234567'
       responses:
         '200':
-          description: Verified recipient
+          description: Registered UAE recipient; ownership verification is not required
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Recipient'
         '400':
-          description: Invalid exact JSON or canonical E.164 value
+          description: Invalid exact JSON or canonical UAE mobile value
         '401':
           description: Missing service key or trusted identity
         '404':
-          description: Profile or verified recipient not found
+          description: Profile or registered recipient not found
         '413':
           description: Request exceeds 4096 bytes
         '503':
@@ -441,9 +461,9 @@ paths:
       - BearerAuth: []
       description: Requester-scoped durable idempotency is checked before phone/wallet
         resolution. Same payload returns its original status, even if peers later
-        change or fail. New requests confirm the current verified phone and eligible
-        wallets. Ledger calls occur only after durable acceptance; uncertain results
-        remain PENDING. No automatic wallet creation or funding.
+        change or fail. New requests confirm the current registered UAE phone and
+        eligible wallets. Ledger calls occur only after durable acceptance; uncertain
+        results remain PENDING. No automatic wallet creation or funding.
       parameters:
       - name: Idempotency-Key
         in: header
@@ -806,8 +826,12 @@ components:
           type: string
           pattern: ^\+[1-9][0-9]{7,14}$
           nullable: true
+          description: Registration phone for enrolled identities; historical unenrolled
+            profiles may retain a previous value.
         phone_verified:
           type: boolean
+          description: Ownership attestation only; false does not prevent receiving
+            transfers through a registered claim.
     Recipient:
       type: object
       required:
@@ -819,7 +843,8 @@ components:
         display_name: *id002
         phone_number:
           type: string
-          pattern: ^\+[1-9][0-9]{7,14}$
+          pattern: ^\+9715[024568][0-9]{7}$
+          example: '+971501234567'
     Balance:
       type: object
       required:
@@ -857,6 +882,8 @@ components:
         recipient_phone:
           type: string
           pattern: ^\+[1-9][0-9]{7,14}$
+          description: New commands require a canonical UAE mobile number. Historical
+            accepted commands retain exact replay semantics.
         currency:
           type: string
           enum:
@@ -967,6 +994,32 @@ components:
           type: string
           format: date-time
           nullable: true
+    Registration:
+      type: object
+      additionalProperties: false
+      required:
+      - email
+      - password
+      - phone_number
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: Trimmed and lowercased; ASCII email addresses only in this
+            version.
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 15
+          maxLength: 128
+          description: At least 15 Unicode code points, at most 128 UTF-16 code units;
+            never trimmed.
+        phone_number:
+          type: string
+          pattern: ^\+9715[024568][0-9]{7}$
+          example: '+971501234567'
   securitySchemes:
     BearerAuth:
       type: http
@@ -978,6 +1031,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Credentials'
+    Registration:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Registration'
   responses:
     BadRequest:
       description: Malformed JSON, invalid email or password

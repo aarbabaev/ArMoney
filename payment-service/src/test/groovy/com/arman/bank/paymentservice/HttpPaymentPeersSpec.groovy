@@ -26,7 +26,7 @@ class HttpPaymentPeersSpec extends Specification {
     }
     def cleanup() { peers?.close(); server?.stop(0) }
     Payment payment() {
-        def request = new PaymentRequest(source, bob, '+15551234567', 'AED', 125L)
+        def request = new PaymentRequest(source, bob, '+971501234567', 'AED', 125L)
         new Payment(UUID.randomUUID(), alice, request, destination, debit, credit, request.hash(), 'PENDING', null, Instant.now(), Instant.now())
     }
     Map result(Payment p) { [payment_id:p.id().toString(), debit_account_id:debit.toString(), credit_account_id:credit.toString(), currency:'AED', amount_minor:125, outcome:'POSTED'] }
@@ -107,7 +107,7 @@ class HttpPaymentPeersSpec extends Specification {
     def 'resolve verifies confirmed phone plus both wallet owners currency and readiness'() {
         given:
         def p = payment()
-        route('/v1/users/resolve-phone', 200, [identity_id:bob.toString(), display_name:'Bob', phone_number:'+15551234567'])
+        route('/v1/users/resolve-phone', 200, [identity_id:bob.toString(), display_name:'Bob', phone_number:'+971501234567'])
         route('/v1/internal/wallets/' + source, 200, [id:source.toString(),owner_id:alice.toString(),currency:'AED',status:'ACTIVE',provisioning_status:'READY',ledger_account_id:debit.toString()])
         route('/v1/internal/wallets/by-owner/' + bob + '/currency/AED', 200, [id:destination.toString(),owner_id:bob.toString(),currency:'AED',status:'ACTIVE',provisioning_status:'READY',ledger_account_id:credit.toString()])
         expect:
@@ -116,7 +116,7 @@ class HttpPaymentPeersSpec extends Specification {
 
     def 'phone reassigned since confirmation cannot redirect a new payment'() {
         given:
-        route('/v1/users/resolve-phone', 200, [identity_id:UUID.randomUUID().toString(),display_name:'Other',phone_number:'+15551234567'])
+        route('/v1/users/resolve-phone', 200, [identity_id:UUID.randomUUID().toString(),display_name:'Other',phone_number:'+971501234567'])
         when:
         peers.resolve(alice, payment().request())
         then:
@@ -128,7 +128,7 @@ class HttpPaymentPeersSpec extends Specification {
     @Unroll
     def 'invalid source wallet is rejected: #field'() {
         given:
-        route('/v1/users/resolve-phone', 200, [identity_id:bob.toString(),display_name:'Bob',phone_number:'+15551234567'])
+        route('/v1/users/resolve-phone', 200, [identity_id:bob.toString(),display_name:'Bob',phone_number:'+971501234567'])
         route('/v1/internal/wallets/' + source, 200, [id:source.toString(),owner_id:alice.toString(),currency:'AED',status:'ACTIVE',provisioning_status:'READY',ledger_account_id:debit.toString()] + [(field):value])
         when:
         peers.resolve(alice, payment().request())

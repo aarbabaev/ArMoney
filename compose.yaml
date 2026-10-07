@@ -19,6 +19,7 @@ services:
       args:
         SERVICE: auth-service
     environment:
+      USER_BASE_URL: http://user-service:8080
       INTERNAL_AUTH_KEY: ${INTERNAL_AUTH_KEY:?Set INTERNAL_AUTH_KEY in .env}
       DB_URL: jdbc:postgresql://auth-db:5432/bank
       DB_USER: bank

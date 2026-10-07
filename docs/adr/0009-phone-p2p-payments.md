@@ -1,6 +1,6 @@
 # ADR 0009: Phone recipients, durable P2P and in-app notifications
 
-Status: accepted implementation decision; deployment and exact-revision checks are separate evidence.
+Status: accepted; phone admission and verified-only lookup superseded by [ADR 0014](0014-uae-registration-phone.md) implementation decision; deployment and exact-revision checks are separate evidence.
 
 ## Decision
 
