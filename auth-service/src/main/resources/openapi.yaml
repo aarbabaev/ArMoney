@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: auth-service
   version: 0.1.0
-  description: Operational API and identity registration/session API. New registrations require an immutable unique UAE mobile claim. Email and phone ownership are not verified.
+  description: Operational API and identity registration/session API. New registrations require an immutable unique UAE mobile claim. Local email and phone ownership are not verified. Trusted SSO email verification is retained separately for private notification contact lookup.
 paths:
   /health/live:
     get:
@@ -40,6 +40,42 @@ paths:
             application/yaml:
               schema:
                 type: string
+  /v1/internal/identities/{id}/email:
+    get:
+      operationId: identityEmailContact
+      description: Private service-key-only notification contact lookup, never exposed through the gateway. Uses auth identity UUID, not profile ID. Local login email is an unverified fallback. Verification is a trusted provider assertion, not a local verification flow. Shared keys do not isolate compromised peers.
+      security: [{ServiceKey: []}]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Existing identity contact, including null when unavailable; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [email, verified]
+                properties:
+                  email:
+                    type: string
+                    format: email
+                    nullable: true
+                  verified:
+                    type: boolean
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Identity not found
+        '503':
+          $ref: '#/components/responses/Unavailable'
   /v1/auth/register:
     post:
       operationId: register
@@ -100,7 +136,7 @@ paths:
   /v1/auth/sso:
     post:
       operationId: exchangeSsoToken
-      description: Validates a Keycloak access token and creates an independent 30-minute opaque local session after user-service acknowledges the phone claim. New issuer/subject mappings require a canonical UAE phone_number from trusted introspection. An existing registered phone must match exactly and cannot be omitted. Historical phone-less mappings remain compatible without automatic enrollment. No email or phone account linking; possession is not verified.
+      description: Validates a Keycloak access token and creates an independent 30-minute opaque local session after user-service acknowledges the phone claim. New issuer/subject mappings require a canonical UAE phone_number from trusted introspection. An existing registered phone must match exactly and cannot be omitted. Historical phone-less mappings remain compatible without automatic enrollment. No email or phone account linking; phone possession is not verified. Trusted provider email and literal boolean email_verified refresh separate notification contact fields atomically with the subject mapping, before profile acknowledgement. Missing or invalid email clears contact; missing, false or malformed verification clears verified status. Login credentials are unchanged.
       security: [{ServiceKey: []}]
       requestBody:
         required: true

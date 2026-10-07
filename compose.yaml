@@ -102,6 +102,13 @@ services:
       args:
         SERVICE: payment-service
     environment:
+      AUTH_BASE_URL: http://auth-service:8080
+      EMAIL_DELIVERY_ENABLED: ${EMAIL_DELIVERY_ENABLED:-false}
+      MAILTRAP_MODE: ${MAILTRAP_MODE:-sandbox}
+      MAILTRAP_API_TOKEN: ${MAILTRAP_API_TOKEN:-}
+      MAILTRAP_INBOX_ID: ${MAILTRAP_INBOX_ID:-}
+      MAILTRAP_FROM_EMAIL: ${MAILTRAP_FROM_EMAIL:-}
+      MAILTRAP_FROM_NAME: ${MAILTRAP_FROM_NAME:-ArMoney}
       INTERNAL_AUTH_KEY: ${INTERNAL_AUTH_KEY:?Set INTERNAL_AUTH_KEY in .env}
       USER_BASE_URL: http://user-service:8080
       WALLET_BASE_URL: http://wallet-service:8080

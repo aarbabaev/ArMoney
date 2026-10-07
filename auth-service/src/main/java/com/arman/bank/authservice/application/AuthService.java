@@ -56,7 +56,7 @@ public final class AuthService {
         if (token == null || token.isBlank() || token.length() > 8192 || !token.matches("[A-Za-z0-9._~+/-]+=*"))
             throw new AuthFailure(BAD_INPUT);
         var principal = provider.verify(token);
-        var identity = store.externalIdentity(principal.issuer(), principal.subject(), principal.phoneNumber());
+        var identity = store.externalIdentity(principal);
         provision(identity);
         return createSession(identity.id());
     }
@@ -64,6 +64,10 @@ public final class AuthService {
     private void provision(Identity identity) {
         // Historical identities remain compatible. Never enroll them from an unverified retry.
         if (identity.registrationPhone() != null) profiles.provision(identity.id(), identity.registrationPhone());
+    }
+
+    public java.util.Optional<AuthStore.EmailContact> emailContact(UUID identityId) {
+        return store.emailContact(identityId);
     }
 
     public static boolean canonicalPhone(String phone) {
