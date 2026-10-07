@@ -66,6 +66,17 @@ public final class AuthRoutes {
                 respond(ctx, error.getStatus(), Map.of("error", "request_rejected")));
         config.routes.exception(Exception.class, (error, ctx) ->
                 respond(ctx, 503, Map.of("error", "service_unavailable")));
+        config.routes.get("/v1/internal/identities/{id}/email", ctx -> {
+            String id = ctx.pathParam("id");
+            if (!id.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
+                throw new AuthFailure(BAD_INPUT);
+            var contact = service.emailContact(java.util.UUID.fromString(id))
+                .orElseThrow(io.javalin.http.NotFoundResponse::new);
+            var response = new java.util.LinkedHashMap<String, Object>();
+            response.put("email", contact.email());
+            response.put("verified", contact.verified());
+            respond(ctx, 200, response);
+        });
         config.routes.post("/v1/auth/register", ctx -> withHashSlot(ctx, () -> {
             var body = credentials(ctx, true);
             service.register(body.get("email").asText(), body.get("password").asText(), body.get("phone_number").textValue());

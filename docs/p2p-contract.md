@@ -1,6 +1,6 @@
 # P2P implementation contract
 
-Status: implemented source contract; not a deployment or completion claim. No external provider, SMS, push service or broker is introduced.
+Status: implemented source contract; not a deployment or completion claim. Optional Mailtrap transactional email is configured separately; no SMS, push service or broker is introduced.
 
 ## Identity and phone numbers
 
@@ -39,3 +39,5 @@ SwiftUI tabs Wallets, Transfers, Notifications, Profile. Real balances, create-w
 ## Verification
 
 Real PostgreSQL tests for registration uniqueness/immutable claims, ownership, idempotency concurrency, terminal notification atomicity and durable claims. Disposable CI verifies balanced synthetic funding, successful cross-user transfer once, insufficient funds, payload conflict, ownership spoof, ledger outage/restart recovery, notification isolation/read idempotency and balance reconciliation. Never seed/fund/clear the persistent user stack. Independent security/financial review required; iOS runs on macOS CI. Published migrations remain append-only. All PRs target main; no automatic merge.
+
+Terminal outcomes also enqueue durable email events in the same transaction as in-app notifications. Delivery is disabled by default and does not change the public payment result. See [email delivery contract and limitations](email-notifications.md).

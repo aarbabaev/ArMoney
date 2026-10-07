@@ -97,6 +97,10 @@ public final class PostgresPayments implements PaymentStore {
             insert into notifications(id,owner_id,payment_id,type,currency,amount_minor) values (?,?,?,?,?,?)
             on conflict(owner_id,payment_id,type) do nothing
             """, UUID.randomUUID(), owner, p.id(), type, p.request().currency(), p.request().amountMinor());
+        sql.execute("""
+            insert into email_outbox(id,owner_id,payment_id,type,amount_minor) values (?,?,?,?,?)
+            on conflict(owner_id,payment_id,type) do nothing
+            """, UUID.randomUUID(), owner, p.id(), type, p.request().amountMinor());
     }
     @Override public void retry(Claim claim) {
         int seconds = Math.min(60, 1 << Math.min(6, claim.attempts()));

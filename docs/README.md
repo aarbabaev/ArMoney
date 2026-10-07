@@ -14,6 +14,7 @@ results take precedence over historical ADR scope and previous deployment eviden
 | [Onboarding](onboarding.md) | Profile/wallet HTTP walkthrough and IDEA setup |
 | [Ledger](ledger.md) | Private financial API, retry semantics and fixture limits |
 | [Ledger replication](ledger-replication.md) | Direct standbys, fenced reads, quorum and manual failover |
+| [Email notifications](email-notifications.md) | Transactional outbox, Mailtrap configuration and delivery limits |
 | [SSO and iOS runbook](sso-and-ios.md) | Windows LAN HTTPS, Keycloak, CA trust and validation boundaries |
 | [Native Android README](../android/README.md) | Android Studio, SDK, local HTTPS and native app acceptance |
 | [Android contract](android-contract.md) | Android build, identity and financial recovery boundaries |
@@ -41,6 +42,7 @@ extends the original metadata-only scope in ADR 0004.
 | [0010](adr/0010-native-android.md) | Native Kotlin Android client and shared SSO identity |
 | [0013](adr/0013-ledger-replication.md) | Direct physical ledger replication and fenced balance reads |
 | [0014](adr/0014-uae-registration-phone.md) | Mandatory unique UAE registration phones and transfers without SMS verification |
+| [0015](adr/0015-transactional-email-outbox.md) | Atomic email enqueue, asynchronous Mailtrap delivery and contact trust |
 
 ## Agent workflow
 

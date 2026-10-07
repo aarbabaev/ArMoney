@@ -14,6 +14,7 @@ Java package names and paths retain `arman` compatibility.
 | Public identity boundary | `app-gateway/.../ProtectedProxy.java`, `AuthProxy.java`; [auth session ADR](../adr/0003-auth-sessions.md) |
 | Database behavior | Owning module `src/main/resources/db/migration/` and persistence adapter; `platform-runtime/.../Database.java` |
 | Ledger correctness | [atomic ledger ADR](../adr/0005-atomic-ledger.md), [ledger guide](../ledger.md), `LedgerEngineIntegrationSpec.groovy` |
+| Payment email outbox | [Email operations](../email-notifications.md), [ADR 0015](../adr/0015-transactional-email-outbox.md), payment outbox/dispatcher and auth private contact endpoint |
 | Ledger replication | [replication runbook](../ledger-replication.md), [ADR 0013](../adr/0013-ledger-replication.md), compose.ledger-replication.yaml and LedgerReads physical-standby tests |
 | Wallet provisioning/recovery | [provisioning ADR](../adr/0007-wallet-ledger-provisioning.md), wallet `Provisioner` and `ProvisioningIntegrationSpec` |
 | Disposable system evidence | `.github/workflows/ci.yml`, relevant `scripts/*smoke*`; workflow isolation rules before execution |

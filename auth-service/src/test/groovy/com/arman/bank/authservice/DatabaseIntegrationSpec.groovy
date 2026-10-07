@@ -5,7 +5,7 @@ import org.testcontainers.containers.PostgreSQLContainer
 import spock.lang.Specification
 
 class DatabaseIntegrationSpec extends Specification {
-    def "V3 and V4 upgrade populated legacy identities and sessions without changing ownership"() {
+    def "V3 through V5 upgrade populated legacy identities and sessions without changing ownership"() {
         given:
         def postgres = new PostgreSQLContainer('postgres:17.6-alpine')
         postgres.start()
@@ -26,6 +26,9 @@ class DatabaseIntegrationSpec extends Specification {
         store.findSession('a' * 64, java.time.Instant.now()).orElseThrow().id() == id
         store.findByEmail('legacy@example.com').orElseThrow().identity().id() == id
         store.findByEmail('legacy@example.com').orElseThrow().identity().registrationPhone() == null
+        store.emailContact(id).orElseThrow().email() == 'legacy@example.com'
+        !store.emailContact(id).orElseThrow().verified()
+        store.findByEmail('legacy@example.com').orElseThrow().passwordHash() == 'synthetic-hash'
         store.externalIdentity('https://issuer.example/realm', 'subject', '+971501234567').id() != id
 
         cleanup:

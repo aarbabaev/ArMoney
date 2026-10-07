@@ -25,7 +25,7 @@ class PaymentIntegrationSpec extends Specification {
     }
     def cleanupSpec() { db?.close(); postgres?.stop() }
     def setup() {
-        db.transaction { it.execute('truncate notifications, payments') }
+        db.transaction { it.execute('truncate email_outbox, notifications, payments') }
         store = new PostgresPayments(db)
     }
     def expire(PaymentStore.Claim claim) {
