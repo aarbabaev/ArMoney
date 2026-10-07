@@ -34,7 +34,7 @@ GET /v1/notifications returns {notifications:[...]} newest100 for authenticated 
 
 ## Native UI and safety
 
-SwiftUI tabs Wallets, Transfers, Notifications, Profile. Real balances, create-wallet, profile display-name edit and phone status, account identity/sign-out, exact-phone lookup and recipient confirmation, transfer amount in decimal display converted exactly to Int64 minor units (2 digits for supported currencies). Persist pending submission's idempotency key/payload in device-only Keychain scoped to origin AND identity; retries after uncertain response/relaunch reuse it. Disable duplicate submits; do not silently discard uncertain transfers or reuse key for edited payload. Pending vs completed/rejected must be explicit. No preview funds or public top-up endpoint. Existing PKCE/session security preserved.
+SwiftUI tabs Wallets, Transfers, Notifications, Profile. Real balances, create-wallet, profile display-name edit and phone status, account identity/sign-out, exact-phone lookup and recipient confirmation, transfer amount in decimal display converted exactly to Int64 minor units (100 fils = 1 AED; exactly two decimal places). Persist pending submission's idempotency key/payload in device-only Keychain scoped to origin AND identity; retries after uncertain response/relaunch reuse it. Disable duplicate submits; do not silently discard uncertain transfers or reuse key for edited payload. Pending vs completed/rejected must be explicit. No preview funds or public top-up endpoint. Existing PKCE/session security preserved.
 
 ## Verification
 

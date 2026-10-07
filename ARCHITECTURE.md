@@ -1,7 +1,7 @@
 # ArMoney  -  System and Agent Team Architecture
 
-> The main project map. Registration-phone integration review on **2026-10-05**, based on main
-> `3c929fa3c8472ee2939e1a611e4e76ced96a44ee` plus this phone-registration change.
+> The main project map. Ledger-replication integration review on **2026-10-07**, based on main
+> `7239bb035634802ce3d6c643f8a80b2b3505f0b5` plus this ledger-replication change.
 > Describes the source code, not the guaranteed state of running containers.
 
 ## Navigation
@@ -31,7 +31,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | Android | Native Kotlin/Compose SSO, wallets/balances, phone transfers/history, inbox and profile (API26+) | Physical-device/LAN acceptance; exact-revision CI evidence in the delivery PR |
 | User | Profile, optional immutable email-prefix sharding and central unique UAE registration-phone directory | Prefixes do not guarantee uniform load; automated ownership proof requires a separate approved provider |
 | Wallet | Metadata, durable ledger provisioning, owner-scoped live balances | Lifecycle controls |
-| Ledger | Private accounts, balances, atomic postings, wallet/payment integration | Operational hardening |
+| Ledger | Private accounts, balances, atomic postings; optional two direct physical standbys and fenced balance reads | Manual failover; production HA and backup/PITR |
 | Payment | Durable P2P, requester idempotency, recovery, history and notifications | Pagination and operational reconciliation tooling |
 | Gateway | Auth, profile/phone, wallets/balances, P2P and notifications | Further hardening |
 
@@ -314,6 +314,36 @@ rejections. `accounts.wallet_id` is not yet validated through an HTTP request to
 Exact columns, indexes, and constraints are defined in service migrations; published
 migrations are append-only. The current DB owner has administrative capabilities:
 triggers do not protect against an administrator. A restricted runtime DB role is future work.
+
+### Optional ledger replicas
+
+`compose.ledger-replication.yaml` preserves `ledger-db` and adds two direct
+PostgreSQL physical hot standbys. Application commits require WAL flush on at
+least one synchronous standby. Only account/balance reads can use replica pools:
+each query checks database/cluster/timeline/recovery identity and a primary WAL
+replay fence, then falls back to primary when unavailable or stale. Provisioning,
+posting and durable result lookup stay primary. Replicas never run Flyway.
+The replicated profile requires an explicit post-transaction quorum WAL flush
+confirmation before acknowledging provisioning or new/replayed payment results.
+This prevents cancellation/restart recovery from returning a locally committed
+but unreplicated result. Missing confirmation stays unavailable/uncertain.
+
+```mermaid
+flowchart LR
+    L["ledger-service"] -->|"Commands, results, fence and fallback"| P[("ledger-db primary")]
+    P -->|"Direct WAL"| R1[("ledger-db-replica1")]
+    P -->|"Direct WAL"| R2[("ledger-db-replica2")]
+    L -->|"Fenced account reads"| R1
+    L -->|"Fenced account reads"| R2
+```
+
+Read routing requires primary availability; it does not provide automatic outage
+reads. With both synchronous replicas unavailable, commit acknowledgement waits;
+timeouts retain uncertain command semantics. Promotion, fencing, reparenting and
+application pool reconfiguration are manual. No HA manager, failover proxy or
+production backup/PITR is introduced. Containers sharing one host are not independent
+host failure domains. See [ADR 0013](docs/adr/0013-ledger-replication.md) and
+[operations and disposable acceptance](docs/ledger-replication.md).
 
 ### Atomic posting  -  implemented
 
