@@ -686,7 +686,8 @@ flowchart LR
 GitHub Actions schedules backend and Android work on a disposable Linux Docker runner
 labelled `armoney-local`. A Windows controller registers one job at a time, then removes
 that job's runner, workspace and dedicated Docker daemon storage. Artifacts persist in
-`armoney-ci-artifacts`. The application's running Docker stack is separate.
+`armoney-ci-artifacts`. The application's running Docker stack is separate. PostgreSQL readiness probes use
+TCP loopback to avoid accepting the temporary initialization server as ready.
 
 ```mermaid
 flowchart LR

@@ -8,6 +8,8 @@ GitHub Actions remains the scheduler and check-status store. Backend and Android
 use the `armoney-local` Linux Docker runner. Each registration handles one job; the
 controller recreates its workspace and dedicated Docker daemon before the next job.
 The host Docker socket, application volumes and deployment credentials are not mounted.
+PostgreSQL healthchecks use TCP loopback so the temporary Unix-socket-only init
+server cannot release dependent services before the real database listener starts.
 Reports and Android APKs persist in the separate `armoney-ci-artifacts` volume.
 
 The Windows controller retains the repository administration token on the host and
