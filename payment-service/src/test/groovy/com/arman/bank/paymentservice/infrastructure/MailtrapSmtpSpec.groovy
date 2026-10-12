@@ -164,6 +164,67 @@ class MailtrapSmtpSpec extends Specification {
         address << ['one@example.test,two@example.test','group:one@example.test;',
             'one@example.test\r\nBcc: two@example.test']
     }
+    def 'repeated SMTP attempts release write timeout scheduler threads'() {
+        given:
+        // Initialize the JDK's shared virtual-thread timer before taking the baseline.
+        Thread.startVirtualThread { Thread.sleep(1) }.join()
+        def baseline=Thread.getAllStackTraces().keySet().collect { it.threadId() }.toSet()
+        when:
+        ['data','lost-ack','tls-refused','stall'].each { stage ->
+            3.times {
+                def fixture=new SmtpFixture(serverTls,stage,250)
+                try {
+                    def delivery=new MailtrapSmtp(new EmailConfiguration(env()),'localhost',fixture.port,clientTls.socketFactory,stage=='stall' ? 200 : 15000)
+                    assert delivery.send('recipient@example.test','subject','body')==
+                        (stage=='data' ? EmailDelivery.Result.ACCEPTED : EmailDelivery.Result.TRANSIENT_FAILURE)
+                } finally { fixture.close() }
+            }
+        }
+        then:
+        new spock.util.concurrent.PollingConditions(timeout:2).eventually {
+            def remaining=Thread.getAllStackTraces().findAll { thread, stack ->
+                !baseline.contains(thread.threadId()) && stack.any {
+                    it.className.startsWith('java.util.concurrent.ScheduledThreadPoolExecutor')
+                }
+            }.keySet()*.name
+            assert remaining.empty
+        }
+    }
+    def 'a standalone SMTP JVM exits naturally after provider acceptance'() {
+        given:
+        def fixture=new SmtpFixture(serverTls,'data',250)
+        def locations=[]
+        for (def loader=getClass().classLoader; loader!=null; loader=loader.parent) {
+            if (loader instanceof URLClassLoader) locations.addAll(loader.URLs.collect { new File(it.toURI()).path })
+        }
+        locations.addAll(System.getProperty('java.class.path').split(File.pathSeparator))
+        def java=Path.of(System.getProperty('java.home'),'bin',System.getProperty('os.name').startsWith('Windows') ? 'java.exe' : 'java').toString()
+        def process=new ProcessBuilder(java,'-cp',locations.unique().join(File.pathSeparator),
+            NaturalExitProbe.name,fixture.port.toString(),tlsDirectory.resolve('synthetic.p12').toString())
+            .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
+        when:
+        boolean exited=process.waitFor(15,TimeUnit.SECONDS)
+        then:
+        exited
+        process.exitValue()==0
+        fixture.done.get(5,TimeUnit.SECONDS)==null
+        fixture.message.contains('synthetic natural exit probe')
+        cleanup:
+        if (process?.isAlive()) { process.destroyForcibly(); process.waitFor(5,TimeUnit.SECONDS) }
+        fixture?.close()
+    }
+    static class NaturalExitProbe {
+        static void main(String[] args) {
+            def keys=KeyStore.getInstance('PKCS12')
+            Files.newInputStream(Path.of(args[1])).withCloseable { keys.load(it,'synthetic-password'.toCharArray()) }
+            def tm=TrustManagerFactory.getInstance(TrustManagerFactory.defaultAlgorithm)
+            tm.init(keys)
+            def tls=SSLContext.getInstance('TLS'); tls.init(null,tm.trustManagers,null)
+            def delivery=new MailtrapSmtp(new EmailConfiguration(MailtrapSmtpSpec.env()),'localhost',Integer.parseInt(args[0]),tls.socketFactory,10000)
+            assert delivery.send('recipient@example.test','subject','synthetic natural exit probe')==EmailDelivery.Result.ACCEPTED
+            // Deliberately no System.exit: remaining non-daemon threads fail the parent test.
+        }
+    }
     static class SmtpFixture implements AutoCloseable {
         final ServerSocket listener=new ServerSocket(0,1,InetAddress.getByName('127.0.0.1'))
         final List<String> commands=Collections.synchronizedList([])

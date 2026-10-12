@@ -58,17 +58,24 @@ final class MailtrapSmtp {
         // Closing this underlying socket also aborts a wrapped STARTTLS socket. The
         // caller returns on the deadline even if platform DNS resolution is delayed.
         var socket=new Socket();
-        var task=new FutureTask<Result>(() -> exchange(socket,recipient,subject,text));
+        // Own the scheduler across both the plaintext and STARTTLS socket wrappers.
+        // Closing the raw socket alone does not dispose Angus write-timeout pools.
+        var writes=new ScheduledThreadPoolExecutor(1,
+            Thread.ofPlatform().name("mailtrap-smtp-write-timeout").daemon(false).factory());
+        writes.setRemoveOnCancelPolicy(true);
+        var task=new FutureTask<Result>(() -> exchange(socket,writes,recipient,subject,text));
         Thread.startVirtualThread(task);
         try { return task.get(deadlineMillis,TimeUnit.MILLISECONDS); }
         catch (TimeoutException | ExecutionException e) { return Result.TRANSIENT_FAILURE; }
         finally {
             close(socket);
             task.cancel(true);
+            writes.shutdownNow();
         }
     }
-    private Result exchange(Socket socket,String recipient,String subject,String text) {
+    private Result exchange(Socket socket,ScheduledExecutorService writes,String recipient,String subject,String text) {
         var p=properties();
+        p.put("mail.smtp.executor.writetimeout",writes);
         p.put("mail.smtp.socketFactory",new AttemptSocketFactory(socket));
         if (tls!=null) p.put("mail.smtp.ssl.socketFactory",tls);
         var session=Session.getInstance(p);
