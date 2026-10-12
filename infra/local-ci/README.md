@@ -141,11 +141,13 @@ download page. Platform-tools 37.0.1 and emulator 37.2.12 use fixed archive URLs
 and the checksums from [Google's package manifest](https://dl.google.com/android/repository/repository2-1.xml).
 SDK platform 36 and build-tools 35.0.0 are installed through `sdkmanager`.
 
-The runner sets `JAVA_TOOL_OPTIONS=-Dapi.version=1.44` for Docker Java client
+The backend CI job sets `JAVA_TOOL_OPTIONS=-Dapi.version=1.44` for Docker Java client
 compatibility. Testcontainers 1.21.3's docker-java default API 1.32 is rejected by
-Docker 29.8.1, which requires at least API 1.40. This runner-only pin selects a
+Docker 29.8.1, which requires at least API 1.40. This backend-only pin selects a
 supported API while preserving the current daemon and real PostgreSQL integration
-tests. Reassess the pin when updating Testcontainers/docker-java or Docker.
+tests. It is not set globally on the runner: Java's environment notice interferes
+with Android SDK launcher version parsing. Reassess the pin when updating
+Testcontainers/docker-java or Docker.
 
 These are version pins, not a fully reproducible image: base image tags, apt
 security updates, transitive Python dependencies and SDK platform revisions can

@@ -36,8 +36,6 @@ services:
       DOCKER_HOST: unix:///run/inner-docker/docker.sock
       TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: /run/inner-docker/docker.sock
       TESTCONTAINERS_HOST_OVERRIDE: localhost
-      # Testcontainers 1.21.3's docker-java default API 1.32 is below Docker 29's minimum.
-      JAVA_TOOL_OPTIONS: -Dapi.version=1.44
       RUNNER_NAME: ${RUNNER_NAME:-armoney-local-ephemeral}
     volumes:
       - docker-socket:/run/inner-docker

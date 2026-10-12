@@ -14,6 +14,8 @@ env:
   INTERNAL_AUTH_KEY: ci-only-service-key-at-least-32-characters
 jobs:
   build:
+    env:
+      JAVA_TOOL_OPTIONS: -Dapi.version=1.44
     # GitHub all_external_contributors approval policy is the external-run gate.
     if: github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, armoney-local]
