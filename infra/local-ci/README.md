@@ -80,6 +80,30 @@ restart on login, host reboot or failure.
 
 ## Recovery and removal
 
+Reports and APKs saved under `/artifacts` are local Docker-volume files, not
+GitHub Actions artifacts. Export them to a new directory of your choice outside
+the repository. This stopped helper mounts the volume read-only; it never starts
+the runner or executes a job:
+
+```powershell
+$ciExportDirectory = Join-Path $env:USERPROFILE 'Downloads\ArMoney-CI-reports'
+New-Item -ItemType Directory -Path $ciExportDirectory -ErrorAction Stop | Out-Null
+$ciExportContainer = docker create --mount type=volume,src=armoney-ci-artifacts,dst=/artifacts,readonly --entrypoint /bin/true armoney-local-runner:2.338.0
+if ($LASTEXITCODE -ne 0) { throw 'Could not create the artifact export helper.' }
+try {
+    docker cp "${ciExportContainer}:/artifacts/." $ciExportDirectory
+    if ($LASTEXITCODE -ne 0) { throw 'Artifact export failed.' }
+} finally {
+    docker rm $ciExportContainer
+}
+```
+
+Extract `backend-tests.tgz` or `android-results.tgz` from the exported run directory,
+then open the HTML reports in a browser or install the debug APK.
+The artifact volume remains intact. After a host reboot, start Docker Desktop,
+complete the cleanup below if resources remain, then manually run
+`.\infra\local-ci\Start-LocalRunner.ps1 -Continuous` again.
+
 After a forced process kill or host reboot, inspect the exact project before
 removing it. Never substitute the application's persistent Compose project here.
 The following command removes **only** `armoney-ci-buildmachine` resources and its
