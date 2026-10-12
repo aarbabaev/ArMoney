@@ -3,6 +3,7 @@ package com.arman.bank.authservice.infrastructure;
 import com.arman.bank.authservice.application.AuthStore;
 import com.arman.bank.authservice.application.AuthService;
 import com.arman.bank.authservice.application.AuthFailure;
+import com.arman.bank.authservice.application.SsoTokens;
 import com.arman.bank.authservice.domain.Identity;
 import com.arman.bank.runtime.Database;
 import java.time.Instant;
@@ -16,10 +17,11 @@ public final class PostgresAuthStore implements AuthStore {
     public PostgresAuthStore(Database database) { this.database = database; }
     private static OffsetDateTime time(Instant value) { return value.atOffset(ZoneOffset.UTC); }
 
-    @Override public Identity externalIdentity(String issuer, String subject, String phone) {
+    @Override public Identity externalIdentity(SsoTokens.Principal principal) {
+        String issuer = principal.issuer(), subject = principal.subject(), phone = principal.phoneNumber();
         return database.transaction(sql -> {
             var existing = external(sql, issuer, subject);
-            if (existing != null) return matchingPhone(existing, phone);
+            if (existing != null) return refreshContact(sql, matchingPhone(existing, phone), principal);
             if (!AuthService.canonicalPhone(phone)) throw new AuthFailure(AuthFailure.Kind.UNAUTHORIZED);
             var candidate = UUID.randomUUID();
             var reserved = sql.fetchOne("""
@@ -29,16 +31,34 @@ public final class PostgresAuthStore implements AuthStore {
             if (reserved == null) {
                 // A concurrent exchange of this same subject may have committed the claim.
                 var winner = external(sql, issuer, subject);
-                if (winner != null) return matchingPhone(winner, phone);
+                if (winner != null) return refreshContact(sql, matchingPhone(winner, phone), principal);
                 throw new AuthFailure(AuthFailure.Kind.CONFLICT);
             }
             var inserted = sql.fetchOne("""
                 insert into external_identities(issuer, subject, identity_id) values (?, ?, ?)
                 on conflict (issuer, subject) do nothing returning identity_id
                 """, issuer, subject, candidate);
-            if (inserted != null) return new Identity(candidate, null, phone);
+            if (inserted != null) return refreshContact(sql, new Identity(candidate, null, phone), principal);
             sql.execute("delete from identities where id = ?", candidate);
-            return matchingPhone(external(sql, issuer, subject), phone);
+            return refreshContact(sql, matchingPhone(external(sql, issuer, subject), phone), principal);
+        });
+    }
+
+    private static Identity refreshContact(org.jooq.DSLContext sql, Identity identity, SsoTokens.Principal principal) {
+        // Every authenticated refresh replaces both fields, including absent/invalid claims.
+        // This transaction contains the mapping and phone checks; credential columns are untouched.
+        sql.execute("update identities set notification_email = ?, notification_email_verified = ? where id = ?",
+            principal.email(), principal.emailVerified(), identity.id());
+        return identity;
+    }
+
+    @Override public Optional<EmailContact> emailContact(UUID identityId) {
+        return database.transaction(sql -> {
+            var row = sql.fetchOne("select email, notification_email, notification_email_verified from identities where id = ?", identityId);
+            if (row == null) return Optional.empty();
+            var contact = row.get("notification_email", String.class);
+            return Optional.of(new EmailContact(contact == null ? row.get("email", String.class) : contact,
+                contact != null && Boolean.TRUE.equals(row.get("notification_email_verified", Boolean.class))));
         });
     }
 

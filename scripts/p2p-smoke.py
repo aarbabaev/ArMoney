@@ -85,6 +85,7 @@ assert recipient['identity_id'] == bob_id and recipient['display_name'] == 'P2P 
 assert 'email' not in recipient
 expect(401, call('POST', '/v1/recipients/resolve', body={'phone_number': phone}))
 expect(404, call('GET', '/v1/internal/wallets/' + a['id'], alice))
+expect(404, call('GET', '/v1/internal/identities/' + bob_id + '/email', alice))
 expect(404, call('GET', '/v1/wallets/' + a['id'] + '/balance', bob))
 
 # Funding has an explicit clearing counterpart and uses ledger's immutable transfer trigger.
@@ -182,3 +183,15 @@ assert len(expect(200, call('GET', '/v1/payments', bob))['payments']) == 4
 assert sql('ledger-db', "SELECT count(*) FROM accounts a WHERE balance_minor <> COALESCE((SELECT sum(amount_minor) FROM postings p WHERE p.account_id=a.id),0);") == '0'
 assert sql('ledger-db', 'SELECT count(*) FROM (SELECT currency FROM postings GROUP BY currency HAVING sum(amount_minor) <> 0) x;') == '0'
 print('P2P phone resolution, ownership, duplicate/concurrent transfers, recovery, notifications and reconciliation passed')
+
+# Default delivery is disabled in disposable CI: every terminal owner notification
+# has one durable email event, and no provider receives fixture traffic.
+assert sql('payment-db', """SELECT count(*) FROM notifications n
+LEFT JOIN email_outbox e ON e.owner_id=n.owner_id AND e.payment_id=n.payment_id AND e.type=n.type
+WHERE e.id IS NULL OR e.amount_minor<>n.amount_minor;""") == '0'
+assert sql('payment-db', "SELECT count(*) FROM email_outbox e JOIN payments p ON p.id=e.payment_id WHERE p.status='PENDING';") == '0'
+assert sql('payment-db', "SELECT count(*) FROM email_outbox WHERE status<>'PENDING' OR attempts<>0 OR recipient_email IS NOT NULL;") == '0'
+assert sql('payment-db', f"SELECT count(*) FROM email_outbox WHERE owner_id IN ('{alice_id}','{bob_id}');") == '9'
+compose('restart', 'payment-service')
+assert sql('payment-db', f"SELECT count(*) FROM email_outbox WHERE owner_id IN ('{alice_id}','{bob_id}');") == '9'
+print('Email outbox matches terminal notifications, survives restart, and remains disabled; private contact lookup is not public')

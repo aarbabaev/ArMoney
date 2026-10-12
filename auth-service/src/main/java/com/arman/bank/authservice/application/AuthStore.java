@@ -6,7 +6,14 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface AuthStore {
-    Identity externalIdentity(String issuer, String subject, String phone);
+    default Identity externalIdentity(String issuer, String subject, String phone) {
+        return externalIdentity(new SsoTokens.Principal(issuer, subject, phone));
+    }
+    Identity externalIdentity(SsoTokens.Principal principal);
+    record EmailContact(String email, boolean verified) {
+        @Override public String toString() { return "EmailContact[REDACTED]"; }
+    }
+    Optional<EmailContact> emailContact(UUID identityId);
     record Credentials(Identity identity, String passwordHash) {}
     Identity register(Identity identity, String passwordHash);
     Optional<Credentials> findByEmail(String email);

@@ -1,7 +1,7 @@
 # ArMoney  -  System and Agent Team Architecture
 
-> The main project map. Ledger-replication integration review on **2026-10-07**, based on main
-> `7239bb035634802ce3d6c643f8a80b2b3505f0b5` plus this ledger-replication change.
+> The main project map. Transactional email integration based on main
+> `14b12d63f1419ffd31a7c284a555cf6af7b68fea` plus this email-outbox change.
 > Describes the source code, not the guaranteed state of running containers.
 
 ## Navigation
@@ -32,7 +32,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | User | Profile, optional immutable email-prefix sharding and central unique UAE registration-phone directory | Prefixes do not guarantee uniform load; automated ownership proof requires a separate approved provider |
 | Wallet | Metadata, durable ledger provisioning, owner-scoped live balances | Lifecycle controls |
 | Ledger | Private accounts, balances, atomic postings; optional two direct physical standbys and fenced balance reads | Manual failover; production HA and backup/PITR |
-| Payment | Durable P2P, requester idempotency, recovery, history and notifications | Pagination and operational reconciliation tooling |
+| Payment | Durable P2P, requester idempotency, recovery, history, in-app notifications and transactional Mailtrap email outbox | Email disabled until configured; real sending requires verified contact; duplicates possible after ambiguous provider acceptance |
 | Gateway | Auth, profile/phone, wallets/balances, P2P and notifications | Further hardening |
 
 Java 21, Gradle multi-project, Javalin, PostgreSQL, Flyway, jOOQ, HikariCP;
@@ -55,6 +55,7 @@ flowchart TB
         G -->|"Profile"| U["user-service"]
         G -->|"Wallets and balances"| W["wallet-service"]
         G -->|"P2P, history, notifications"| P["payment-service"]
+        P -->|"Private notification email lookup"| A
         P -->|"Registered UAE recipient"| U
         A -->|"Private immutable phone binding"| U
         P -->|"Private wallet mapping"| W
@@ -69,6 +70,7 @@ flowchart TB
         P --> PD[("payment-db")]
         L --> LD[("ledger-db")]
     end
+    P -->|"Optional HTTPS email submission"| MT["Mailtrap: external Sandbox or Sending API"]
 ```
 
 | Module | Responsibility | Boundary |
@@ -77,7 +79,7 @@ flowchart TB
 | auth-service | Credentials, SSO identity mapping, sessions, limits | Does not own profiles |
 | user-service | Profile placement, sharded display names and central registered UAE phone directory | Does not issue tokens or claim SMS proof; owns all profile shards |
 | wallet-service | Owner, currency, lifecycle and durable ledger mapping | Not the source of balances |
-| payment-service | Transfer intent, client idempotency, recovery and notifications | Completion requires matching ledger confirmation |
+| payment-service | Transfer intent, client idempotency, recovery, notifications and email outbox/dispatcher | Completion requires matching ledger confirmation; email failure never changes money |
 | ledger-service | Accounts, balances, immutable paired postings | No public funding API |
 | platform-runtime | HTTP lifecycle, DB wiring, migrations, health | A library, not a separate service; no shared business entities |
 
@@ -301,11 +303,11 @@ flowchart LR
 
 | Database | Tables / guarantees |
 | --- | --- |
-| auth-db | `identities`: nullable email/password_hash pair for SSO-only principals, unique non-null email and registration_phone (null for historical unenrolled users); `external_identities`: (issuer, subject) PK and unique local identity mapping; `sessions`: token_hash PK, FK identity_id, expires_at; `auth_attempts`: persistent limits |
+| auth-db | `identities`: separate notification email and provider verification flag; nullable email/password_hash pair for SSO-only principals, unique non-null email and registration_phone (null for historical unenrolled users); `external_identities`: (issuer, subject) PK and unique local identity mapping; `sessions`: token_hash PK, FK identity_id, expires_at; `auth_attempts`: persistent limits |
 | user-db | Existing `profiles` remain in place; `profile_directory` pins identity/profile UUID and shard and owns authoritative globally unique non-null phone state; `registration_phone_claims` binds unique identity and UAE phone before profile creation; operator audit and persistent lookup quota remain central |
 | Optional user shards | `profiles`: display name keyed by pinned profile/identity UUID; phone state is overlaid from the primary directory |
 | wallet-db | `wallets`: unique(owner_id,currency), AED, ACTIVE/CLOSED, PENDING/READY, unique ledger_account_id, durable retry lease; no balance |
-| payment-db | `payments`: unique(requester_id,idempotency_key), request_hash, wallet IDs, amount/currency, PENDING/COMPLETED/REJECTED, recipient/account snapshot, fenced lease/backoff; notifications unique(owner,payment,type) |
+| payment-db | `payments`: unique(requester_id,idempotency_key), request_hash, wallet IDs, amount/currency, PENDING/COMPLETED/REJECTED, recipient/account snapshot, fenced lease/backoff; notifications and email outbox unique(owner,payment,type); durable email leases, attempts and delivery outcomes |
 | ledger-db | `accounts`: unique wallet_id, owner, CUSTOMER/CLEARING, balance_minor; `transfers`: payment_id PK and account/currency FKs; `transfer_requests`: durable payload/outcome; `postings`: view |
 | Every database | `flyway_schema_history`: technical record of applied migrations |
 
@@ -488,7 +490,7 @@ sequenceDiagram
     loop Durable fenced worker until known outcome
         P->>L: Same payment UUID and account payload
         L-->>P: Matching POSTED or durable rejection
-        P->>DB: Commit terminal state and notifications atomically
+        P->>DB: Commit terminal state, notifications and email outbox atomically
     end
     C->>G: Refresh history and own inbox
 ```
@@ -496,7 +498,14 @@ sequenceDiagram
 No shared distributed transaction is held across services. Ledger owns the money;
 payment remains PENDING after timeout, malformed response or unavailable dependencies.
 A crash after ledger commit is recovered by replaying the same ledger command. Terminal
-notifications commit with payment state, with unique constraints preventing duplicates.
+notifications and email outbox events commit with payment state, with unique constraints preventing duplicate rows.
+Email delivery is asynchronous and disabled by default. A separate worker resolves contact
+through a private auth API and submits to fixed Mailtrap HTTPS endpoints outside DB
+transactions. Sandbox captures mail; real Sending requires verified contact. Durable
+leases/backoff recover work, but provider acceptance followed by a lost acknowledgement
+can produce duplicate email. Mail success is not a financial completion condition.
+See [email operations](docs/email-notifications.md) and [ADR 0015](docs/adr/0015-transactional-email-outbox.md).
+
 The recipient sees only completed incoming payments; the sender sees all its intents.
 History and inbox return the latest 100 entries, without pagination in this version.
 
@@ -560,7 +569,7 @@ flowchart LR
 | sso_owner | sso-service: Keycloak/OIDC configuration; auth SSO adapter files only under an explicitly transferred lease |
 | user_owner | user-service: profiles, immutable phone claims, recipient lookup and attestation |
 | wallet_owner | wallet-service: metadata/lifecycle, durable provisioning and live balances |
-| payment_owner | payment-service: orchestration/idempotency, recovery and notifications |
+| payment_owner | payment-service: orchestration/idempotency, recovery, in-app notifications and email outbox/dispatcher |
 | ledger_owner | ledger-service: accounts, balances, posting correctness |
 | qa_integration | End-to-end contracts, outages/recovery; only assigned test files |
 | qa_security | Financial invariants and owner isolation; only assigned tests |

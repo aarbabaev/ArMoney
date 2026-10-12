@@ -182,3 +182,11 @@ Two direct PostgreSQL hot standbys can serve WAL-fenced balances; commands and
 payment-result lookup remain primary-only. See [activation, monitoring and manual
 failover](docs/ledger-replication.md) and [ADR 0013](docs/adr/0013-ledger-replication.md).
 Existing primary data is preserved. Automatic HA and host-failure protection are not implemented.
+
+## Transactional email
+
+Terminal payments enqueue Mailtrap email in a PostgreSQL outbox, atomically with
+payment state and in-app notifications. A separate worker retries delivery without
+changing the transfer result. Delivery is disabled until configured; start with
+Mailtrap Sandbox. See [setup, contact verification and delivery guarantees](docs/email-notifications.md)
+and [ADR 0015](docs/adr/0015-transactional-email-outbox.md).

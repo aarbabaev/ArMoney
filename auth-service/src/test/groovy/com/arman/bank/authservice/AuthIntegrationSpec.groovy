@@ -100,6 +100,89 @@ class AuthIntegrationSpec extends Specification {
         request('GET', '/v1/auth/me', null, secondToken).statusCode() == 401
     }
 
+    def 'private contact lookup requires service key and distinguishes unavailable contact from unknown identity'() {
+        given:
+        service.register('local@example.com', PASSWORD, '+971521234567')
+        def store = new PostgresAuthStore(database)
+        def local = store.findByEmail('local@example.com').orElseThrow().identity().id()
+        def external = store.externalIdentity('https://issuer.example/realm', 'no-email', '+971501234567').id()
+        def path = "/v1/internal/identities/${local}/email"
+        when:
+        def response = request('GET', path)
+        then:
+        response.statusCode() == 200
+        parsed(response) == [email:'local@example.com', verified:false]
+        response.headers().firstValue('Cache-Control').orElse('') == 'no-store'
+        request('GET', path, null, null, null).statusCode() == 401
+        request('GET', path, null, null, 'wrong').statusCode() == 401
+        request('GET', '/v1/internal/identities/invalid/email', null, null, null).statusCode() == 401
+        request('GET', '/v1/internal/identities/invalid/email').statusCode() == 400
+        request('GET', '/v1/internal/identities/1-1-1-1-1/email').statusCode() == 400
+        request('GET', "/v1/internal/identities/${UUID.randomUUID()}/email").statusCode() == 404
+        parsed(request('GET', "/v1/internal/identities/${external}/email")) == [email:null, verified:false]
+    }
+
+    def 'SSO contact refresh clears stale claims and never links local credentials by email'() {
+        given:
+        service.register('local@example.com', PASSWORD, '+971521234567')
+        def store = new PostgresAuthStore(database)
+        def local = store.findByEmail('local@example.com').orElseThrow()
+        def original = new SsoTokens.Principal('https://issuer.example/realm', 'email-subject', '+971501234567', 'local@example.com', true)
+        def token = service.sso('synthetic-token', { ignored -> original } as SsoTokens).accessToken()
+        def id = service.me('Bearer ' + token).id()
+        def path = "/v1/internal/identities/${id}/email"
+        expect:
+        id != local.identity().id()
+        parsed(request('GET', path)) == [email:'local@example.com', verified:true]
+        service.me('Bearer ' + token).email() == null
+
+        when:
+        def changed = new SsoTokens.Principal(original.issuer(), original.subject(), original.phoneNumber(), email, verified)
+        def next = service.sso('synthetic-token', { ignored -> changed } as SsoTokens)
+        then:
+        service.me('Bearer ' + next.accessToken()).id() == id
+        parsed(request('GET', path)) == [email:expectedEmail, verified:expectedVerified]
+        store.findByEmail('local@example.com').orElseThrow() == local
+        service.me('Bearer ' + service.login('local@example.com', PASSWORD).accessToken()).id() == local.identity().id()
+        database.transaction { sql -> sql.fetchOne('select password_hash from identities where id = ?', id).get(0, String) } == null
+        where:
+        email                 | verified | expectedEmail         | expectedVerified
+        'changed@example.com' | true     | 'changed@example.com' | true
+        'changed@example.com' | false    | 'changed@example.com' | false
+        'local@example.com'   | false    | 'local@example.com'   | false
+        null                  | false    | null                  | false
+        'invalid'             | true     | null                  | false
+    }
+
+    def 'phone conflict leaves the prior contact and other identities unchanged'() {
+        given:
+        def store = new PostgresAuthStore(database)
+        def first = new SsoTokens.Principal('https://issuer.example/realm', 'first', '+971501234567', 'first@example.com', true)
+        def second = new SsoTokens.Principal(first.issuer(), 'second', '+971521234567', 'second@example.com', true)
+        def id = store.externalIdentity(first).id()
+        def other = store.externalIdentity(second).id()
+        when:
+        store.externalIdentity(new SsoTokens.Principal(first.issuer(), first.subject(), second.phoneNumber(), 'changed@example.com', false))
+        then:
+        def failure = thrown(AuthFailure)
+        failure.kind() == AuthFailure.Kind.UNAUTHORIZED
+        store.emailContact(id).orElseThrow() == new AuthStore.EmailContact('first@example.com', true)
+        store.emailContact(other).orElseThrow() == new AuthStore.EmailContact('second@example.com', true)
+    }
+
+    def 'failed contact write rolls back new mapping and identity together'() {
+        given:
+        def store = new PostgresAuthStore(database)
+        database.transaction { sql -> sql.execute("ALTER TABLE identities ADD CONSTRAINT synthetic_contact_failure CHECK (notification_email IS NULL)") }
+        when:
+        store.externalIdentity(new SsoTokens.Principal('https://issuer.example/realm', 'rollback', '+971501234567', 'rollback@example.com', true))
+        then:
+        thrown(org.jooq.exception.DataAccessException)
+        database.transaction { sql -> sql.fetchOne('select count(*) from identities').get(0, Long) } == 0
+        database.transaction { sql -> sql.fetchOne('select count(*) from external_identities').get(0, Long) } == 0
+        database.transaction { sql -> sql.fetchOne('select count(*) from sessions').get(0, Long) } == 0
+    }
+
     def "invalid input and missing service identity fail closed"() {
         expect:
         request('POST', '/v1/auth/register', registrationBody('a@example.com'), null, null).statusCode() == 401

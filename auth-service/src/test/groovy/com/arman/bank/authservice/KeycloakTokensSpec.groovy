@@ -105,6 +105,34 @@ class KeycloakTokensSpec extends Specification {
         provider.verify('opaque-access-token').phoneNumber() == null
     }
 
+    def 'only a valid email and literal boolean verification establish verified contact'() {
+        given:
+        claims.email = email
+        claims.email_verified = verification
+        when:
+        def principal = provider.verify('opaque-access-token')
+        then:
+        principal.email() == expectedEmail
+        principal.emailVerified() == expectedVerified
+        where:
+        email                 | verification | expectedEmail         | expectedVerified
+        ' Contact@Example.com ' | true       | 'contact@example.com' | true
+        'contact@example.com' | false        | 'contact@example.com' | false
+        'contact@example.com' | 'true'       | 'contact@example.com' | false
+        'contact@example.com' | 1            | 'contact@example.com' | false
+        'contact@example.com' | null         | 'contact@example.com' | false
+        'invalid'             | true         | null                  | false
+        null                  | true         | null                  | false
+        ['contact@example.com'] | true       | null                  | false
+        ('x' * 255) + '@example.com' | true   | null                  | false
+    }
+
+    def 'absent optional email claims do not prevent authentication'() {
+        expect:
+        provider.verify('opaque-access-token').email() == null
+        !provider.verify('opaque-access-token').emailVerified()
+    }
+
     def 'provider failures and unbounded or malformed responses fail unavailable'() {
         given:
         status = responseStatus

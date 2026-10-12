@@ -224,6 +224,8 @@ try:
                 "token": oidc["access_token"], "token_type_hint": "access_token"}, form=True))
             assert introspection["active"] and introspection["phone_number"] == username
             assert introspection.get("phone_number_verified") is not True
+            assert isinstance(introspection.get("email"), str) and "@" in introspection["email"]
+            assert introspection.get("email_verified") is False
             expect(400, request("POST", discovery["token_endpoint"], {
                 "client_id": client_id, "grant_type": "password", "username": username,
                 "password": password}, form=True))
@@ -231,6 +233,11 @@ try:
             token = session["access_token"]
             principal = expect(200, request("GET", PUBLIC + "/v1/auth/me", token=token))
             assert principal["email"] is None
+            contact_id = str(uuid.UUID(principal["id"]))
+            contact = subprocess.run(["docker", "compose", "exec", "-T", "auth-db", "psql", "-U", "bank", "-d", "bank", "-At", "-c",
+                f"SELECT notification_email IS NOT NULL AND NOT notification_email_verified FROM identities WHERE id='{contact_id}'"],
+                check=True, capture_output=True, text=True, timeout=30).stdout.strip()
+            assert contact == "t", "SSO must capture a separate unverified notification contact"
             if principal_id is None:
                 principal_id = principal["id"]
             assert principal["id"] == principal_id, "Native clients must map one provider subject to one bank identity"
@@ -258,6 +265,11 @@ try:
             second_oidc = expect(200, redeem(second_code, second_verifier, client_id))
             second_session = expect(200, request("POST", PUBLIC + "/v1/auth/sso", {"access_token": second_oidc["access_token"]}))["access_token"]
             second_identity = expect(200, request("GET", PUBLIC + "/v1/auth/me", token=second_session))
+            contact_id = str(uuid.UUID(second_identity["id"]))
+            contact = subprocess.run(["docker", "compose", "exec", "-T", "auth-db", "psql", "-U", "bank", "-d", "bank", "-At", "-c",
+                f"SELECT notification_email IS NOT NULL AND notification_email_verified FROM identities WHERE id='{contact_id}'"],
+                check=True, capture_output=True, text=True, timeout=30).stdout.strip()
+            assert contact == "t", "Verified provider email must be captured without changing login credentials"
             assert second_identity["id"] != principal_id
             if second_id is None:
                 second_id = second_identity["id"]
