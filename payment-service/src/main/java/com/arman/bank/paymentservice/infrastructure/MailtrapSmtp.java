@@ -21,11 +21,15 @@ final class MailtrapSmtp {
     private final int port;
     private final SSLSocketFactory tls;
     private final long deadlineMillis;
+    // JUL holds named loggers weakly; retain these to keep protocol suppression effective.
+    private static final Logger[] PROTOCOL_LOGGERS = {
+        Logger.getLogger("org.eclipse.angus.mail.smtp"),
+        Logger.getLogger("org.eclipse.angus.mail.smtp.protocol"),
+        Logger.getLogger("org.eclipse.angus.mail.util")
+    };
     static {
         // Angus also emits protocol data through JUL independently of Session.debug.
-        for (String name : new String[]{"org.eclipse.angus.mail.smtp", "org.eclipse.angus.mail.smtp.protocol", "org.eclipse.angus.mail.util"}) {
-            Logger.getLogger(name).setLevel(Level.OFF);
-        }
+        for (Logger logger : PROTOCOL_LOGGERS) logger.setLevel(Level.OFF);
     }
     MailtrapSmtp(EmailConfiguration config) { this(config,config.smtpHost,config.smtpPort,null,15000); }
     /** Package-private seam for loopback fixtures with their own trust store, never environment-configurable. */
