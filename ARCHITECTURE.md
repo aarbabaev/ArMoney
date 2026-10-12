@@ -27,7 +27,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | --- | --- | --- |
 | Auth | Password login and Keycloak exchange, stable local identities, opaque sessions | Global provider logout/revocation integration |
 | SSO | Optional Keycloak realm, browser authorization code + PKCE | Production identity controls, MFA, email verification |
-| iOS | Existing native SwiftUI login, wallets/balances, transfers/history, notifications and profile (iOS 18+); feature development paused | Physical iPhone validation paused; regression CI retained |
+| iOS | Existing native SwiftUI login, wallets/balances, transfers/history, notifications and profile (iOS 18+); feature development paused | Physical iPhone validation and regression CI paused by owner |
 | Android | Native Kotlin/Compose SSO, wallets/balances, phone transfers/history, inbox and profile (API26+) | Physical-device/LAN acceptance; exact-revision CI evidence in the delivery PR |
 | User | Profile, optional immutable email-prefix sharding and central unique UAE registration-phone directory | Prefixes do not guarantee uniform load; automated ownership proof requires a separate approved provider |
 | Wallet | Metadata, durable ledger provisioning, owner-scoped live balances | Lifecycle controls |
@@ -664,9 +664,7 @@ flowchart LR
     TEST --> SMOKE["Isolated Compose + smoke"]
     SMOKE --> READY["Ready PR, user merges"]
     CI --> ANDROID["Kotlin tests / lint / APK / emulator"]
-    CI --> IOS["Swift build / simulator tests"]
     ANDROID --> READY
-    IOS --> READY
 ```
 
 | Check | What it establishes |
@@ -681,7 +679,36 @@ flowchart LR
 | `scripts/p2p-smoke.py` in disposable CI | Phone resolution, public P2P, duplicate/concurrent spending, outages, post-commit recovery, notification isolation and journal reconciliation |
 | Android CI | Debug APK, lint, JVM tests and real Keystore/native screen emulator tests |
 | SSO browser smoke in CI | Disposable Keycloak authorization code/PKCE and gateway exchange for iOS and Android |
-| macOS iOS CI | Native compilation and simulator unit tests; not physical-device acceptance |
+| iOS validation | Paused by owner; existing script requires Mac/Xcode when resumed |
+
+### Local build infrastructure
+
+GitHub Actions schedules backend and Android work on a disposable Linux Docker runner
+labelled `armoney-local`. A Windows controller registers one job at a time, then removes
+that job's runner, workspace and dedicated Docker daemon storage. Artifacts persist in
+`armoney-ci-artifacts`. The application's running Docker stack is separate.
+
+```mermaid
+flowchart LR
+    GH["GitHub Actions: checks and scheduling"] --> R["Ephemeral Linux runner: Java and Android"]
+    H["Windows controller: registration and cleanup"] --> R
+    R --> D["Dedicated inner Docker daemon: disposable databases and smoke tests"]
+    R --> A["Local artifact volume: reports and APK"]
+    M["iOS development and CI paused by owner"]
+    P["Persistent banking stack: not mounted in CI"]
+```
+
+The public repository requires approval for all external contributors before runner
+registration. Approving untrusted workflow code is unsafe: privileged DinD is not a
+hostile-code sandbox. Labels and workflow conditions are only additional checks.
+The host administration token never enters the job; registration credentials are removed
+before the runner accepts work. Failed isolation checks also prevent Docker cleanup.
+
+Android instrumentation uses software emulation on Docker Desktop without KVM. iOS
+development and CI are paused by explicit owner instruction on 2026-10-12. Existing
+source and test scripts remain; resumption requires Mac/Xcode. No iOS pass is claimed.
+Operational steps and limitations: [local CI](infra/local-ci/README.md),
+[ADR 0016](docs/adr/0016-local-ci-runners.md). Deployment remains an explicit owner action.
 
 On Windows, use `.\gradlew.bat`. CI: [.github/workflows/ci.yml](.github/workflows/ci.yml).
 Fixture funding and `down --volumes` are only for disposable CI environments, never user
@@ -723,5 +750,5 @@ They load bank-ios, bank-android and bank-sso skills only for relevant tasks. Sh
 remain in AGENTS.md/workflow; [context-map](docs/agents/context-map.md) points to
 contracts on demand. [Audit](docs/agents/context-efficiency.md) records measured
 text reductions, not estimated billing savings. Fresh scoped worker contexts and
-bounded evidence replace full-history copies for independent tasks. macOS CI
-compiles/tests Swift; disposable browser CI verifies Keycloak code/PKCE and SSO.
+bounded evidence replace full-history copies for independent tasks. iOS CI is paused;
+disposable browser CI verifies Keycloak code/PKCE and SSO.
