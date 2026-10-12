@@ -12,12 +12,15 @@ public final class MailtrapDelivery implements EmailDelivery, AutoCloseable {
     private final EmailConfiguration config;
     private final Transport transport;
     private final BoundedEmailHttp owned;
+    private final MailtrapSmtp smtp;
     public MailtrapDelivery(EmailConfiguration config) {
         this.config=config; owned=new BoundedEmailHttp(); transport=owned::exchange;
+        smtp=config.transport.equals("smtp") ? new MailtrapSmtp(config) : null;
     }
     /** Injectable transport for isolated tests, never a configurable provider URL. */
     public MailtrapDelivery(EmailConfiguration config, Transport transport) {
         this.config=config; this.transport=transport; owned=null;
+        smtp=config.transport.equals("smtp") ? new MailtrapSmtp(config) : null;
     }
     @Override public Recipient recipient(UUID owner) throws Exception {
         var response=transport.exchange(HttpRequest.newBuilder(config.auth.resolve("/v1/internal/identities/"+owner+"/email"))
@@ -41,9 +44,11 @@ public final class MailtrapDelivery implements EmailDelivery, AutoCloseable {
             default -> throw new IllegalArgumentException("Invalid email event");
         };
         String amount=claim.amountMinor()/100+"."+String.format(Locale.ROOT,"%02d",claim.amountMinor()%100);
+        String text=action+". Amount: AED "+amount+". Payment ID: "+claim.paymentId()+". Event ID: "+claim.id()+".";
+        if (smtp!=null) return smtp.send(recipient,"ArMoney: "+action,text);
         var payload=Map.of("from",Map.of("email",config.fromEmail,"name",config.fromName),
             "to",List.of(Map.of("email",recipient)), "subject","ArMoney: "+action,
-            "text",action+". Amount: AED "+amount+". Payment ID: "+claim.paymentId()+". Event ID: "+claim.id()+".");
+            "text",text);
         var builder=HttpRequest.newBuilder(config.endpoint).timeout(Duration.ofSeconds(5))
             .header("Content-Type","application/json");
         if (config.mode.equals("sandbox")) builder.header("Api-Token",config.token);

@@ -70,7 +70,7 @@ flowchart TB
         P --> PD[("payment-db")]
         L --> LD[("ledger-db")]
     end
-    P -->|"Optional HTTPS email submission"| MT["Mailtrap: external Sandbox or Sending API"]
+    P -->|"Optional HTTPS API or Sandbox SMTP STARTTLS"| MT["Mailtrap: Sandbox SMTP or HTTPS API"]
 ```
 
 | Module | Responsibility | Boundary |
@@ -500,11 +500,13 @@ payment remains PENDING after timeout, malformed response or unavailable depende
 A crash after ledger commit is recovered by replaying the same ledger command. Terminal
 notifications and email outbox events commit with payment state, with unique constraints preventing duplicate rows.
 Email delivery is asynchronous and disabled by default. A separate worker resolves contact
-through a private auth API and submits to fixed Mailtrap HTTPS endpoints outside DB
+through a private auth API and submits through fixed Mailtrap HTTPS endpoints or
+Sandbox SMTP with required STARTTLS outside DB
 transactions. Sandbox captures mail; real Sending requires verified contact. Durable
 leases/backoff recover work, but provider acceptance followed by a lost acknowledgement
 can produce duplicate email. Mail success is not a financial completion condition.
-See [email operations](docs/email-notifications.md) and [ADR 0015](docs/adr/0015-transactional-email-outbox.md).
+See [email operations](docs/email-notifications.md), [ADR 0015](docs/adr/0015-transactional-email-outbox.md)
+and [SMTP transport ADR](docs/adr/0017-mailtrap-sandbox-smtp.md).
 
 The recipient sees only completed incoming payments; the sender sees all its intents.
 History and inbox return the latest 100 entries, without pagination in this version.

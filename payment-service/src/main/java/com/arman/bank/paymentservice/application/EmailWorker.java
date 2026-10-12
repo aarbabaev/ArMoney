@@ -2,7 +2,7 @@ package com.arman.bank.paymentservice.application;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** HTTP runs outside transactions. Acceptance followed by a crash may duplicate mail. */
+/** Network calls run outside transactions. Acceptance followed by a crash may duplicate mail. */
 public final class EmailWorker implements AutoCloseable {
     private final EmailOutbox store;
     private final EmailDelivery delivery;

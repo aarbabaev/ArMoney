@@ -40,11 +40,40 @@ notification APIs and mobile screens are unchanged.
 ## Configure Mailtrap
 
 Keep credentials in your ignored local `.env`, never in source, screenshots or
-logs. The only service receiving the Mailtrap token is payment-service.
+logs. Only payment-service receives Mailtrap delivery credentials.
+
+### Sandbox SMTP
+
+Select SMTP to use the username/password from your Sandbox inbox SMTP Integration
+page. API tokens and inbox IDs are not required for this transport.
 
 ```dotenv
 EMAIL_DELIVERY_ENABLED=true
 MAILTRAP_MODE=sandbox
+MAILTRAP_TRANSPORT=smtp
+MAILTRAP_SMTP_HOST=sandbox.smtp.mailtrap.io
+MAILTRAP_SMTP_PORT=2525
+MAILTRAP_SMTP_USERNAME=<Sandbox SMTP username>
+MAILTRAP_SMTP_PASSWORD=<Sandbox SMTP password>
+MAILTRAP_FROM_EMAIL=notifications@example.com
+MAILTRAP_FROM_NAME=ArMoney
+```
+
+SMTP is restricted to the Sandbox hostname and STARTTLS ports 25, 587 or 2525.
+STARTTLS, certificate validation and hostname verification are mandatory before
+authentication. Port 465 (implicit TLS) and real Sending over SMTP are not supported.
+No arbitrary SMTP host or TLS bypass is exposed. SMTP acceptance still means provider
+acceptance, not mailbox delivery; ambiguous connection failures can produce duplicates.
+The same durable outbox, frozen recipient/mode and retry limits apply.
+
+### HTTP API (existing transport)
+
+`MAILTRAP_TRANSPORT=api` is the default for existing installations.
+
+```dotenv
+EMAIL_DELIVERY_ENABLED=true
+MAILTRAP_MODE=sandbox
+MAILTRAP_TRANSPORT=api
 MAILTRAP_API_TOKEN=<Mailtrap API token>
 MAILTRAP_INBOX_ID=<numeric Sandbox inbox ID>
 MAILTRAP_FROM_EMAIL=notifications@example.com
