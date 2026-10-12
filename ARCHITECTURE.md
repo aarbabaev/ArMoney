@@ -663,7 +663,7 @@ flowchart LR
     CI --> TEST["Java / Spock / ArchUnit / PostgreSQL"]
     TEST --> SMOKE["Isolated Compose + smoke"]
     SMOKE --> READY["Ready PR, user merges"]
-    CI --> ANDROID["Kotlin tests / lint / APK / emulator"]
+    CI --> ANDROID["Kotlin tests / lint / APK"]
     ANDROID --> READY
 ```
 
@@ -677,7 +677,7 @@ flowchart LR
 | Provisioning smoke in CI | Concurrent retries, ledger outage, wallet restart and unique zero-balance account mapping |
 | Ledger smoke in CI | Private posting with synthetic funds |
 | `scripts/p2p-smoke.py` in disposable CI | Phone resolution, public P2P, duplicate/concurrent spending, outages, post-commit recovery, notification isolation and journal reconciliation |
-| Android CI | Debug APK, lint, JVM tests and real Keystore/native screen emulator tests |
+| Android CI | Debug APK, lint and JVM tests; emulator checks only on explicit owner request |
 | SSO browser smoke in CI | Disposable Keycloak authorization code/PKCE and gateway exchange for iOS and Android |
 | iOS validation | Paused by owner; existing script requires Mac/Xcode when resumed |
 
@@ -705,7 +705,8 @@ hostile-code sandbox. Labels and workflow conditions are only additional checks.
 The host administration token never enters the job; registration credentials are removed
 before the runner accepts work. Failed isolation checks also prevent Docker cleanup.
 
-Android instrumentation uses software emulation on Docker Desktop without KVM. iOS
+Android emulator instrumentation is excluded from routine CI and runs only on an explicit
+owner request. The retained script uses software emulation on Docker Desktop without KVM. iOS
 development and CI are paused by explicit owner instruction on 2026-10-12. Existing
 source and test scripts remain; resumption requires Mac/Xcode. No iOS pass is claimed.
 Operational steps and limitations: [local CI](infra/local-ci/README.md),

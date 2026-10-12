@@ -51,3 +51,9 @@ CI APKs use an invalid placeholder origin and are not production-signed releases
 
 The client inherits current product limits: operator-attested phone numbers,
 latest-100 history/inbox, foreground/manual notifications, no funding API or FX.
+
+## CI execution update (2026-10-12)
+
+Owner instruction supersedes automatic instrumentation above: routine CI builds
+the APK and runs lint/JVM tests. Emulator runs require an explicit owner request;
+the existing device tests remain available. See ADR 0016.

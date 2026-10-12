@@ -157,9 +157,13 @@ evidence. Review and update toolchain pins regularly. Runner auto-update is
 disabled; rebuild before GitHub stops accepting an outdated runner (normally
 within 30 days of a new release, sooner for critical updates).
 
-Docker Desktop on the current Windows host has no `/dev/kvm`. Android tests must
-use software emulation (`-accel off`), with a longer bounded boot/test timeout;
-the runtime does not claim hardware acceleration or skip instrumentation tests.
+Routine Android CI runs JVM tests, lint and APK assembly without an emulator.
+Emulator instrumentation runs only after an explicit owner request; then use
+`bash scripts/local-ci-android.sh --owner-requested` in the disposable runtime.
+The flag records intent; it is not an authorization boundary. Tests remain in source.
+Docker Desktop on this host has no `/dev/kvm`; requested emulator runs use software
+emulation (`-accel off`) with a longer bounded timeout. Routine CI provides no
+real-device/Keystore instrumentation evidence.
 iOS development and CI are paused by the owner. No macOS runner is required for
 the currently active CI scope; iOS simulator tests cannot run in these Linux containers.
 Allow substantial disk space for the image, inner image builds, Android system

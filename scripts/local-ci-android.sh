@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Pass this flag only after the owner explicitly requests an emulator run.
+if [[ "${1:-}" != "--owner-requested" ]]; then
+  echo "Emulator launch requires an explicit owner request and --owner-requested." >&2
+  exit 2
+fi
 avd=armoney_ci
 cleanup() { adb -s emulator-5554 emu kill >/dev/null 2>&1 || true; }
 trap cleanup EXIT

@@ -25,7 +25,9 @@ repository workflows may run here; approving an external workflow permits code e
 on the local machine. Workflow actor conditions and labels alone are not access controls.
 Do not approve untrusted runs while this runner is available.
 
-Android instrumentation remains required and uses software emulation where KVM is absent.
+By owner instruction on 2026-10-12, routine Android CI runs JVM tests, lint and APK
+assembly only. Emulator instrumentation is retained for explicit owner requests,
+using software emulation where KVM is absent; it is not automatic CI evidence.
 It may be substantially slower than hardware acceleration. The owner explicitly paused
 iOS development and CI on 2026-10-12. iOS source and `scripts/test-ios.sh` remain, but
 the workflow has no iOS job. Resumption requires a separate Mac with Xcode; Linux

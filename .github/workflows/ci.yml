@@ -118,8 +118,6 @@ jobs:
           bash scripts/check-local-ci.sh
       - name: Kotlin tests, lint and debug APK
         run: ./gradlew -p android --no-daemon testDebugUnitTest lintDebug assembleDebug
-      - name: Real Keystore and native screen tests (software emulator)
-        run: bash scripts/local-ci-android.sh
       - name: Save Android APK and reports locally
         if: always()
         run: bash scripts/archive-local-ci.sh android
