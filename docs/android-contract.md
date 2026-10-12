@@ -33,10 +33,12 @@ may trust a user-installed local CA; release uses system roots and no cleartext.
 No generic trust-all manager, hostname bypass, WebView login or analytics/push SDK.
 
 Acceptance: assemble debug APK, lint, JVM tests for exact Long money/phone/identity/
-payment recovery, HTTP contracts and OAuth checks; emulator tests for actual Keystore
-persistence/owner isolation and a native screen smoke. Disposable Keycloak browser
-tests must exercise both clients and preserve existing iOS acceptance. Physical
-device and LAN certificate/browser validation are separate evidence.
+payment recovery, HTTP contracts and OAuth checks. Emulator tests for actual Keystore
+persistence/owner isolation and native screens remain available only on explicit
+owner request; routine CI does not run them or claim this coverage. Disposable Keycloak browser
+tests exercise both OIDC clients, retaining their SSO contracts while native iOS
+development and CI are paused by owner instruction (see ADR 0016). Physical-device
+and LAN certificate/browser validation are separate evidence.
 
 Currency policy: AED only for new wallets and transfers, with amounts in integer
 fils (100 fils = 1 AED). There is no currency selector or FX. Existing encrypted

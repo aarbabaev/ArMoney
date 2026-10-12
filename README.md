@@ -88,13 +88,16 @@ configuration; they do not start an unattended service.
 
 CI compiles on Java 21, runs unit/architecture and PostgreSQL integration tests,
 builds all images, and probes all six services on the private Compose network.
-Missing Docker is a test failure, never a silent skip. Reports are uploaded.
+Missing Docker is a test failure, never a silent skip. Backend and Android jobs run
+on the disposable local Docker build machine; reports and APKs remain in its local
+artifact volume. See [local CI operations](infra/local-ci/README.md).
 Use a feature branch and PR; do not push to main or merge automatically.
 Start feature branches from the latest main and target main in pull requests.
 Branch protection is a repository-owner setting; source code alone does not establish
 that it is enabled. Required checks must pass on the exact PR head before delivery.
-CI also includes macOS native build/simulator tests and disposable browser SSO
-coverage. These do not establish physical-iPhone or persistent-stack acceptance.
+Disposable browser SSO coverage remains enabled. iOS development and native CI
+are paused by owner instruction; source and `scripts/test-ios.sh` remain for later
+Mac/Xcode validation. No physical-device or persistent-stack acceptance is implied.
 
 Not included: broker, Redis, Kubernetes, production deployment, observability backend,
 configured MFA and email verification. Durable public P2P and payment recovery are implemented.

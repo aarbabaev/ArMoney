@@ -1,0 +1,59 @@
+name: armoney-ci-buildmachine
+services:
+  daemon:
+    image: docker:29.8.1-dind
+    privileged: true
+    restart: "no"
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    # Do not use dockerd-entrypoint's default unauthenticated TCP listener.
+    command: ["dockerd", "--host=unix:///run/inner-docker/docker.sock", "--storage-driver=overlay2"]
+    volumes:
+      - docker-data:/var/lib/docker
+      - docker-socket:/run/inner-docker
+      - workspace:/work
+    networks: [ci]
+    healthcheck:
+      test: ["CMD", "docker", "--host=unix:///run/inner-docker/docker.sock", "info"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    # Deliberately no host ports, host network, host socket or bind mounts.
+  runner:
+    image: armoney-local-runner:2.338.0
+    build:
+      context: .
+      args:
+        ACCEPT_ANDROID_LICENSES: ${ACCEPT_ANDROID_LICENSES:-false}
+    restart: "no"
+    init: true
+    network_mode: service:daemon
+    depends_on:
+      daemon:
+        condition: service_healthy
+    environment:
+      ARMONEY_DISPOSABLE_CI: "true"
+      DOCKER_HOST: unix:///run/inner-docker/docker.sock
+      TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: /run/inner-docker/docker.sock
+      TESTCONTAINERS_HOST_OVERRIDE: localhost
+      RUNNER_NAME: ${RUNNER_NAME:-armoney-local-ephemeral}
+    volumes:
+      - docker-socket:/run/inner-docker
+      - workspace:/work
+      - artifacts:/artifacts
+    secrets:
+      - registration-token
+    shm_size: 2gb
+    stop_grace_period: 60s
+secrets:
+  registration-token:
+    file: ${RUNNER_TOKEN_FILE:?Set RUNNER_TOKEN_FILE to a temporary registration-token file outside the repository}
+volumes:
+  docker-data:
+  docker-socket:
+  workspace:
+  artifacts:
+    external: true
+    name: armoney-ci-artifacts
+networks:
+  ci:

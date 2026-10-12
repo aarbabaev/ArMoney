@@ -1,5 +1,7 @@
 # ADR 0009: Phone recipients, durable P2P and in-app notifications
 
+Current CI execution and the owner-directed iOS pause are described in [ADR 0016](0016-local-ci-runners.md). The original decision below remains historical context.
+
 Status: accepted; phone admission and verified-only lookup superseded by [ADR 0014](0014-uae-registration-phone.md) implementation decision; deployment and exact-revision checks are separate evidence.
 
 ## Decision
