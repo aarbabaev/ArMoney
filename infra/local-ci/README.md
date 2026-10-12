@@ -64,7 +64,10 @@ The PAT remains solely in the host process/environment. Runner authentication
 credentials exist only in the disposable runner container's writable layer.
 
 Do not run parallel controllers or scale the runner service. A host mutex and an
-existing-container check reject competing sessions. The image must already be
+existing-container and leftover-volume checks reject competing or dirty sessions.
+Cleanup failures stop rotation, including when containers are gone but daemon data
+volumes remain. The external artifact volume is the only preserved volume.
+The image must already be
 built: the controller uses `--no-build`. It ignores repository `.env` files by
 passing an empty environment file. Stop with Ctrl+C; its `finally` block removes
 this CI stack and any remaining registration matching the generated runner name.

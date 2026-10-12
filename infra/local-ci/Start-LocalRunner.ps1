@@ -37,11 +37,15 @@ $ciStarted = $false
 $ciExitCode = 1
 $ciMutex = [Threading.Mutex]::new($false, 'ArMoneyLocalCiController')
 $ciLocked = $false
+$ciCleanupFailed = $false
+$ciRegistrationToken = $null
+. (Join-Path $PSScriptRoot 'Runtime-Helpers.ps1')
 
 function Invoke-CiCompose {
     param([string[]]$CiArguments)
-    & docker compose --project-name $ciProject --env-file (Join-Path $ciTempDirectory 'empty.env') -f $ciComposeFile @CiArguments
-    if ($LASTEXITCODE -ne 0) { throw "Local CI Compose command failed (exit $LASTEXITCODE)." }
+    $ciComposeResult = Invoke-CiDocker -Arguments (@('compose', '--project-name', $ciProject, '--env-file', (Join-Path $ciTempDirectory 'empty.env'), '-f', $ciComposeFile) + $CiArguments)
+    if ($ciComposeResult.ExitCode -ne 0) { throw "Local CI Compose command failed (exit $($ciComposeResult.ExitCode))." }
+    $ciComposeResult.Output
 }
 
 try {
@@ -49,9 +53,7 @@ try {
     catch [Threading.AbandonedMutexException] { $ciLocked = $true }
     if (-not $ciLocked) { throw 'Another local CI controller is already running.' }
     # Concurrent controllers would share daemon/workspace state. Fail before any mutation.
-    $ciExisting = & docker ps -aq --filter "label=com.docker.compose.project=$ciProject"
-    if ($LASTEXITCODE -ne 0) { throw 'Docker is unavailable.' }
-    if ($ciExisting) { throw "Existing $ciProject containers found. Follow README cleanup before starting a fresh job." }
+    Assert-CiCleanRuntime -Project $ciProject
     . (Join-Path $PSScriptRoot 'Assert-RunnerTrust.ps1')
     Assert-ArMoneyRunnerTrust -Headers $ciHeaders
     New-Item -ItemType Directory -Path $ciTempDirectory | Out-Null
@@ -62,6 +64,7 @@ try {
     }
     [IO.File]::WriteAllText((Join-Path $ciTempDirectory 'empty.env'), '')
     $ciTokenResponse = Invoke-RestMethod -Method Post -Uri "$ciApi/registration-token" -Headers $ciHeaders
+    $ciRegistrationToken = $ciTokenResponse.token
     $env:RUNNER_TOKEN_FILE = Join-Path $ciTempDirectory 'registration-token'
     [IO.File]::WriteAllText($env:RUNNER_TOKEN_FILE, $ciTokenResponse.token)
     $ciTokenResponse = $null
@@ -74,31 +77,38 @@ try {
     if (-not $ciRunnerId) { throw 'Runner container was not created.' }
     $ciRegistered = $false
     for ($ciAttempt = 0; $ciAttempt -lt 60; $ciAttempt++) {
-        & docker exec $ciRunnerId test -f /opt/runner/.runner 2>$null
-        if ($LASTEXITCODE -eq 0) { $ciRegistered = $true; break }
-        $ciState = & docker inspect --format '{{.State.Running}}' $ciRunnerId
-        if ($ciState -ne 'true') { break }
+        $ciState = Invoke-CiDocker -Arguments @('inspect', '--format', '{{.State.Running}}', $ciRunnerId)
+        if ($ciState.ExitCode -ne 0 -or $ciState.Output -notcontains 'true') {
+            Write-Warning 'Runner container exited or became unavailable before registration. See sanitized logs below.'
+            break
+        }
+        $ciMarker = Invoke-CiDocker -Arguments @('exec', $ciRunnerId, 'test', '-f', '/opt/runner/.runner')
+        if ($ciMarker.ExitCode -eq 0) { $ciRegistered = $true; break }
         Start-Sleep -Seconds 2
     }
     # Truncate the mounted inode as well as removing it later; do not leave a token visible to jobs.
     [IO.File]::WriteAllText($env:RUNNER_TOKEN_FILE, '')
     if (-not $ciRegistered) {
-        & docker logs --tail 40 $ciRunnerId
-        throw 'Runner registration failed or timed out.'
+        Show-CiRunnerDiagnostics -Container $ciRunnerId -Secrets @($ciPat, $ciRegistrationToken)
+        throw 'Runner registration failed or timed out. Check sanitized logs and outbound GitHub Actions TLS connectivity; no job was accepted.'
     }
     Write-Host "Registered $ciRunnerName for one job. Artifacts remain in volume armoney-ci-artifacts."
     $ciResult = & docker wait $ciRunnerId
     if ($LASTEXITCODE -ne 0) { throw 'Could not wait for the runner.' }
     $ciExitCode = [int]$ciResult
-    & docker logs --tail 40 $ciRunnerId
+    Show-CiRunnerDiagnostics -Container $ciRunnerId -Secrets @($ciPat, $ciRegistrationToken)
 } finally {
     $ciOwnedTokenFile = Join-Path $ciTempDirectory 'registration-token'
     if (Test-Path -LiteralPath $ciOwnedTokenFile) {
-        [IO.File]::WriteAllText($ciOwnedTokenFile, '')
+        try { [IO.File]::WriteAllText($ciOwnedTokenFile, '') }
+        catch { $ciCleanupFailed = $true; Write-Warning 'Could not erase the temporary registration token.' }
     }
     if ($ciStarted) {
         # Only these fixed Compose resources are removed. The external artifact volume survives.
-        try { Invoke-CiCompose @('down', '--volumes', '--remove-orphans') } catch { Write-Warning 'CI cleanup failed; follow README cleanup before restarting.' }
+        try {
+            Invoke-CiCompose @('down', '--volumes', '--remove-orphans')
+            Assert-CiCleanRuntime -Project $ciProject
+        } catch { $ciCleanupFailed = $true; Write-Warning 'CI cleanup failed; follow README cleanup before restarting.' }
         # Successful ephemeral jobs deregister themselves. Interrupted registration can leave an offline entry.
         try {
             $ciRunners = Invoke-RestMethod -Uri "$ciApi`?per_page=100" -Headers $ciHeaders
@@ -107,19 +117,25 @@ try {
                     Invoke-RestMethod -Method Delete -Uri "$ciApi/$($ciRunner.id)" -Headers $ciHeaders | Out-Null
                 }
             }
-        } catch { Write-Warning "Could not remove stale registration $ciRunnerName; remove that exact runner in repository settings." }
+        } catch { $ciCleanupFailed = $true; Write-Warning "Could not remove stale registration $ciRunnerName; remove that exact runner in repository settings." }
     }
     if (Test-Path -LiteralPath $ciTempDirectory) {
         # Exact generated path; only known files, no recursive or calculated-tree deletion.
-        Remove-Item -LiteralPath (Join-Path $ciTempDirectory 'registration-token') -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath (Join-Path $ciTempDirectory 'empty.env') -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $ciTempDirectory -Force -ErrorAction SilentlyContinue
+        try {
+            foreach ($ciOwnedFile in @('registration-token', 'empty.env')) {
+                $ciOwnedPath = Join-Path $ciTempDirectory $ciOwnedFile
+                if (Test-Path -LiteralPath $ciOwnedPath) { Remove-Item -LiteralPath $ciOwnedPath -Force }
+            }
+            Remove-Item -LiteralPath $ciTempDirectory -Force
+        } catch { $ciCleanupFailed = $true; Write-Warning 'Could not remove the temporary token directory.' }
     }
     $env:RUNNER_TOKEN_FILE = $ciOldTokenFile
     $env:RUNNER_NAME = $ciOldRunnerName
     $ciHeaders = $null
     $ciPat = $null
+    $ciRegistrationToken = $null
     if ($ciLocked) { $ciMutex.ReleaseMutex() }
     $ciMutex.Dispose()
+    if ($ciCleanupFailed) { throw 'Local CI cleanup was incomplete. Rotation stopped; manual recovery is required.' }
 }
 if ($ciExitCode -ne 0) { throw "Runner process exited with code $ciExitCode. Inspect the GitHub job result for test status." }
