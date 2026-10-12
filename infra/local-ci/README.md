@@ -60,6 +60,9 @@ ACL-restricted temporary directory outside the repository, and supplies only tha
 file as a read-only Compose secret. It truncates the file after registration and
 removes it on exit. The runner waits up to 120 seconds for the mounted token file
 to become empty before polling for jobs; missing files or timeout fail closed.
+Registration uses umask 077. After token erasure, jobs use umask 022 so checkout
+files are readable by non-root users inside test containers; existing registration
+credentials retain their restrictive permissions.
 The PAT remains solely in the host process/environment. Runner authentication
 credentials exist only in the disposable runner container's writable layer.
 

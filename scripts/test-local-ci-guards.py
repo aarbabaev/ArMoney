@@ -164,8 +164,11 @@ class LocalCiGuards(unittest.TestCase):
         token.write_text("SYNTHETIC_REGISTRATION_TOKEN")
         self.env["FIXTURE_TOKEN"] = str(token)
         self.env["FIXTURE_STARTED"] = str(self.root / "started")
-        self.stub("config.sh", "touch .runner\n", runner)
-        self.stub("run.sh", '[ ! -s "$FIXTURE_TOKEN" ] || exit 97\nprintf "start\\n" >> "$FIXTURE_STARTED"\n', runner)
+        self.env["FIXTURE_JOB_FILE"] = str(work / "checkout-file.sh")
+        self.stub("config.sh", 'printf "synthetic credential\\n" > .credentials\ntouch .runner\n', runner)
+        self.stub("run.sh", '[ ! -s "$FIXTURE_TOKEN" ] || exit 97\n'
+                  'printf "synthetic checkout file\\n" > "$FIXTURE_JOB_FILE"\n'
+                  'printf "start\\n" >> "$FIXTURE_STARTED"\n', runner)
         # No actual sleep duration from production is changed. Substitute only
         # the external clock command to keep a never-erased-token test bounded.
         self.stub("sleep", "/bin/sleep 0.02\n")
@@ -209,11 +212,20 @@ class LocalCiGuards(unittest.TestCase):
         self.assertIsNone(process.poll(), "Runner must wait while registration token is nonempty")
         started = self.root / "started"
         self.assertFalse(started.exists(), "Job started while token remained readable")
+        credential = runner / ".credentials"
+        job_file = Path(self.env["FIXTURE_JOB_FILE"])
+        self.assertEqual(credential.stat().st_mode & 0o777, 0o600,
+                         "Registration must create private credentials")
+        self.assertFalse(job_file.exists(), "Job file created before credential erasure")
         # Truncate the mounted inode, matching the host controller handshake.
         token.write_text("")
         _, stderr = process.communicate(timeout=5)
         self.assertEqual(process.returncode, 0, stderr)
         self.assertEqual(started.read_text().splitlines(), ["start"])
+        self.assertEqual(credential.stat().st_mode & 0o777, 0o600,
+                         "Starting the job must preserve private credential permissions")
+        self.assertEqual(job_file.stat().st_mode & 0o777, 0o644,
+                         "Job files must be readable by non-root bind-mount consumers")
 
     def test_token_erasure_timeout_fails_without_start(self):
         runner, token, entrypoint = self.prepare_entrypoint()

@@ -25,6 +25,9 @@ echo 'ArMoney ephemeral runner registered. Erase the host temporary token file c
 # Do not accept work until the host confirms erasure through the mounted inode.
 for ((attempt=0; attempt<120; attempt++)); do
   if [[ -f "$token_file" && ! -s "$token_file" ]]; then
+    # Registration files retain mode 0600; job files must be readable by
+    # non-root users in bind-mounted PostgreSQL and other test containers.
+    umask 022
     exec ./run.sh
   fi
   sleep 1
