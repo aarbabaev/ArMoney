@@ -35,8 +35,9 @@ No generic trust-all manager, hostname bypass, WebView login or analytics/push S
 Acceptance: assemble debug APK, lint, JVM tests for exact Long money/phone/identity/
 payment recovery, HTTP contracts and OAuth checks; emulator tests for actual Keystore
 persistence/owner isolation and a native screen smoke. Disposable Keycloak browser
-tests must exercise both clients and preserve existing iOS acceptance. Physical
-device and LAN certificate/browser validation are separate evidence.
+tests exercise both OIDC clients, retaining their SSO contracts while native iOS
+development and CI are paused by owner instruction (see ADR 0016). Physical-device
+and LAN certificate/browser validation are separate evidence.
 
 Currency policy: AED only for new wallets and transfers, with amounts in integer
 fils (100 fils = 1 AED). There is no currency selector or FX. Existing encrypted

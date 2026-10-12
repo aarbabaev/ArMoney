@@ -1,5 +1,7 @@
 # ADR 0008 — Native iOS and Keycloak SSO
 
+Current CI execution and the owner-directed iOS pause are described in [ADR 0016](0016-local-ci-runners.md). The original decision below remains historical context.
+
 Status: Accepted
 
 ArMoney uses a native SwiftUI application (iOS 18+) and Keycloak as its OpenID
