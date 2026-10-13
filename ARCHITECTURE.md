@@ -760,3 +760,5 @@ contracts on demand. [Audit](docs/agents/context-efficiency.md) records measured
 text reductions, not estimated billing savings. Fresh scoped worker contexts and
 bounded evidence replace full-history copies for independent tasks. iOS CI is paused;
 disposable browser CI verifies Keycloak code/PKCE and SSO.
+
+See [implemented features, deployment boundaries and agreed roadmap](docs/delivery-status.md) for current versus planned capabilities.
