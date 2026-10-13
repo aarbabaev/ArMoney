@@ -33,6 +33,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | Wallet | Metadata, durable ledger provisioning, owner-scoped live balances | Lifecycle controls |
 | Ledger | Private accounts, balances, atomic postings; optional two direct physical standbys and fenced balance reads | Manual failover; production HA and backup/PITR |
 | Payment | Durable P2P, requester idempotency, recovery, history, in-app notifications and transactional Mailtrap email outbox | Email disabled until configured; real sending requires verified contact; duplicates possible after ambiguous provider acceptance |
+| AI assistant | Planned C# service, local policy retrieval and read-only bank facts; design only | Provider/runtime/Android implementation, independent validation and deployment pending |
 | Gateway | Auth, profile/phone, wallets/balances, P2P and notifications | Further hardening |
 
 Java 21, Gradle multi-project, Javalin, PostgreSQL, Flyway, jOOQ, HikariCP;
@@ -544,6 +545,7 @@ Models/permissions are inherited from the session; instructions are not a securi
 ```mermaid
 flowchart LR
     H["User"] --> O["bank_orchestrator"]
+    O --> AI["ai_assistant_owner: development role"]
     O --> G["gateway_owner"]
     O --> A["auth_owner"]
     O --> IOS["ios_owner"]
@@ -568,6 +570,7 @@ flowchart LR
 | Agent | Responsibility / writable scope |
 | --- | --- |
 | bank_orchestrator | Assignment, integration, shared config/runtime, Compose/CI, this documentation, PR |
+| ai_assistant_owner | ai-assistant-service/** and tests only: C# assistant, policy index and constrained read tools; runtime implementation planned |
 | gateway_owner | app-gateway: routes, public contract, identity |
 | auth_owner | auth-service: credentials, sessions, limits |
 | android_owner | android: native Kotlin/Compose client, browser SSO, gateway contracts and secure recovery |
@@ -775,3 +778,7 @@ replicas are rebuilt from primaries after restore. Tooling is not an automatic s
 and does not bypass email/phone verification requirements. Execution and restore evidence
 are separate delivery gates. See [ADR 0019](docs/adr/0019-local-synthetic-baseline.md)
 and [operations](docs/local-baseline.md).
+
+## Planned banking AI assistant
+
+The [assistant mission](docs/agents/missions/ai-assistant.md), [proposed ADR 0020](docs/adr/0020-banking-ai-assistant-proposal.md) and [verified-outcome mapping](docs/ai-assistant-learning-outcomes.md) describe planned work, not deployed behavior. Android will call gateway, which remains session authority; the C# service will own a separate PostgreSQL policy store/index and access wallet/payment facts only through constrained gateway read delegation. Ledger remains balance authority. Short-lived read-only delegation must replace forwarding the full bank bearer. Model/embedding execution via OpenAI is external despite local Docker hosting; minimal egress was owner-authorized. No mutation/transfer tool or ordinary-user ingestion is proposed. The ai_assistant_owner role configures a Codex developer, distinct from the runtime assistant. No provider, assistant container/database or Android assistant screen is implemented by this planning change.
