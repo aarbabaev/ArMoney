@@ -945,292 +945,362 @@ components:
           description: READY proves a confirmed ledger mapping, not funding.
         ledger_account_id:
           type: string
-        …13649 tokens truncated…, id)` keys, not offsets;
-this is not a historical snapshot. See [pagination ADR](docs/adr/0018-cursor-pagination.md).
-
-New registrations require a unique immutable UAE mobile number. Auth reserves it
-across legacy and SSO identities, then idempotently binds it in user-service before
-issuing a session. Keycloak requires the number as its username. Registration is not
-ownership proof: claimed phones with a profile resolve even while phone_verified is
-false. No SMS, push provider or external verification service is connected. Lookup
-is exact and limited to 30 attempts per requester per 60 seconds, including misses.
-It reveals the matched display name, not email or a user directory. Public phone
-changes are disabled. Historical accepted payments remain readable and replayable.
-See [ADR 0014](docs/adr/0014-uae-registration-phone.md) for enrollment failure recovery,
-provider-account collisions and historical-user migration limits.
-
-The native clients expose wallets, transfers, notifications and profile. Amounts use
-exact Int64/Long minor units. An uncertain command/key is retained in device-only
-Keychain (iOS) or Keystore-backed encrypted storage (Android), scoped per origin and
-identity across restart/logout; retry uses the same payload. Foreground/manual refresh
-fetches in-app notifications; no background delivery or OS push is promised.
-Existing scaffold payment rows without recipient/account mappings are not executed or
-exposed. See [M1](docs/m1.md) for acceptance and remaining scope.
-
-## Agent team
-
-Agents run for specific tasks inside Codex; they are not bank containers or permanent
-background processes. The main chat acts as the orchestrator. Up to three workers run
-concurrently; other roles run in waves, and only roles needed for the task are activated.
-Models/permissions are inherited from the session; instructions are not a security sandbox.
-
-```mermaid
-flowchart LR
-    H["User"] --> O["bank_orchestrator"]
-    O --> AI["ai_assistant_owner: development role"]
-    O --> G["gateway_owner"]
-    O --> A["auth_owner"]
-    O --> IOS["ios_owner"]
-    O --> ANDROID["android_owner"]
-    O --> SSO["sso_owner"]
-    O --> U["user_owner"]
-    O --> W["wallet_owner"]
-    O --> P["payment_owner"]
-    O --> L["ledger_owner"]
-    O --> QI["qa_integration"]
-    O --> QF["qa_security: financial QA"]
-    O --> S["security_auditor"]
-    O --> R["bank_reviewer"]
-    QI -->|"Results / defects"| O
-    QF -->|"Invariants"| O
-    S -->|"Findings / retest"| O
-    R -->|"Review"| O
-    O --> PR["PR and evidence"]
-    PR --> H
-```
-
-| Agent | Responsibility / writable scope |
-| --- | --- |
-| bank_orchestrator | Assignment, integration, shared config/runtime, Compose/CI, this documentation, PR |
-| ai_assistant_owner | ai-assistant-service/** and tests: C# assistant, owned policy/index/provider adapters and constrained read tools |
-| gateway_owner | app-gateway: routes, public contract, identity |
-| auth_owner | auth-service: credentials, sessions, limits |
-| android_owner | android: native Kotlin/Compose client, browser SSO, gateway contracts and secure recovery |
-| ios_owner | ios: native SwiftUI client, gateway integration, browser authentication and tests |
-| sso_owner | sso-service: Keycloak/OIDC configuration; auth SSO adapter files only under an explicitly transferred lease |
-| user_owner | user-service: profiles, immutable phone claims, recipient lookup and attestation |
-| wallet_owner | wallet-service: metadata/lifecycle, durable provisioning and live balances |
-| payment_owner | payment-service: orchestration/idempotency, recovery, in-app notifications and email outbox/dispatcher |
-| ledger_owner | ledger-service: accounts, balances, posting correctness |
-| qa_integration | End-to-end contracts, outages/recovery; only assigned test files |
-| qa_security | Financial invariants and owner isolation; only assigned tests |
-| security_auditor | System security, trust, secrets, dependencies, Docker/CI; independent retesting |
-| bank_reviewer | Independent review; read-only source with gated PR merge authorization |
-
-Owners also maintain module tests and OpenAPI. QA/security are read-only until specific
-test files are assigned. Each file has one writer; builds in a shared directory run
-serially. The orchestrator manages shared Docker within the authorized task scope.
-
-Roles: `.codex/agents`; skills: `.agents/skills`.
-
-| Skill | Purpose |
-| --- | --- |
-| bank-java | Java 21, Gradle, layer boundaries, and resources |
-| bank-postgres | jOOQ/HikariCP, Flyway, transactions/locks/retries |
-| bank-api | OpenAPI, Javalin, identity, bounded HTTP |
-| bank-android | Native Kotlin client, browser PKCE, Keystore persistence and emulator evidence |
-| bank-ios | Native SwiftUI iOS 18+, gateway integration, Keychain and device validation |
-| bank-sso | Keycloak OIDC, authorization code/PKCE, identity mapping and session migration |
-| bank-testing | Spock, Testcontainers, ArchUnit, evidence |
-| bank-financial-correctness | Postings, balances, concurrency, idempotency |
-| bank-security | Security review and fix verification |
-| bank-coordination | Assignments, messages, finding IDs, checkpoints |
-
-Details: [skills matrix](docs/agents/skills.md), [workflow](docs/agents/workflow.md),
-[team ADR](docs/adr/0006-agent-team.md). If automatic loading is unavailable, the role/skill
-is read explicitly and passed into a scoped assignment; the fallback is disclosed to the user.
-
-## Communication and remediation
-
-Shared files do not imply shared conversation context. Saving Markdown does not notify
-anyone by itself; the orchestrator forwards concrete assignments and evidence.
-
-```mermaid
-sequenceDiagram
-    participant S as Security
-    participant O as Orchestrator
-    participant D as Service developer
-    participant Q as QA
-    S->>O: SEC-ID, revision, severity, evidence, repro
-    O->>D: Assignment + file lease + regression criteria
-    D-->>O: Patch/revision and test results
-    O->>S: Independent retest of integrated code
-    O->>Q: Related acceptance tests
-    S-->>O: VERIFIED / REOPENED / BLOCKED
-    Q-->>O: Evidence
-    O-->>D: Closure or further remediation
-```
-
-Use `send_message` for a running agent and `followup_task`, or the current client's
-equivalent, for an agent that has finished. An unavailable agent is replaced with a new
-one carrying the same IDs and context. On session resumption, assignments are restored
-from the checkpoint and checked against source code/CI. These are orchestrator actions,
-not a background task queue.
-
-```mermaid
-stateDiagram-v2
-    [*] --> NEW
-    NEW --> TRIAGED
-    TRIAGED --> ASSIGNED
-    ASSIGNED --> FIX_READY
-    FIX_READY --> VERIFIED: independent retest
-    VERIFIED --> CLOSED: evidence accepted
-    FIX_READY --> REOPENED: issue remains
-    REOPENED --> ASSIGNED
-    FIX_READY --> BLOCKED: code or environment unavailable
-    BLOCKED --> FIX_READY: evidence available
-```
-
-BLOCKED is possible at other stages, preserving the previous status and the reason.
-False positives are closed with evidence and independent review. Confirmed unresolved
-critical/high findings block PR readiness; green CI or the word "fixed" does not close
-a finding. Accepting residual risk and merging are user decisions.
-Records/checkpoints: [protocol](docs/agents/communication.md).
-
-## Verification and delivery
-
-All new PRs target `main`, which contains the integrated backend and native iOS/SSO
-slices. Feature branches start from the latest main unless the user specifies
-otherwise; the former bootstrap branch is no longer the default integration target. No direct pushes
-to main. Independent reviewer merges follow [owner-authorized gates](docs/agents/merge-policy.md).
-
-```mermaid
-flowchart LR
-    T["Task + contract"] --> DEV["Implementation"]
-    DEV --> DOC["API / architecture / ADR"]
-    DOC --> REV["Independent QA / security / review"]
-    REV --> FIX["Fixes"]
-    FIX --> CI["CI for the exact PR head"]
-    CI --> TEST["Java / Spock / ArchUnit / PostgreSQL"]
-    TEST --> SMOKE["Isolated Compose + smoke"]
-    SMOKE --> READY["Reviewer merges after all gates pass"]
-    CI --> ANDROID["Kotlin tests / lint / APK"]
-    ANDROID --> READY
-```
-
-| Check | What it establishes |
-| --- | --- |
-| `./gradlew test` | Unit/architecture checks; excludes IntegrationSpec |
-| `./gradlew check` | Also runs real PostgreSQL Testcontainers; requires Docker |
-| `./gradlew installDist` | Runnable distributions |
-| `scripts/smoke.py` | Readiness of six services, not business correctness |
-| Auth/onboarding smoke in CI | Auth, profile, wallets through HTTP |
-| Provisioning smoke in CI | Concurrent retries, ledger outage, wallet restart and unique zero-balance account mapping |
-| Ledger smoke in CI | Private posting with synthetic funds |
-| `scripts/p2p-smoke.py` in disposable CI | Phone resolution, public P2P, duplicate/concurrent spending, outages, post-commit recovery, notification isolation and journal reconciliation |
-| Android CI | Debug APK, lint and JVM tests; emulator checks only on explicit owner request |
-| SSO browser smoke in CI | Disposable Keycloak authorization code/PKCE and gateway exchange for iOS and Android |
-| iOS validation | Paused by owner; existing script requires Mac/Xcode when resumed |
-
-### Local build infrastructure
-
-GitHub Actions schedules backend and Android work on a disposable Linux Docker runner
-labelled `armoney-local`. A Windows controller registers one job at a time, then removes
-that job's runner, workspace and dedicated Docker daemon storage. Artifacts persist in
-`armoney-ci-artifacts`. The application's running Docker stack is separate. PostgreSQL readiness probes use
-TCP loopback to avoid accepting the temporary initialization server as ready.
-
-```mermaid
-flowchart LR
-    GH["GitHub Actions: checks and scheduling"] --> R["Ephemeral Linux runner: Java and Android"]
-    H["Windows controller: registration and cleanup"] --> R
-    R --> D["Dedicated inner Docker daemon: disposable databases and smoke tests"]
-    R --> A["Local artifact volume: reports and APK"]
-    M["iOS development and CI paused by owner"]
-    P["Persistent banking stack: not mounted in CI"]
-```
-
-The public repository requires approval for all external contributors before runner
-registration. Approving untrusted workflow code is unsafe: privileged DinD is not a
-hostile-code sandbox. Labels and workflow conditions are only additional checks.
-The host administration token never enters the job; registration credentials are removed
-before the runner accepts work. Failed isolation checks also prevent Docker cleanup.
-
-Android emulator instrumentation is excluded from routine CI and runs only on an explicit
-owner request. The retained script uses software emulation on Docker Desktop without KVM. iOS
-development and CI are paused by explicit owner instruction on 2026-10-12. Existing
-source and test scripts remain; resumption requires Mac/Xcode. No iOS pass is claimed.
-Operational steps and limitations: [local CI](infra/local-ci/README.md),
-[ADR 0016](docs/adr/0016-local-ci-runners.md). Deployment remains an explicit owner action.
-
-On Windows, use `.\gradlew.bat`. CI: [.github/workflows/ci.yml](.github/workflows/ci.yml).
-Fixture funding and `down --volumes` are only for disposable CI environments, never user
-databases. Smoke scripts currently expect port 8080 and the `arman-bank_bank` network;
-a different Compose project name alone does not provide an isolated parallel test.
-
-## Keeping documentation current
-
-**Document owner: bank_orchestrator.** Every change is assessed for documentation impact.
-Service owners report changes to APIs, schemas, connections, invariants, and limitations
-in their handoffs. The orchestrator updates this file and related documents **in the same PR**;
-bank_reviewer checks them against the integrated code.
-
-| Change | Documentation to review |
-| --- | --- |
-| Service / HTTP dependency | Service map, responsibilities, sequence diagrams |
-| API / auth | API table, OpenAPI, trust model |
-| Migration / consistency | Data, ledger flow, ADR |
-| Compose / env / ports | Runtime and instructions, without secrets |
-| Agent / skill / communication | Team, skills matrix, protocol, role files |
-| CI / tests / readiness | Checks, limitations, M1 plan |
-
-If documented behavior is unchanged, the PR explains why documentation is unaffected
-instead of making a cosmetic date change. A substantive update records the date and
-verified source revision. Planned behavior must not be presented as implemented, and
-completed features must not remain only in the future section. ADRs preserve history;
-a new decision gets a new ADR. The independent reviewer treats documentation drift as a defect.
-
-This is a rule for every task and review, **not a background update while Codex is closed**.
-External changes are reconciled the next time work resumes on the repository. The rule
-is established in [AGENTS.md](AGENTS.md), role instructions, and the PR template.
-Further reading: [README](README.md), [IDEA and manual testing](docs/onboarding.md),
-[ledger](docs/ledger.md), [M1](docs/m1.md), [ADRs](docs/adr/0001-bootstrap.md).
-
-### Context-efficient agent routing
-
-Dedicated ios_owner, android_owner and sso_owner roles own native clients and SSO.
-They load bank-ios, bank-android and bank-sso skills only for relevant tasks. Shared instructions
-remain in AGENTS.md/workflow; [context-map](docs/agents/context-map.md) points to
-contracts on demand. [Audit](docs/agents/context-efficiency.md) records measured
-text reductions, not estimated billing savings. Fresh scoped worker contexts and
-bounded evidence replace full-history copies for independent tasks. iOS CI is paused;
-disposable browser CI verifies Keycloak code/PKCE and SSO.
-
-See [implemented features, deployment boundaries and agreed roadmap](docs/delivery-status.md) for current versus planned capabilities.
-
-### Explicit synthetic local baseline
-
-The local baseline tools use Keycloak administration for synthetic identity creation,
-then the existing native PKCE and Gateway flows for profiles and wallet provisioning.
-A separately opted-in Ledger CLI posts deterministic initial funds atomically through
-the ledger journal; it adds no public funding endpoint. Its clearing account is reserved
-for synthetic local funds. Manifests and database backups remain outside Git with
-restricted permissions. Backup capture quiesces writers across owning primary databases;
-replicas are rebuilt from primaries after restore. Tooling is not an automatic startup seed
-and does not bypass email/phone verification requirements. Execution and restore evidence
-are separate delivery gates. See [ADR 0019](docs/adr/0019-local-synthetic-baseline.md)
-and [operations](docs/local-baseline.md).
-
-## Banking assistant feature slice
-
-[Issue #43](https://github.com/aarbabaev/ArMoney/issues/43) and [PR #46](https://github.com/aarbabaev/ArMoney/pull/46) track this feature implementation. Integration, model evaluation and deployment evidence are pending; source does not establish deployed readiness. The [mission](docs/agents/missions/ai-assistant.md), [ADR 0020](docs/adr/0020-banking-ai-assistant-proposal.md), [HTTP/private trust contract](docs/ai-assistant-contract.md), [operations](docs/ai-assistant-operations.md) and [verified learning-outcome matrix](docs/ai-assistant-learning-outcomes.md) define scope and gates.
-
-C#/.NET 10 is a service-local exception to Java 21. Domain/application/ports/adapters keep model, embedding, PostgreSQL and HTTP details outside the domain. ai-assistant-service owns only its separate PostgreSQL policy source/index, credentials and assistant-db volume. Operator ingestion is a separate local container/CLI; runtime has policy SELECT privileges only. No other service database or business classes are reused. Hybrid exact pgvector/full-text ranking is measured against a lexical baseline; active document/index versions, effective dates and provenance are retained. Initial documents are owner-approved demonstration rules from implemented ArMoney behavior, not legal/production bank policy.
-
-```mermaid
-flowchart LR
-    A["Android Assistant tab: feature source"] --> G["Gateway: authoritative session validation"]
-    G -->|"Opaque active-turn read delegation"| S["C# assistant: bounded router and specialists"]
-    S -->|"Fixed authenticated reads"| G
-    G --> W["Wallet API"]
-    G --> P["Payment history API"]
-    W --> L["Ledger: balance authority"]
-    S --> D[("Assistant PostgreSQL: policies and exact vector/full-text index")]
-    I["Local operator ingestion CLI"] --> D
-    S -->|"Minimal authorized context; external execution"| O["OpenAI model and embedding APIs"]
-```
-
-Gateway keeps the original bank bearer and internal bank key; assistant receives only a short-lived opaque read handle and independent directional credentials. Every fixed GET callback and final response revalidates the session; credentials alone cannot select an owner. No transfer/mutation, arbitrary URL/SQL/shell or ordinary-user upload tool exists. Gateway projects direction/status/amount/time and validates returned bank facts against its observed reads. Financial values use integer AED fils. Default last transaction is the first visible payment by created_at DESC, id DESC across own wallets; outgoing PENDING/COMPLETED/REJECTED and only COMPLETED incoming rows are visible. First-page history is bounded to 50; no complete monthly totals are promised.
-
-The planner selects a finite policy intent; application code supplies fixed retrieval questions and filters relevant sections. Policy selection returns citation identifiers, never free-form answer prose. Application code renders exact demonstration source excerpts with document/version/section and explicit conflicting or insufficient evidence. Bank facts never enter model context. Prompts and documents are untrusted data; deterministic code validates tools, authorization and budgets. Runtime provider/embedding ports use external OpenAI despite local Docker hosting; owner authorized minimal egress. No personal server conversation is persisted; Android clears displayed turns on session change and rejects stale results. Provider store=false is not a zero-retention guarantee. The ai_assistant_owner configures a Codex developer, distinct from runtime assistant roles and containers. Local .NET/Java/Android, actual-provider Compose and measured model checks passed; exact-head green CI, integrated review and deployment remain pending. See the versioned [learning-outcome evidence](docs/ai-assistant-learning-outcomes.md) for scope and limitations.
+          format: uuid
+          nullable: true
+          description: Null while PENDING; immutable once READY.
+    Health:
+      type: object
+      required:
+      - status
+      properties:
+        status:
+          type: string
+          enum:
+          - UP
+          - DOWN
+    Identity:
+      type: object
+      required:
+      - id
+      - email
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+          nullable: true
+    Session:
+      type: object
+      required:
+      - access_token
+      - token_type
+      - expires_in
+      - expires_at
+      properties:
+        access_token:
+          type: string
+          minLength: 43
+          maxLength: 43
+        token_type:
+          type: string
+          enum:
+          - Bearer
+        expires_in:
+          type: integer
+          enum:
+          - 1800
+        expires_at:
+          type: string
+          format: date-time
+    Credentials:
+      type: object
+      additionalProperties: false
+      required:
+      - email
+      - password
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: Trimmed and lowercased; ASCII email addresses only in this
+            version.
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 15
+          maxLength: 128
+          description: At least 15 Unicode code points, at most 128 UTF-16 code units;
+            never trimmed.
+    Error:
+      type: object
+      required:
+      - error
+      properties:
+        error:
+          type: string
+    Profile:
+      type: object
+      required:
+      - id
+      - identity_id
+      - display_name
+      - phone_number
+      - phone_verified
+      properties:
+        id:
+          type: string
+          format: uuid
+        identity_id: &id001
+          type: string
+          format: uuid
+        display_name: &id002
+          type: string
+          minLength: 1
+          maxLength: 100
+        phone_number:
+          type: string
+          pattern: ^\+[1-9][0-9]{7,14}$
+          nullable: true
+          description: Registration phone for enrolled identities; historical unenrolled
+            profiles may retain a previous value.
+        phone_verified:
+          type: boolean
+          description: Ownership attestation only; false does not prevent receiving
+            transfers through a registered claim.
+    Recipient:
+      type: object
+      required:
+      - identity_id
+      - display_name
+      - phone_number
+      properties:
+        identity_id: *id001
+        display_name: *id002
+        phone_number:
+          type: string
+          pattern: ^\+9715[024568][0-9]{7}$
+          example: '+971501234567'
+    Balance:
+      type: object
+      required:
+      - wallet_id
+      - currency
+      - balance_minor
+      properties:
+        wallet_id:
+          type: string
+          format: uuid
+        currency:
+          type: string
+          enum:
+          - AED
+        balance_minor:
+          type: integer
+          format: int64
+          minimum: 0
+    PaymentRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - source_wallet_id
+      - recipient_id
+      - recipient_phone
+      - currency
+      - amount_minor
+      properties:
+        source_wallet_id:
+          type: string
+          format: uuid
+        recipient_id:
+          type: string
+          format: uuid
+        recipient_phone:
+          type: string
+          pattern: ^\+[1-9][0-9]{7,14}$
+          description: New commands require a canonical UAE mobile number. Historical
+            accepted commands retain exact replay semantics.
+        currency:
+          type: string
+          enum:
+          - AED
+        amount_minor:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+    Payment:
+      type: object
+      required:
+      - id
+      - requester_id
+      - recipient_id
+      - source_wallet_id
+      - destination_wallet_id
+      - recipient_phone
+      - currency
+      - amount_minor
+      - status
+      - rejection_reason
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        requester_id:
+          type: string
+          format: uuid
+        recipient_id:
+          type: string
+          format: uuid
+        source_wallet_id:
+          type: string
+          format: uuid
+        destination_wallet_id:
+          type: string
+          format: uuid
+        recipient_phone:
+          type: string
+        currency:
+          type: string
+          enum:
+          - AED
+        amount_minor:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+        status:
+          type: string
+          enum:
+          - PENDING
+          - COMPLETED
+          - REJECTED
+        rejection_reason:
+          type: string
+          nullable: true
+          enum:
+          - INSUFFICIENT_FUNDS
+          - INVALID_ACCOUNT
+          - BALANCE_LIMIT
+          - null
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Notification:
+      type: object
+      required:
+      - id
+      - payment_id
+      - type
+      - currency
+      - amount_minor
+      - created_at
+      - read_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        payment_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum:
+          - PAYMENT_COMPLETED
+          - PAYMENT_REJECTED
+          - PAYMENT_RECEIVED
+        currency:
+          type: string
+          enum:
+          - AED
+        amount_minor:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+        created_at:
+          type: string
+          format: date-time
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+    Registration:
+      type: object
+      additionalProperties: false
+      required:
+      - email
+      - password
+      - phone_number
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: Trimmed and lowercased; ASCII email addresses only in this
+            version.
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 15
+          maxLength: 128
+          description: At least 15 Unicode code points, at most 128 UTF-16 code units;
+            never trimmed.
+        phone_number:
+          type: string
+          pattern: ^\+9715[024568][0-9]{7}$
+          example: '+971501234567'
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+  requestBodies:
+    Credentials:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Credentials'
+    Registration:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Registration'
+  responses:
+    InvalidPageRequest:
+      description: Invalid query, malformed or tampered cursor, or cursor for a different
+        owner or resource
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: string
+                enum: [invalid_page_request]
+    BadRequest:
+      description: Malformed JSON, invalid email or password
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing service identity or invalid session/credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooLarge:
+      description: Request body exceeds 4096 bytes
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RateLimited:
+      description: Attempt or concurrency limit reached; Retry-After specifies seconds
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unavailable:
+      description: Authentication dependency unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
 
