@@ -1,7 +1,7 @@
 # Banking assistant learning-outcome evidence
 
-Status: implemented feature source with local measured evidence; exact-head CI,
-integrated review and deployment remain pending. No full course coverage is claimed.
+Status: implemented first feature slice with measured evidence, green required
+CI, independent review and verified local rollout. No full course coverage is claimed.
 Credential descriptions read on 2026-10-13 using
 owner-supplied OpenAI Academy links; private links, access keys and recipient
 details are intentionally excluded. Detailed syllabi remain unavailable.
@@ -64,3 +64,24 @@ also found active/retired policy indexes could be extended after publication;
 permanent seals and serialized operator writes now reject that, independently
 retested with real PostgreSQL including the activation/staging race. These local results
 do not substitute for required exact-head CI or deployed readiness/acceptance.
+## Verified release checkpoint
+
+PR #46 merged as `ce5175bbf2d4183b16f76977ef6f7627c2ed5ee2` after all three jobs
+and required acceptance steps in [CI #91](https://github.com/aarbabaev/ArMoney/actions/runs/38387669495)
+passed on head `6a5bcfb6`. This includes assistant readiness/outage, profile
+sharding, ledger physical replication and browser SSO checks. Independent review
+verified all 64 published files against the reviewed source. Earlier failed
+publication/guard/startup attempts were fixed and independently retested; they
+are not rewritten as successful runs.
+
+Local rollout on 2026-10-13 verified healthy runtime, a sealed active index with
+four pinned 1536-dimensional embedded chunks, runtime SELECT with INSERT denied,
+public unauthenticated HTTP 401 with no-store, and real pinned-model Responses
+HTTP 200. No bank schema migration or financial funding was performed. The four
+chunk corpus makes hybrid Recall@5 a pipeline-completeness check, not evidence
+of ranking quality at larger scale. Authenticated positive model/bank acceptance
+ran independently in a matching disposable stack. Live-owner messages and
+physical-device UX were not run. Issue #43 was closed as Done for this documented
+scope; the Project status update could not be confirmed because browser tooling
+was unavailable.
+

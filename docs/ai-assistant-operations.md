@@ -1,8 +1,11 @@
 # Local banking assistant operations
 
-Implementation and validation are in progress in PR #46. These commands describe
-the configured feature slice; they are not deployment evidence. Do not mark issue
-#43 Done until the deployed revision, readiness and acceptance are verified.
+PR #46 delivered the first feature slice; local rollout of revision `ce5175bb`
+was verified on 2026-10-13 after green CI and independent review. The dated
+[release evidence](ai-assistant-learning-outcomes.md) distinguishes deployed
+readiness from disposable authenticated acceptance and unrun device checks.
+These commands alone are not deployment evidence. Future changes require fresh
+revision, readiness and acceptance verification before marking work Done.
 
 ## Private settings and provider scope
 
