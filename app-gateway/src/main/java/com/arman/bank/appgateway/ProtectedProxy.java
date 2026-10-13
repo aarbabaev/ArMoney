@@ -50,10 +50,35 @@ public final class ProtectedProxy implements AutoCloseable {
         if (payments != null) {
             config.routes.post("/v1/payments", ctx -> forward(ctx, payments, "/v1/payments", true));
             config.routes.get("/v1/payments", ctx -> forward(ctx, payments, "/v1/payments", false));
+            config.routes.get("/v1/payments/page", ctx -> forwardPage(ctx, "/v1/payments/page"));
             config.routes.get("/v1/payments/{id}", ctx -> forward(ctx, payments, "/v1/payments/" + id(ctx), false));
             config.routes.get("/v1/notifications", ctx -> forward(ctx, payments, "/v1/notifications", false));
+            config.routes.get("/v1/notifications/page", ctx -> forwardPage(ctx, "/v1/notifications/page"));
             config.routes.post("/v1/notifications/{id}/read", ctx -> forward(ctx, payments, "/v1/notifications/" + id(ctx) + "/read", false));
         }
+    }
+    private void forwardPage(Context ctx, String path) throws Exception {
+        ctx.header("Cache-Control", "no-store");
+        String query = ctx.queryString();
+        String limit = null, cursor = null;
+        boolean valid = query == null || query.length() <= 1024;
+        if (valid && query != null) {
+            for (String pair : query.split("&", -1)) {
+                // Accept canonical URL-safe values only; never copy an arbitrary client query.
+                if (pair.startsWith("limit=") && limit == null && pair.substring(6).matches("(?:[1-9][0-9]?|100)")) {
+                    limit = pair.substring(6);
+                } else if (pair.startsWith("cursor=") && cursor == null && pair.substring(7).matches("[A-Za-z0-9_-]{1,512}")) {
+                    cursor = pair.substring(7);
+                } else { valid = false; break; }
+            }
+        }
+        if (!valid) {
+            InternalHttp.reply(ctx, 400, Map.of("error", "invalid_page_request"));
+            return;
+        }
+        String suffix = limit == null ? "" : "limit=" + limit;
+        if (cursor != null) suffix += (suffix.isEmpty() ? "" : "&") + "cursor=" + cursor;
+        forward(ctx, payments, path + (suffix.isEmpty() ? "" : "?" + suffix), false);
     }
     private static String id(Context ctx) {
         String raw = ctx.pathParam("id");

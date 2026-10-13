@@ -212,6 +212,7 @@ Contracts are in each service's `src/main/resources/openapi.yaml`.
 | Gateway + Bearer | GET / POST `/v1/wallets`, GET `/v1/wallets/{id}/balance` | Own wallets and live balances |
 | Gateway + Bearer | PUT `/v1/users/me/phone`, POST `/v1/recipients/resolve` | Immutable registration phone and exact registered-recipient lookup |
 | Gateway + Bearer | POST / GET `/v1/payments`, GET `/v1/payments/{id}` | Idempotent transfers and participant history |
+| Gateway + Bearer | GET `/v1/payments/page`, GET `/v1/notifications/page` | Owner-bound cursor pages |
 | Gateway + Bearer | GET `/v1/notifications`, POST `/v1/notifications/{id}/read` | Own in-app inbox |
 | Private ledger | POST `/v1/ledger/accounts`, GET `/v1/ledger/accounts/{id}` | Account and balance |
 | Private ledger | POST `/v1/ledger/transfers`, GET `/v1/ledger/transfers/{id}` | Posting/replay and outcome |
@@ -492,7 +493,7 @@ sequenceDiagram
         L-->>P: Matching POSTED or durable rejection
         P->>DB: Commit terminal state, notifications and email outbox atomically
     end
-    C->>G: Refresh history and own inbox
+    C->>G: Refresh or continue history and own inbox
 ```
 
 No shared distributed transaction is held across services. Ledger owns the money;
@@ -509,7 +510,10 @@ See [email operations](docs/email-notifications.md), [ADR 0015](docs/adr/0015-tr
 and [SMTP transport ADR](docs/adr/0017-mailtrap-sandbox-smtp.md).
 
 The recipient sees only completed incoming payments; the sender sees all its intents.
-History and inbox return the latest 100 entries, without pagination in this version.
+Legacy history and inbox endpoints return the latest 100 entries. Separate `/page`
+endpoints provide owner-bound signed cursor pagination; Android uses load-more and
+first-page refresh. Ordering uses immutable `(created_at, id)` keys, not offsets;
+this is not a historical snapshot. See [pagination ADR](docs/adr/0018-cursor-pagination.md).
 
 New registrations require a unique immutable UAE mobile number. Auth reserves it
 across legacy and SSO identities, then idempotently binds it in user-service before
@@ -576,7 +580,7 @@ flowchart LR
 | qa_integration | End-to-end contracts, outages/recovery; only assigned test files |
 | qa_security | Financial invariants and owner isolation; only assigned tests |
 | security_auditor | System security, trust, secrets, dependencies, Docker/CI; independent retesting |
-| bank_reviewer | Independent review of the integrated result; read-only |
+| bank_reviewer | Independent review; read-only source with gated PR merge authorization |
 
 Owners also maintain module tests and OpenAPI. QA/security are read-only until specific
 test files are assigned. Each file has one writer; builds in a shared directory run
@@ -653,7 +657,7 @@ Records/checkpoints: [protocol](docs/agents/communication.md).
 All new PRs target `main`, which contains the integrated backend and native iOS/SSO
 slices. Feature branches start from the latest main unless the user specifies
 otherwise; the former bootstrap branch is no longer the default integration target. No direct pushes
-to main or automatic merges.
+to main. Independent reviewer merges follow [owner-authorized gates](docs/agents/merge-policy.md).
 
 ```mermaid
 flowchart LR
@@ -664,7 +668,7 @@ flowchart LR
     FIX --> CI["CI for the exact PR head"]
     CI --> TEST["Java / Spock / ArchUnit / PostgreSQL"]
     TEST --> SMOKE["Isolated Compose + smoke"]
-    SMOKE --> READY["Ready PR, user merges"]
+    SMOKE --> READY["Reviewer merges after all gates pass"]
     CI --> ANDROID["Kotlin tests / lint / APK"]
     ANDROID --> READY
 ```
@@ -756,3 +760,5 @@ contracts on demand. [Audit](docs/agents/context-efficiency.md) records measured
 text reductions, not estimated billing savings. Fresh scoped worker contexts and
 bounded evidence replace full-history copies for independent tasks. iOS CI is paused;
 disposable browser CI verifies Keycloak code/PKCE and SSO.
+
+See [implemented features, deployment boundaries and agreed roadmap](docs/delivery-status.md) for current versus planned capabilities.

@@ -147,6 +147,138 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /v1/payments/page:
+    get:
+      operationId: paymentsPage
+      security:
+      - InternalKey: []
+        TrustedIdentity: []
+      description: Owner-scoped keyset page ordered by created_at and id descending.
+        Existing visible entries are not skipped or repeated by concurrent inserts.
+        This is not a snapshot; refresh from the first page for newer entries or
+        newly completed incoming payments above the cursor boundary. Cursors are
+        opaque, signed, owner-bound and resource-bound. Service key rotation invalidates
+        cursors. Unknown, duplicate or blank parameters and queries over 1024 characters
+        are rejected. The legacy list endpoint remains unchanged.
+      parameters:
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+        description: Canonical decimal digits only, without leading zeroes.
+      - name: cursor
+        in: query
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: '^[A-Za-z0-9_-]+$'
+        description: Pass next_cursor unchanged; omit for the first page.
+      responses:
+        '200':
+          description: Page with null next_cursor when no further entries exist
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [payments, next_cursor]
+                properties:
+                  payments:
+                    type: array
+                    maxItems: 100
+                    items:
+                      $ref: '#/components/schemas/Payment'
+                  next_cursor:
+                    type: string
+                    nullable: true
+                    maxLength: 512
+        '400':
+          description: Invalid query or malformed, tampered, foreign-owner or foreign-resource cursor (invalid_page_request)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Persistence unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/notifications/page:
+    get:
+      operationId: notificationsPage
+      security:
+      - InternalKey: []
+        TrustedIdentity: []
+      description: Owner-scoped keyset page ordered by created_at and id descending.
+        Existing visible entries are not skipped or repeated by concurrent inserts.
+        This is not a snapshot; refresh from the first page for newer entries or
+        newly completed incoming payments above the cursor boundary. Cursors are
+        opaque, signed, owner-bound and resource-bound. Service key rotation invalidates
+        cursors. Unknown, duplicate or blank parameters and queries over 1024 characters
+        are rejected. The legacy list endpoint remains unchanged.
+      parameters:
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+        description: Canonical decimal digits only, without leading zeroes.
+      - name: cursor
+        in: query
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: '^[A-Za-z0-9_-]+$'
+        description: Pass next_cursor unchanged; omit for the first page.
+      responses:
+        '200':
+          description: Page with null next_cursor when no further entries exist
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notifications, next_cursor]
+                properties:
+                  notifications:
+                    type: array
+                    maxItems: 100
+                    items:
+                      $ref: '#/components/schemas/Notification'
+                  next_cursor:
+                    type: string
+                    nullable: true
+                    maxLength: 512
+        '400':
+          description: Invalid query or malformed, tampered, foreign-owner or foreign-resource cursor (invalid_page_request)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Persistence unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /v1/payments/{id}:
     get:
       operationId: paymentDetails

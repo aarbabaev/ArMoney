@@ -10,6 +10,8 @@ public interface PaymentStore {
     Optional<Payment> visible(UUID owner, UUID payment);
     List<Payment> history(UUID owner);
     List<Notification> notifications(UUID owner);
+    List<Payment> historyPage(UUID owner, PagePosition before, int limit);
+    List<Notification> notificationsPage(UUID owner, PagePosition before, int limit);
     Optional<Notification> readNotification(UUID owner, UUID id);
     Optional<Claim> claim();
     boolean finish(Claim claim, PaymentPeers.Outcome outcome);

@@ -44,3 +44,12 @@ Currency policy: AED only for new wallets and transfers, with amounts in integer
 fils (100 fils = 1 AED). There is no currency selector or FX. Existing encrypted
 uncertain commands retain their original currency, key and payload; the client
 never relabels or discards them to satisfy the new policy. See ADR 0011.
+
+
+History and inbox use the gateway `/v1/payments/page` and `/v1/notifications/page`
+contracts. Load-more preserves existing items and the continuation cursor on
+failure. Explicit refresh restarts traversal, and responses from an earlier
+session or superseded request must not alter current pages. Notification read
+updates preserve loaded history. Invalid cursors offer a first-page refresh;
+newer entries appear on refresh. Native iOS retains its legacy bounded endpoints
+while development remains paused. See the pagination section in p2p-contract.md.
