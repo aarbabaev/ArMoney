@@ -1,0 +1,10 @@
+{
+  "DocumentId": "armoney-demo",
+  "Version": "main-112b01d",
+  "Provenance": "Owner-approved demonstration rules from ArMoney implemented behavior; main 112b01d90c247bd774db7fa9f9720edcc0b439f8; not legal/production bank policy",
+  "EffectiveFrom": "2026-10-13T00:00:00Z",
+  "EffectiveTo": null,
+  "Supersedes": null,
+  "IndexVersion": "demo-main-112b01d-ft-v1",
+  "File": "demo.md"
+}

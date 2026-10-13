@@ -1,0 +1,82 @@
+# Optional local banking assistant. Existing banking databases/volumes keep their names.
+services:
+  app-gateway:
+    environment:
+      ASSISTANT_URL: http://ai-assistant-service:8080
+      GATEWAY_ASSISTANT_KEY: ${GATEWAY_ASSISTANT_KEY:?Set an independent gateway-to-assistant key}
+      ASSISTANT_GATEWAY_KEY: ${ASSISTANT_GATEWAY_KEY:?Set a different assistant-to-gateway key}
+  assistant-db:
+    image: pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
+    environment:
+      POSTGRES_DB: assistant
+      POSTGRES_USER: assistant_operator
+      POSTGRES_PASSWORD: ${ASSISTANT_DB_PASSWORD:?Set the assistant operator database password}
+      ASSISTANT_RUNTIME_DB_PASSWORD: ${ASSISTANT_RUNTIME_DB_PASSWORD:?Set an independent runtime database password}
+    volumes:
+      - assistant-db:/var/lib/postgresql/data
+      - ./infra/assistant-db/init.sh:/docker-entrypoint-initdb.d/10-assistant-roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U assistant_operator -d assistant"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    networks: [assistant-data]
+  ai-assistant-service:
+    build:
+      context: ./ai-assistant-service
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ASSISTANT_DATABASE_URL: Host=assistant-db;Database=assistant;Username=assistant_runtime;Password=${ASSISTANT_RUNTIME_DB_PASSWORD:?Set runtime database password};Timeout=5;Command Timeout=5
+      GATEWAY_URL: http://app-gateway:8080
+      GATEWAY_ASSISTANT_KEY: ${GATEWAY_ASSISTANT_KEY:?Set gateway-to-assistant key}
+      ASSISTANT_GATEWAY_KEY: ${ASSISTANT_GATEWAY_KEY:?Set assistant-to-gateway key}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY locally}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini-2025-04-14}
+      OPENAI_PRICE_MODEL: ${OPENAI_PRICE_MODEL:-gpt-4.1-mini-2025-04-14}
+      OPENAI_INPUT_USD_PER_MILLION: ${OPENAI_INPUT_USD_PER_MILLION:-0.40}
+      OPENAI_OUTPUT_USD_PER_MILLION: ${OPENAI_OUTPUT_USD_PER_MILLION:-1.60}
+      OPENAI_EMBEDDING_MODEL: text-embedding-3-small
+      OPENAI_EMBEDDING_USD_PER_MILLION: 0.02
+      ASSISTANT_RETRIEVAL_MODE: ${ASSISTANT_RETRIEVAL_MODE:-hybrid}
+      ASSISTANT_MAX_REQUEST_USD: ${ASSISTANT_MAX_REQUEST_USD:-0.02}
+    depends_on:
+      assistant-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "dotnet", "Assistant.dll", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [bank, assistant-data]
+  assistant-ingestion:
+    profiles: [assistant-operator]
+    build:
+      context: ./ai-assistant-service
+    environment:
+      ASSISTANT_INGESTION_DATABASE_URL: Host=assistant-db;Database=assistant;Username=assistant_operator;Password=${ASSISTANT_DB_PASSWORD:?Set operator database password};Timeout=5;Command Timeout=10
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY locally}
+      OPENAI_EMBEDDING_MODEL: text-embedding-3-small
+      OPENAI_EMBEDDING_USD_PER_MILLION: 0.02
+      ASSISTANT_MAX_REQUEST_USD: ${ASSISTANT_MAX_REQUEST_USD:-0.02}
+      ASSISTANT_EVAL_MAX_USD: ${ASSISTANT_EVAL_MAX_USD:-1.00}
+      ASSISTANT_RETRIEVAL_MODE: ${ASSISTANT_RETRIEVAL_MODE:-hybrid}
+    volumes:
+      - ./ai-assistant-service/policies:/policies:ro
+    command: ["operator", "migrate"]
+    depends_on:
+      assistant-db:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [bank, assistant-data]
+networks:
+  assistant-data:
+    internal: true
+volumes:
+  assistant-db:

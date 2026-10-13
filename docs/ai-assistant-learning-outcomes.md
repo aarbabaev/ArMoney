@@ -1,7 +1,8 @@
 # Banking assistant learning-outcome evidence
 
-Status: verified credential-page descriptions mapped to planned work. No runtime
-feature, test pass or full course coverage is claimed. Read on 2026-10-13 using
+Status: implemented feature source with local measured evidence; exact-head CI,
+integrated review and deployment remain pending. No full course coverage is claimed.
+Credential descriptions read on 2026-10-13 using
 owner-supplied OpenAI Academy links; private links, access keys and recipient
 details are intentionally excluded. Detailed syllabi remain unavailable.
 
@@ -12,7 +13,7 @@ details are intentionally excluded. Detailed syllabi remain unavailable.
 | Scope AI Solutions | Workflow opportunity discovery, value/requirements comparison, prioritization, problem framing and scope | Mission problem statement and prioritized policy/balance/last-transaction scenarios; compare structured app flow with assistant value | Reviewer traces each use case to user value and acceptance; mutation/credit/investment scope stays excluded; record measured latency/cost and limitations |
 | AI Foundations | AI/LLM basics, clear instructions, context, output review and responsible use | Explicit prompts, separated untrusted context, citation checks, independent output evaluation, minimized provider data | Citation identifier validity 100%; supported policy claims >= 0.95 by independent human grading; refusal/outage fixtures all pass; no personal or credential content in traces |
 
-Thresholds are proposed release gates, not results. Fix a versioned fixture set and
+Thresholds are release gates. Fix a versioned fixture set and
 grading rubric before running evaluation; report model/version, prompt/index
 version, configuration, sample count and observed metrics. Small synthetic sets
 do not establish production safety. Machine validation of a citation ID does not
@@ -24,3 +25,42 @@ and handoffs. Human ChatGPT workplace practice is documented as prompt/context
 design and review, not a claim that this API service implements the ChatGPT UI.
 Unseen syllabus outcomes must be reviewed if supplied later; they are not silently
 declared covered. See [mission](agents/missions/ai-assistant.md).
+
+## Measured local evidence, 2026-10-13
+
+Synthetic evaluation `synthetic-v1-intent-extractive-extension` uses 22 fixed
+questions (original 20 plus two semantic relevance probes), model
+`gpt-4.1-mini-2025-04-14`, prompt `router-policy-v2-typed-intent-extractive`,
+chunker `heading-1000-overlap100-v1`, index `demo-main-112b01d-ft-v1` and
+`text-embedding-3-small`/1536 dimensions. Final run took 38,715 ms in aggregate;
+the conservative configured cost upper bound was $0.22, not measured billing.
+Routing and intent selection were 22/22; lexical Recall@5 was 11/14 (78.57%),
+hybrid 14/14 (100%), citation validity 14/14, reported errors zero. The first
+run failed because an absent savings-rate policy routed as an unrelated request;
+general category instructions fixed this without changing fixtures or gates.
+
+Independent QA graded 14/14 answered policy responses supported and relevant,
+plus one correct insufficient-evidence policy response. Responses are exact
+relevant demonstration excerpts, not generated policy prose. Repeated claims
+are not independent samples. Three unsafe-action/SQL/URL fixtures establish
+rejection routing only; four balance/history fixtures establish routing only.
+Russian routing works in this set, but demonstration answers remain English.
+
+Independent actual-provider Compose smoke separately passed 35 HTTP requests
+and four assistant turns (configured $0.08 upper bound, ingestion excluded):
+two fresh users' integer-zero balances matched real owner-scoped ledger APIs;
+empty history, exact demo citations, spoofed owner fields, unauthorized private
+reads and revoked sessions behaved as specified. No financial funding or mock
+financial success was used. Nonempty transaction status/order, in-flight
+revocation, real expiry, dependency fault injection and device UX are outside
+that smoke's coverage; deterministic checks cover selected corresponding paths.
+
+Local full Java check passed 506 tests with no failures/errors/skips; .NET passed
+70 deterministic/isolated PostgreSQL assertions after the publication fix; Android passed 31 JVM tests,
+lint and debug APK build. Independent security retested delegated read boundaries,
+ingestion containment, fixed evaluation denominators and extractive grounding:
+70 service assertions plus 30 gateway negative tests passed. Integrated review
+also found active/retired policy indexes could be extended after publication;
+permanent seals and serialized operator writes now reject that, independently
+retested with real PostgreSQL including the activation/staging race. These local results
+do not substitute for required exact-head CI or deployed readiness/acceptance.

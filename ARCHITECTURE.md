@@ -1,7 +1,8 @@
 # ArMoney  -  System and Agent Team Architecture
 
-> The main project map. Transactional email integration based on main
-> `14b12d63f1419ffd31a7c284a555cf6af7b68fea` plus this email-outbox change.
+> The main project map, updated 2026-10-13 from main
+> `7a99a668f4689121b30c284e3cc5c8ddbcfeb37b` plus the assistant feature in PR #46.
+> Exact-head checks and deployment evidence are recorded separately in that PR.
 > Describes the source code, not the guaranteed state of running containers.
 
 ## Navigation
@@ -33,7 +34,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | Wallet | Metadata, durable ledger provisioning, owner-scoped live balances | Lifecycle controls |
 | Ledger | Private accounts, balances, atomic postings; optional two direct physical standbys and fenced balance reads | Manual failover; production HA and backup/PITR |
 | Payment | Durable P2P, requester idempotency, recovery, history, in-app notifications and transactional Mailtrap email outbox | Email disabled until configured; real sending requires verified contact; duplicates possible after ambiguous provider acceptance |
-| AI assistant | Planned C# service, local policy retrieval and read-only bank facts; design only | Provider/runtime/Android implementation, independent validation and deployment pending |
+| AI assistant | Feature implementation in progress: C# service, local policy store/index, constrained read tools and Android screen | Integrated model/Compose/CI/security evidence and deployment pending |
 | Gateway | Auth, profile/phone, wallets/balances, P2P and notifications | Further hardening |
 
 Java 21, Gradle multi-project, Javalin, PostgreSQL, Flyway, jOOQ, HikariCP;
@@ -196,6 +197,9 @@ Mac/iPhone/Android device; native code never bypasses certificate validation. Se
 
 Android build/configuration and acceptance are described in [android/README.md](android/README.md),
 [Android contract](docs/android-contract.md) and [ADR 0010](docs/adr/0010-native-android.md).
+The native presentation uses the semantic light/dark tokens documented in
+[Android design](docs/android-design.md); device visual acceptance remains separate
+from JVM contrast checks and successful compilation.
 The Android public client uses its own exact callback; both native clients map the
 same issuer/subject to one bank identity. No new financial service is introduced.
 
@@ -570,7 +574,7 @@ flowchart LR
 | Agent | Responsibility / writable scope |
 | --- | --- |
 | bank_orchestrator | Assignment, integration, shared config/runtime, Compose/CI, this documentation, PR |
-| ai_assistant_owner | ai-assistant-service/** and tests only: C# assistant, policy index and constrained read tools; runtime implementation planned |
+| ai_assistant_owner | ai-assistant-service/** and tests: C# assistant, owned policy/index/provider adapters and constrained read tools |
 | gateway_owner | app-gateway: routes, public contract, identity |
 | auth_owner | auth-service: credentials, sessions, limits |
 | android_owner | android: native Kotlin/Compose client, browser SSO, gateway contracts and secure recovery |
@@ -779,6 +783,26 @@ and does not bypass email/phone verification requirements. Execution and restore
 are separate delivery gates. See [ADR 0019](docs/adr/0019-local-synthetic-baseline.md)
 and [operations](docs/local-baseline.md).
 
-## Planned banking AI assistant
+## Banking assistant feature slice
 
-The [assistant mission](docs/agents/missions/ai-assistant.md), [proposed ADR 0020](docs/adr/0020-banking-ai-assistant-proposal.md) and [verified-outcome mapping](docs/ai-assistant-learning-outcomes.md) describe planned work, not deployed behavior. Android will call gateway, which remains session authority; the C# service will own a separate PostgreSQL policy store/index and access wallet/payment facts only through constrained gateway read delegation. Ledger remains balance authority. Short-lived read-only delegation must replace forwarding the full bank bearer. Model/embedding execution via OpenAI is external despite local Docker hosting; minimal egress was owner-authorized. No mutation/transfer tool or ordinary-user ingestion is proposed. The ai_assistant_owner role configures a Codex developer, distinct from the runtime assistant. No provider, assistant container/database or Android assistant screen is implemented by this planning change.
+[Issue #43](https://github.com/aarbabaev/ArMoney/issues/43) and [PR #46](https://github.com/aarbabaev/ArMoney/pull/46) track this feature implementation. Local model and isolated Compose evidence is recorded; exact-head CI, integrated review and deployment remain pending. Source does not establish deployed readiness. The [mission](docs/agents/missions/ai-assistant.md), [ADR 0020](docs/adr/0020-banking-ai-assistant-proposal.md), [HTTP/private trust contract](docs/ai-assistant-contract.md), [operations](docs/ai-assistant-operations.md) and [verified learning-outcome matrix](docs/ai-assistant-learning-outcomes.md) define scope and gates.
+
+C#/.NET 10 is a service-local exception to Java 21. Domain/application/ports/adapters keep model, embedding, PostgreSQL and HTTP details outside the domain. ai-assistant-service owns only its separate PostgreSQL policy source/index, credentials and assistant-db volume. Operator ingestion is a separate local container/CLI; runtime has policy SELECT privileges only. No other service database or business classes are reused. Hybrid exact pgvector/full-text ranking is measured against a lexical baseline; active document/index versions, effective dates and provenance are retained. Initial documents are owner-approved demonstration rules from implemented ArMoney behavior, not legal/production bank policy.
+
+```mermaid
+flowchart LR
+    A["Android Assistant tab: feature source"] --> G["Gateway: authoritative session validation"]
+    G -->|"Opaque active-turn read delegation"| S["C# assistant: bounded router and specialists"]
+    S -->|"Fixed authenticated reads"| G
+    G --> W["Wallet API"]
+    G --> P["Payment history API"]
+    W --> L["Ledger: balance authority"]
+    S --> D[("Assistant PostgreSQL: policies and exact vector/full-text index")]
+    I["Local operator ingestion CLI"] --> D
+    S -->|"Minimal authorized context; external execution"| O["OpenAI model and embedding APIs"]
+```
+
+Gateway keeps the original bank bearer and internal bank key; assistant receives only a short-lived opaque read handle and independent directional credentials. Every fixed GET callback and final response revalidates the session; credentials alone cannot select an owner. No transfer/mutation, arbitrary URL/SQL/shell or ordinary-user upload tool exists. Gateway projects direction/status/amount/time and validates returned bank facts against its observed reads. Financial values use integer AED fils. Default last transaction is the first visible payment by created_at DESC, id DESC across own wallets; outgoing PENDING/COMPLETED/REJECTED and only COMPLETED incoming rows are visible. First-page history is bounded to 50; no complete monthly totals are promised.
+
+The planner selects a finite policy intent; application code supplies fixed retrieval questions and filters relevant sections. Policy selection returns citation identifiers, never free-form answer prose. Application code renders exact demonstration source excerpts with document/version/section and explicit conflicting or insufficient evidence. Bank facts never enter model context. Prompts and documents are untrusted data; deterministic code validates tools, authorization and budgets. Runtime provider/embedding ports use external OpenAI despite local Docker hosting; owner authorized minimal egress. No personal server conversation is persisted; Android clears displayed turns on session change and rejects stale results. Provider store=false is not a zero-retention guarantee. The ai_assistant_owner configures a Codex developer, distinct from runtime assistant roles and containers. Local .NET/Java/Android, actual-provider Compose and measured model checks passed; exact-head green CI, integrated review and deployment remain pending. See the versioned [learning-outcome evidence](docs/ai-assistant-learning-outcomes.md) for scope and limitations.
+

@@ -63,3 +63,4 @@ sandbox backend work uses bank-java, bank-api and bank-postgres when persistence
 ## Assistant routing
 
 The ai_assistant_owner reads `.codex/agents/ai_assistant_owner.toml` and `docs/agents/missions/ai-assistant.md`. Assignment skills use exact paths `.agents/skills/bank-api/SKILL.md`, `.agents/skills/bank-security/SKILL.md` and `.agents/skills/bank-testing/SKILL.md`. Those project skills supply trust/evidence/isolation rules; they do not establish .NET SDK compatibility. Verify current vendor documentation and actual C# dependency/build evidence. Shared Compose/CI and architecture updates remain bank_orchestrator-owned. No assistant-specific skill or automatic role discovery has been tested by writing this routing entry.
+

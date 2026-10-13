@@ -163,3 +163,4 @@ This is an on-demand agent workflow, not an always-running service. Do not claim
 ## Banking assistant planning
 
 Use [assistant mission](missions/ai-assistant.md) and [proposed ADR](../adr/0020-banking-ai-assistant-proposal.md) before assistant work. ai_assistant_owner is a Codex development role with service/test ownership only, not a deployed assistant or a background process. The orchestrator owns shared runtime/CI/Compose/docs and freezes delegation and message contracts before gateway/Android/service implementation. C# is a proposed service-local stack exception, not a rewrite of Java services. Dispatch independent security design review and later integrated QA/security/reviewer validation. Until evidence exists, record proposed behavior and waiting dependencies honestly.
+

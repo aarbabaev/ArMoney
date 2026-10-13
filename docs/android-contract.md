@@ -1,5 +1,17 @@
 # Android implementation contract
 
+The assistant feature slice adds an authenticated Assistant tab using
+`POST /v1/assistant/messages` through gateway; see
+[assistant contract](ai-assistant-contract.md). It shows plain-text replies,
+document/version/section/excerpt citations and separate bank facts/provenance.
+Policies are clearly labeled demonstration rules. Request/response bounds,
+exact integer fils and Asia/Dubai display apply. Turns are volatile, cleared on
+session/owner/origin change; late asynchronous results are rejected. No provider
+key, server conversation persistence or automatic message retry is introduced.
+Feature JVM/lint/APK evidence and physical-device acceptance are distinct; an APK
+build does not establish deployed assistant or model quality. Issue #43 / PR #46
+track integration and deployment.
+
 Native Kotlin/Jetpack Compose in a separate android/ Gradle build. Functional
 scope matches the iOS slice: browser SSO, wallets/open/balances, exact phone
 recipient confirmation, P2P/history/details, in-app notifications/read, profile
@@ -53,3 +65,4 @@ session or superseded request must not alter current pages. Notification read
 updates preserve loaded history. Invalid cursors offer a first-page refresh;
 newer entries appear on refresh. Native iOS retains its legacy bounded endpoints
 while development remains paused. See the pagination section in p2p-contract.md.
+

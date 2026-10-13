@@ -1,7 +1,8 @@
 # ADR 0020: Proposed banking assistant boundary, retrieval and trust
 
-Status: Proposed; no runtime assistant, provider call or deployment is implemented
-by this planning change. Date: 2026-10-13. Related: [mission](../agents/missions/ai-assistant.md).
+Status: Accepted for implementation; feature source exists, integration and
+deployment validation remain pending. Date: 2026-10-13.
+Related: [mission](../agents/missions/ai-assistant.md).
 
 ## Context and proposed decisions
 
@@ -63,8 +64,9 @@ bearer to the assistant: it permits ordinary gateway mutations. The facade deriv
 owner from auth, not assistant-supplied owner IDs. No mutation forwarding or
 arbitrary upstream path/URL. Credential possession alone cannot select an owner.
 Expired/revoked/invalid sessions fail closed, including before returning an
-in-flight personal answer. Independent security design review must resolve the
-exact header/session/endpoint contract before owners implement it.
+in-flight personal answer. Independent security design review rejected bearer
+forwarding; the frozen [contract](../ai-assistant-contract.md) uses opaque
+delegation. Integrated tests must independently establish its implementation.
 
 Session credentials never enter prompts, tracing or persistence. Minimize model
 bank context to amount/currency/direction/status/time and necessary wallet facts;
@@ -132,10 +134,12 @@ model; no requester argument. Bound concurrency and per-owner request rate,
 responses and cancellation. Untrusted retrieved text remains data and never
 changes tools/system instructions. No SQL, shell, external URL or payment tools.
 
-Return policy claims only with verified retrieved document/version/section IDs;
-invalid or absent evidence fails to an insufficient-evidence response. Identifier
-validation is necessary but does not prove entailment: independent synthetic
-evaluation grades actual claims. Conflicting/expired policies are explicit.
+The planner selects finite policy intents; application code supplies fixed
+retrieval questions and relevant-section filters. Policy selection returns only
+verified citation IDs/outcomes/refinement, never free answer prose. Application
+code renders exact source excerpts with a demonstration label; invalid or absent
+evidence yields insufficient evidence. Independent synthetic evaluation grades
+relevance as well as source support. Conflicting/expired policies are explicit.
 Bank facts are rendered from typed API results, not generated numbers. Proposed
 message response contains answer, policy citations, bank facts/provenance and
 bounded outcome status; exact OpenAPI is frozen in the next step.
