@@ -117,6 +117,29 @@ def inventory():
     return validate_inventory(json.loads(docker('inspect', *ids)))
 
 
+def shard_coverage(found):
+    """Check both runtime configuration and historical placement while writers are stopped."""
+    env = dict(value.split('=', 1) for value in found['user-service']['Config'].get('Env', []) if '=' in value)
+    raw = env.get('USER_SHARD_IDS', '')
+    configured = raw.split(',') if raw.strip() else []
+    require(len(configured) == len(set(configured)) and all(re.fullmatch(r's[1-9][0-9]*', shard) for shard in configured),
+            'Unsupported or duplicate configured user shard')
+    available = {service.removeprefix('user-shard-') for service in found if service.startswith('user-shard-')}
+    require(set(configured) <= available, 'Configured user shard database is missing')
+    for shard in configured:
+        require(env.get('USER_SHARD_' + shard.upper() + '_DB_URL') ==
+                'jdbc:postgresql://user-shard-' + shard + ':5432/bank',
+                'Configured user shard endpoint is outside the supported local topology')
+    used = json.loads(sql(found['user-db']['Id'], 'bank', 'bank',
+        "SELECT coalesce(json_agg(shard_id ORDER BY shard_id),'[]'::json) "
+        "FROM (SELECT DISTINCT shard_id FROM profile_directory) placements"))
+    require(isinstance(used, list) and all(isinstance(shard, str) and
+            (shard == 'primary' or re.fullmatch(r's[1-9][0-9]*', shard)) for shard in used),
+            'Unsupported historical user shard placement')
+    require(set(used) <= available | {'primary'}, 'Historical user shard database is missing')
+    return {'configured': sorted(configured), 'directory': sorted(used), 'included': sorted(available)}
+
+
 def outside_repo(path):
     path = path.expanduser().resolve()
     require(not path.is_relative_to(REPO), 'Backup output must be outside the repository')
@@ -288,6 +311,8 @@ def backup(output, expected_fixture_count=200):
                 'Compose inventory changed during backup')
         require(not any(item['State']['Running'] for service, item in current.items() if service in WRITERS),
                 'Application writers are still running')
+        manifest['user_shard_coverage'] = shard_coverage(current)
+        save()
         for service, item in sorted(found.items()):
             if not db_spec(service):
                 continue

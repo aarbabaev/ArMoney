@@ -59,7 +59,20 @@ does not credit again. Do not invent a new funding ID to retry or refill an acco
 
 ## Backup and restore boundaries
 
-After all users are funded and acceptance checks pass:
+After all 200 users are funded, verify the fixed default baseline through Gateway:
+
+```powershell
+python -B scripts/verify-local-baseline.py --apply --acknowledge-local-fixtures --gateway https://localhost:8443 --ca-file C:/private/armoney-root.crt --manifest C:/private/users.json --transfer-and-return
+```
+
+This requires the same process-only fixture password. It checks all fixture mappings,
+profiles, wallet readiness and expected balances. The optional transfer flag posts
+1 AED between two fixture wallets, checks idempotent replay and changed-payload
+rejection, then transfers it back and verifies the original balances. Stable keys
+allow recovery after interruption. Omit the flag for read-only balance verification;
+without `--apply`, no requests are made. No emulator is launched.
+
+After acceptance checks pass:
 
 ```powershell
 python -B scripts/backup-local-baseline.py
@@ -71,6 +84,10 @@ SSO and edge writers, captures each primary (including Keycloak and profile shar
 then restarts those writers in a `finally` block. Coordinate this outage with other
 operators: direct database clients must not write during capture. Process termination
 or host failure can prevent cleanup; inspect the stack before restarting work.
+Before dumping, every configured or directory-referenced shard must be present;
+missing historical shards block capture instead of producing an incomplete template.
+`--expected-fixture-count` defaults to 200 and must match a smaller/larger configured
+dataset when using the backup tool separately from the fixed 200-user verifier.
 
 The restricted backup manifest records source revision/worktree state, server and
 image versions, checksums, Flyway state, table counts and ledger reconciliation metrics.

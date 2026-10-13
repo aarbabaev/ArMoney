@@ -65,6 +65,47 @@ class SafetyTests(unittest.TestCase):
         shard['Config']['Labels']['com.docker.compose.service'] = 'user-shard-s3'
         self.assertIn('user-shard-s3', b.validate_inventory(items + [shard]))
 
+    def test_missing_configured_or_historical_shard_blocks_before_dump(self):
+        for configured in (True, False):
+            with self.subTest(configured=configured):
+                found = b.validate_inventory(fixtures())
+                if configured:
+                    found['user-service']['Config']['Env'].append('USER_SHARD_IDS=s2')
+                stopped = copy.deepcopy(found)
+                for service in b.WRITERS:
+                    stopped[service]['State']['Running'] = False
+                with tempfile.TemporaryDirectory() as temp, patch.object(b, 'local_daemon'), \
+                     patch.object(b, 'source_revision', return_value={}), \
+                     patch.object(b, 'inventory', side_effect=[found, stopped]), \
+                     patch.object(b, 'private_directory', return_value=Path(temp)), \
+                     patch.object(b, 'sql', return_value='["primary","s2"]') as sql, \
+                     patch.object(b, 'docker') as docker:
+                    with self.assertRaisesRegex(b.Blocked, 'shard database is missing'):
+                        b.backup(Path(temp))
+                    self.assertFalse(list(Path(temp).glob('*.dump')))
+                    self.assertEqual(json.loads((Path(temp) / 'manifest.json').read_text())['status'], 'incomplete')
+                    self.assertFalse(any('pg_dump' in call.args for call in docker.call_args_list))
+                    self.assertEqual(sum(call.args[0] == 'start' for call in docker.call_args_list), len(b.WRITERS))
+                    if configured:
+                        sql.assert_not_called()
+
+    def test_shard_coverage_includes_unconfigured_historical_shard(self):
+        found = b.validate_inventory(fixtures())
+        for index in (1, 2):
+            shard = copy.deepcopy(found['user-db'])
+            shard['Id'] = str(index) * 64
+            shard['Config']['Labels']['com.docker.compose.service'] = 'user-shard-s' + str(index)
+            found['user-shard-s' + str(index)] = shard
+        found['user-service']['Config']['Env'] += ['USER_SHARD_IDS=s1',
+            'USER_SHARD_S1_DB_URL=jdbc:postgresql://user-shard-s1:5432/bank']
+        with patch.object(b, 'sql', return_value='["primary","s2"]'):
+            coverage = b.shard_coverage(found)
+        self.assertEqual(coverage, {'configured': ['s1'], 'directory': ['primary', 's2'], 'included': ['s1', 's2']})
+        found['user-service']['Config']['Env'][-1] = 'USER_SHARD_S1_DB_URL=jdbc:postgresql://remote:5432/bank'
+        with patch.object(b, 'sql') as sql, self.assertRaises(b.Blocked):
+            b.shard_coverage(found)
+        sql.assert_not_called()
+
     def test_stopped_database_and_duplicate_rejected(self):
         items = fixtures()
         with self.assertRaises(b.Blocked):
