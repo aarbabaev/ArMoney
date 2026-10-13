@@ -762,3 +762,16 @@ bounded evidence replace full-history copies for independent tasks. iOS CI is pa
 disposable browser CI verifies Keycloak code/PKCE and SSO.
 
 See [implemented features, deployment boundaries and agreed roadmap](docs/delivery-status.md) for current versus planned capabilities.
+
+### Explicit synthetic local baseline
+
+The local baseline tools use Keycloak administration for synthetic identity creation,
+then the existing native PKCE and Gateway flows for profiles and wallet provisioning.
+A separately opted-in Ledger CLI posts deterministic initial funds atomically through
+the ledger journal; it adds no public funding endpoint. Its clearing account is reserved
+for synthetic local funds. Manifests and database backups remain outside Git with
+restricted permissions. Backup capture quiesces writers across owning primary databases;
+replicas are rebuilt from primaries after restore. Tooling is not an automatic startup seed
+and does not bypass email/phone verification requirements. Execution and restore evidence
+are separate delivery gates. See [ADR 0019](docs/adr/0019-local-synthetic-baseline.md)
+and [operations](docs/local-baseline.md).

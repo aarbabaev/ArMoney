@@ -21,14 +21,22 @@ this file does not imply continuously running agents.
   name and password. Phone ownership is not verified by SMS; registration email OTP
   and new-login notification emails are not implemented.
 
-## Published, not yet deployment-ready
+## Pagination deployment checkpoint
 
 [PR #39](https://github.com/aarbabaev/ArMoney/pull/39) adds owner-bound signed cursor
 pagination and Android load-more while preserving legacy newest-100 routes.
-Focused owner checks passed; final independent checks and exact-head CI must pass.
-Do not describe these endpoints as available on the persistent deployment until a
-deployment checkpoint verifies that revision. The PR also carries updated reviewer
+PR #39 merged at `6a6289751102122c703197b99604c169f103a190` after green backend/Android CI
+and independent verification. Payment and Gateway were updated locally on 2026-10-13;
+all six services passed readiness. The Android APK is built; device installation and
+interactive acceptance have not been performed. The PR also carries updated reviewer
 merge/status instructions; those instructions are not a background scheduler.
+
+## Synthetic baseline delivery
+
+Issue #29 adds explicit local provisioning and balanced Ledger funding tooling.
+Its source, CI, deployment and verified backup checkpoints must be tracked separately.
+Tool availability alone does not mean that 200 users have been created or a backup
+has been restored successfully. See [local baseline operations](local-baseline.md).
 
 ## Agreed backlog
 

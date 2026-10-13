@@ -31,6 +31,12 @@ jobs:
           bash scripts/check-local-ci.sh
       - name: Compile, Spock, ArchUnit and PostgreSQL Testcontainers
         run: ./gradlew --no-daemon clean check installDist
+      - name: Validate local baseline tool safety (offline)
+        run: |
+          python3 -B scripts/test-seed-local-users.py
+          python3 -B scripts/test-fund-local-users.py
+          python3 -B scripts/test-backup-local-baseline.py
+          python3 -B scripts/test-verify-local-baseline.py
       - name: Validate Compose
         env:
           LOCAL_DB_PASSWORD: ci-only-password
