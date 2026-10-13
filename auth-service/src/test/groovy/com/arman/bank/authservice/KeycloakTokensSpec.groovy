@@ -32,7 +32,7 @@ class KeycloakTokensSpec extends Specification {
     }
     def cleanup() { provider?.close(); server?.stop(0) }
 
-    def 'both allowed native clients establish the same issuer and subject with matching or absent azp'() {
+    def 'allowed public clients establish stable identity while native absent azp remains compatible'() {
         given:
         claims.client_id = nativeClient
         if (authorizedParty) claims.azp = nativeClient
@@ -47,9 +47,10 @@ class KeycloakTokensSpec extends Specification {
         'armoney-ios'     | false
         'armoney-android' | true
         'armoney-android' | false
+        'armoney-web'     | true
     }
 
-    def 'client allowlist and authorized party must agree exactly across native clients'() {
+    def 'client allowlist and authorized party must agree exactly across public clients'() {
         given:
         claims.client_id = nativeClient
         claims.azp = authorizedParty
@@ -60,6 +61,14 @@ class KeycloakTokensSpec extends Specification {
         error.kind() == AuthFailure.Kind.UNAUTHORIZED
         where:
         nativeClient        | authorizedParty
+        'armoney-web'       | 'armoney-ios'
+        'armoney-web'       | 'armoney-android'
+        'armoney-web'       | null
+        'armoney-web'       | ['armoney-web']
+        'armoney-web-x'     | 'armoney-web-x'
+        'ARMONEY-WEB'       | 'ARMONEY-WEB'
+        'armoney-ios'       | 'armoney-web'
+        'armoney-android'   | 'armoney-web'
         'armoney-ios'       | 'armoney-android'
         'armoney-android'   | 'armoney-ios'
         'armoney-android'   | 'other-client'
@@ -70,6 +79,59 @@ class KeycloakTokensSpec extends Specification {
         'armoney-auth'      | 'armoney-auth'
         null                | 'armoney-android'
         ['armoney-android'] | 'armoney-android'
+    }
+
+    def 'web tokens require authorized party and API access audience'() {
+        given:
+        claims.client_id = 'armoney-web'
+        claims.azp = 'armoney-web'
+        claims.aud = audience
+        if (missingAzp) claims.remove('azp')
+        when:
+        provider.verify('synthetic-web-token')
+        then:
+        def error = thrown(AuthFailure)
+        error.kind() == AuthFailure.Kind.UNAUTHORIZED
+        where:
+        audience                       | missingAzp
+        ['armoney-api', 'armoney-auth'] | true
+        ['armoney-web']                 | false
+        ['armoney-auth']                | false
+        ['armoney-api-other']           | false
+        null                           | false
+        ['armoney-web', 'armoney-auth'] | false
+    }
+
+    def 'web access token preserves stable subject and trusted phone'() {
+        given:
+        claims.client_id = 'armoney-web'
+        claims.azp = 'armoney-web'
+        claims.aud = ['armoney-api', 'armoney-auth']
+        expect:
+        provider.verify('synthetic-web-access-token').phoneNumber() == '+971501234567'
+        provider.verify('synthetic-web-access-token').subject() == 'stable-subject'
+    }
+
+    def 'browser client does not relax issuer expiry token type or active checks'() {
+        given:
+        claims.client_id = 'armoney-web'
+        claims.azp = 'armoney-web'
+        claims[field] = value
+        when:
+        provider.verify('synthetic-web-token')
+        then:
+        def error = thrown(AuthFailure)
+        error.kind() == AuthFailure.Kind.UNAUTHORIZED
+        where:
+        field        | value
+        'iss'        | 'https://other.example/realm'
+        'active'     | false
+        'active'     | 'true'
+        'token_type' | 'ID'
+        'token_type' | 'Refresh'
+        'exp'        | 1900000000
+        'nbf'        | 2000000000
+        'sub'        | ''
     }
 
     def 'rejects unacceptable provider claims'() {

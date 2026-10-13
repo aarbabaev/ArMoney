@@ -1,0 +1,19 @@
+# Opt-in browser hosting. Preserve the existing project name and persistent volumes.
+# Requires compose.yaml + compose.sso.yaml; no new host ports or databases.
+services:
+  web:
+    build:
+      context: ./web
+    expose: ["8080"]
+    networks: [bank]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  edge:
+    volumes:
+      - ./infra/edge/Caddyfile.web:/etc/caddy/Caddyfile:ro
+    depends_on:
+      web:
+        condition: service_started

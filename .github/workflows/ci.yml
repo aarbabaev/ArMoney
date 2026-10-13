@@ -74,7 +74,7 @@ jobs:
         run: python3 scripts/ledger-replication-smoke.py
       - name: Browser SSO against disposable Keycloak and HTTPS edge
         env:
-          COMPOSE_FILE: compose.yaml:compose.sso.yaml:compose.sso-ci.yaml
+          COMPOSE_FILE: compose.yaml:compose.sso.yaml:compose.sso-ci.yaml:compose.web.yaml
           LOCAL_DB_PASSWORD: ci-only-password
           SSO_DB_PASSWORD: ci-only-keycloak-database-password
           SSO_ADMIN_PASSWORD: ci-only-keycloak-admin-password
@@ -83,16 +83,20 @@ jobs:
         run: |
           python3 -m pip install playwright==1.55.0
           python3 -m playwright install --with-deps chromium
-          docker compose up -d
+          docker compose up --build -d
           for i in $(seq 1 60); do
             if docker compose cp edge:/data/caddy/pki/authorities/local/root.crt "$SSO_CA_FILE"; then break; fi
             sleep 2
           done
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libnss3-tools
+          python3 scripts/trust-ci-browser-ca.py
           python3 scripts/sso-smoke.py
+          python3 scripts/web-smoke.py
       - name: SSO diagnostics and cleanup
         if: always() && steps.isolation.outcome == 'success'
         env:
-          COMPOSE_FILE: compose.yaml:compose.sso.yaml:compose.sso-ci.yaml
+          COMPOSE_FILE: compose.yaml:compose.sso.yaml:compose.sso-ci.yaml:compose.web.yaml
           LOCAL_DB_PASSWORD: ci-only-password
           SSO_DB_PASSWORD: ci-only-keycloak-database-password
           SSO_ADMIN_PASSWORD: ci-only-keycloak-admin-password
@@ -108,6 +112,22 @@ jobs:
       - name: Save backend reports locally
         if: always()
         run: bash scripts/archive-local-ci.sh backend
+  web:
+    if: github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64, armoney-local]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Verify isolated runner
+        run: bash scripts/check-local-ci.sh
+      - name: Angular build, unit and browser fixture checks
+        run: |
+          docker run --rm --mount type=bind,source="$PWD/web",target=/app --workdir /app node:24.19.0-bookworm bash -euc 'npm ci; npm audit --audit-level=high; npm run build; npm test; npx playwright install --with-deps chromium; npm run e2e'
+      - name: Save web reports locally
+        if: always()
+        run: bash scripts/archive-local-ci.sh web
   android:
     # GitHub all_external_contributors approval policy is the external-run gate.
     if: github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)

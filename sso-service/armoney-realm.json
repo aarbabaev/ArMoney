@@ -153,6 +153,79 @@
       ]
     },
     {
+      "clientId": "armoney-web",
+      "name": "ArMoney Web",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "redirectUris": [
+        "https://localhost:8443/oauth/callback",
+        "https://localhost:4200/oauth/callback"
+      ],
+      "webOrigins": [
+        "https://localhost:8443",
+        "https://localhost:4200"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://localhost:8443/oauth/logout##https://localhost:4200/oauth/logout",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "email"
+      ],
+      "optionalClientScopes": [],
+      "protocolMappers": [
+        {
+          "name": "armoney-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "armoney-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "armoney-auth-introspection-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "armoney-auth",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "protocol": "openid-connect",
+          "name": "armoney-phone",
+          "consentRequired": false,
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "config": {
+            "id.token.claim": "false",
+            "claim.name": "phone_number",
+            "introspection.token.claim": "true",
+            "user.attribute": "username",
+            "access.token.claim": "true",
+            "jsonType.label": "String",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
       "clientId": "armoney-auth",
       "name": "ArMoney private token introspection",
       "enabled": true,

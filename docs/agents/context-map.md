@@ -19,6 +19,7 @@ Java package names and paths retain `arman` compatibility.
 | Wallet provisioning/recovery | [provisioning ADR](../adr/0007-wallet-ledger-provisioning.md), wallet `Provisioner` and `ProvisioningIntegrationSpec` |
 | Disposable system evidence | `.github/workflows/ci.yml`, relevant `scripts/*smoke*`; workflow isolation rules before execution |
 | Native Android slice | Assigned `android/` source/tests, [Android contract](../android-contract.md), gateway contract and [bank-android](../../.agents/skills/bank-android/SKILL.md) |
+| Browser client | Assigned `web/` source/tests, [web guide](../web-client.md), [session ADR](../adr/0021-browser-spa-session.md), gateway contract |
 | Native iOS slice | Assigned `ios/` project/source/tests and frozen gateway contract; [bank-ios](../../.agents/skills/bank-ios/SKILL.md) |
 | Keycloak slice | Assigned `sso-service/` configuration and explicit auth adapter lease; [bank-sso](../../.agents/skills/bank-sso/SKILL.md) |
 | Registration phone and recipient eligibility | [ADR 0014](../adr/0014-uae-registration-phone.md), auth registration claim, user private binding and [P2P contract](../p2p-contract.md) |

@@ -195,3 +195,9 @@ Mailtrap Sandbox. See [setup, contact verification and delivery guarantees](docs
 and [ADR 0015](docs/adr/0015-transactional-email-outbox.md).
 
 See [implemented features, deployment boundaries and agreed roadmap](docs/delivery-status.md) for current versus planned capabilities.
+
+## Browser client
+
+The Angular client is being implemented under [issue #44](https://github.com/aarbabaev/ArMoney/issues/44).
+See [web setup, parity and evidence](docs/web-client.md). Deployment and AI integration
+remain separate acceptance gates; an unavailable assistant is not completed RAG.

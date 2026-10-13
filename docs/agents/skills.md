@@ -16,6 +16,7 @@ discovery is unavailable, the worker reads those files explicitly. See the
 | gateway_owner | bank-java, bank-api, bank-testing; bank-security for trust-boundary changes |
 | auth_owner | bank-java, bank-postgres, bank-api, bank-testing, bank-security |
 | android_owner | bank-android; bank-api for gateway contracts; bank-sso for login |
+| web_owner | bank-api, bank-security, bank-testing; browser specifics in docs/web-client.md and ADR 0021 |
 | ios_owner | bank-ios; bank-api for gateway contracts; bank-sso for login |
 | sso_owner | bank-sso; bank-security and bank-testing for identity verification; bank-java/bank-postgres only for assigned adapter changes |
 | user_owner | bank-java, bank-postgres, bank-api, bank-testing; bank-security for authorization changes |

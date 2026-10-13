@@ -151,6 +151,8 @@ See [local administration](docs/sso-and-ios.md#optional-host-only-administration
 flowchart LR
     I["ArMoney SwiftUI / iPhone"] --> E["HTTPS edge :8443"]
     AND["ArMoney Kotlin / Android"] --> E
+    WEB["ArMoney Angular / Browser"] --> E
+    E -->|"Optional web overlay: SPA assets"| STATIC["Web static host"]
     B["System authentication browser"] --> E
     OP["Operator on Docker host"] -.-> ADM["Optional loopback TLS :9443"]
     ADM -.->|"Admin / master realm only"| K
@@ -198,10 +200,51 @@ Android build/configuration and acceptance are described in [android/README.md](
 The Android public client uses its own exact callback; both native clients map the
 same issuer/subject to one bank identity. No new financial service is introduced.
 
+## Browser client
+
+The Angular project lives in web/. Its source and acceptance are tracked in
+[issue #44](https://github.com/aarbabaev/ArMoney/issues/44), [web guide](docs/web-client.md)
+and [ADR 0021](docs/adr/0021-browser-spa-session.md). Implementation is in progress;
+this map does not claim deployment or completed end-to-end acceptance.
+
+The optional web overlay routes SPA assets through the existing HTTPS edge;
+/v1 and allowlisted Keycloak paths remain on that same origin. Browser tokens are
+transient memory-only; a new SSO flow is required after reload. The armoney-web
+public client uses code/S256 and exact local HTTPS callbacks. Auth requires matching
+web client_id/azp and API audience; issuer/subject still map to the existing bank
+identity. Native callbacks and absent-azp compatibility are preserved.
+
+```mermaid
+flowchart LR
+    U["Browser user"] --> SPA["Angular SPA: transient bank session"]
+    SPA -->|"Code / S256 / exact state callback"| K["Keycloak via HTTPS edge"]
+    SPA -->|"Bearer / same-origin /v1"| G["Gateway: revalidate session"]
+    G --> A["Auth: issuer and subject mapping"]
+    G --> B["Owner-scoped banking APIs"]
+    SPA --> D[("Origin / verified owner local data")]
+    D --> P["Immutable unresolved command and original key"]
+    D --> C["Demo cards only: no payment credentials"]
+    SPA -.-> AI["Assistant integration pending actual protected contract"]
+```
+
+Balances and payment amounts use lossless int64 JSON with integer fils in the
+browser; JavaScript floating-point numbers cannot preserve the full wire range.
+Uncertain transfer commands are durable before submission and isolated by verified
+owner with cross-tab coordination. Logout/expiry never convert uncertainty into
+success or authorize a replacement key. Browser storage is not Keystore-equivalent
+and clearing/eviction can destroy recovery evidence. Demo card state is browser-local;
+no issuing, delivery or cross-device synchronization is implemented.
+
+Current main Android includes signed cursor pages. The preserved local Android
+snapshot also includes account details and demo cards absent from that main source;
+the browser audit covers both explicitly. Legacy newest-100 routes remain bounded.
+The AI service belongs to separate issue #43; no invented assistant gateway route,
+policy answer or live financial response is represented as implemented.
+
 ## API and authentication
 
 Contracts are in each service's `src/main/resources/openapi.yaml`.
-`/openapi.yaml` serves YAML, not Swagger UI. `/` is not a user interface.
+`/openapi.yaml` serves YAML, not Swagger UI. Gateway `/` is not a user interface; the optional web overlay serves the browser SPA at the HTTPS edge.
 
 | Access | Method and path | Purpose |
 | --- | --- | --- |
@@ -548,6 +591,7 @@ flowchart LR
     O --> A["auth_owner"]
     O --> IOS["ios_owner"]
     O --> ANDROID["android_owner"]
+    O --> WEBOWNER["web_owner"]
     O --> SSO["sso_owner"]
     O --> U["user_owner"]
     O --> W["wallet_owner"]
@@ -571,6 +615,7 @@ flowchart LR
 | gateway_owner | app-gateway: routes, public contract, identity |
 | auth_owner | auth-service: credentials, sessions, limits |
 | android_owner | android: native Kotlin/Compose client, browser SSO, gateway contracts and secure recovery |
+| web_owner | web: Angular browser client, dedicated browser SSO, exact money, owner-scoped local recovery and tests |
 | ios_owner | ios: native SwiftUI client, gateway integration, browser authentication and tests |
 | sso_owner | sso-service: Keycloak/OIDC configuration; auth SSO adapter files only under an explicitly transferred lease |
 | user_owner | user-service: profiles, immutable phone claims, recipient lookup and attestation |

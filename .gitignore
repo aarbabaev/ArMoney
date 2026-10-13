@@ -14,3 +14,13 @@ compose.override.yaml
 local-certs/
 __pycache__/
 *.pyc
+
+# Browser dependencies, local HTTPS credentials and generated artifacts
+web/node_modules/
+web/dist/
+web/.angular/
+web/playwright-report/
+web/test-results/
+web/coverage/
+web/*.pem
+web/*.key
