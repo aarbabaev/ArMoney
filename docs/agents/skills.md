@@ -44,6 +44,18 @@ orchestration improvements. Neither skill files nor roles activate workers.
 The skills support Java 21, PostgreSQL, jOOQ, Flyway and Spock, with focused
 frameworks, TDD and explicit domain boundaries. Gradle, Javalin, HikariCP,
 Testcontainers and ArchUnit provide build, HTTP, pooling and verification.
-Redis, Kubernetes and a message broker remain outside the current scope.
+Redis and Kubernetes remain outside current scope. Kafka is approved as a planned architecture direction (#30-33), not implemented infrastructure.
 Observability guidance covers safe diagnostics and useful failure evidence
 without introducing a separate monitoring stack.
+
+## Additional task routing
+- bank_orchestrator: bank-local-operations for CI/deployment, bank-messaging for Kafka/Saga coordination.
+- payment_owner, ledger_owner, wallet_owner, auth_owner, user_owner, sso_owner and gateway_owner: bank-messaging only when assigned messaging producers/consumers.
+- qa_integration, qa_security and security_auditor: bank-messaging for delivery/replay tests; bank-local-operations for infrastructure recovery validation.
+- bank_reviewer: bank-review-delivery plus the implementation skills for changed modules.
+- Android/iOS owners retain platform/API/SSO skills; backend broker internals are not loaded for ordinary client work.
+
+Exact paths are .agents/skills/<name>/SKILL.md. These are local project instructions,
+not installed runtimes or permission grants. Load on demand rather than all skills
+for every agent. SMS identity work uses bank-sso, bank-security and bank-testing;
+sandbox backend work uses bank-java, bank-api and bank-postgres when persistence applies.

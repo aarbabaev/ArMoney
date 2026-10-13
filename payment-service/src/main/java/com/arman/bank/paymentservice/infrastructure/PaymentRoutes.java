@@ -11,7 +11,8 @@ import java.util.*;
 public final class PaymentRoutes {
     private final PaymentService service;
     private final String key;
-    public PaymentRoutes(PaymentService service, String key) { this.service = service; this.key = key; }
+    private final PageCursor cursors;
+    public PaymentRoutes(PaymentService service, String key) { this.service = service; this.key = key; this.cursors = new PageCursor(key); }
     public void configure(JavalinConfig config) {
         InternalHttp.configure(config, key);
         config.routes.before(ctx -> {
@@ -26,6 +27,8 @@ public final class PaymentRoutes {
         });
         config.routes.get("/v1/payments", ctx -> InternalHttp.reply(ctx, 200,
                 Map.of("payments", service.history(InternalHttp.owner(ctx)).stream().map(PaymentRoutes::view).toList())));
+        config.routes.get("/v1/payments/page", ctx -> page(ctx, false));
+        config.routes.get("/v1/notifications/page", ctx -> page(ctx, true));
         config.routes.get("/v1/payments/{id}", ctx -> InternalHttp.reply(ctx, 200,
                 view(service.payment(InternalHttp.owner(ctx), uuid(ctx.pathParam("id"))))));
         config.routes.get("/v1/notifications", ctx -> InternalHttp.reply(ctx, 200,
@@ -34,6 +37,38 @@ public final class PaymentRoutes {
             if (!ctx.body().isEmpty()) throw new BadRequestResponse();
             InternalHttp.reply(ctx, 200, view(service.readNotification(InternalHttp.owner(ctx), uuid(ctx.pathParam("id")))));
         });
+    }
+    private void page(Context ctx, boolean notifications) {
+        UUID owner = InternalHttp.owner(ctx);
+        String query = ctx.queryString();
+        String suppliedLimit = null, cursor = null;
+        if (query != null) {
+            if (query.length() > 1024) throw PageCursor.invalid();
+            for (String pair : query.split("&", -1)) {
+                if (pair.startsWith("limit=") && suppliedLimit == null && pair.substring(6).matches("(?:[1-9][0-9]?|100)")) {
+                    suppliedLimit = pair.substring(6);
+                } else if (pair.startsWith("cursor=") && cursor == null && pair.substring(7).matches("[A-Za-z0-9_-]{1,512}")) {
+                    cursor = pair.substring(7);
+                } else throw PageCursor.invalid();
+            }
+        }
+        int limit = suppliedLimit == null ? 50 : Integer.parseInt(suppliedLimit);
+        PagePosition before = cursor == null ? null : cursors.decode(cursor, owner, notifications);
+        var result = new LinkedHashMap<String, Object>();
+        PagePosition next = null;
+        if (notifications) {
+            var rows = service.notificationsPage(owner, before, limit + 1);
+            var items = rows.subList(0, Math.min(limit, rows.size()));
+            result.put("notifications", items.stream().map(PaymentRoutes::view).toList());
+            if (rows.size() > limit) { var last = items.getLast(); next = new PagePosition(last.createdAt(), last.id()); }
+        } else {
+            var rows = service.historyPage(owner, before, limit + 1);
+            var items = rows.subList(0, Math.min(limit, rows.size()));
+            result.put("payments", items.stream().map(PaymentRoutes::view).toList());
+            if (rows.size() > limit) { var last = items.getLast(); next = new PagePosition(last.createdAt(), last.id()); }
+        }
+        result.put("next_cursor", next == null ? null : cursors.encode(owner, notifications, next));
+        InternalHttp.reply(ctx, 200, result);
     }
     private static PaymentRequest request(Context ctx) {
         String type = ctx.contentType();

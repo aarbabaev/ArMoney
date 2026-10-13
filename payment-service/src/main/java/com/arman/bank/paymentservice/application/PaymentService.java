@@ -32,6 +32,8 @@ public final class PaymentService {
     }
     public List<Payment> history(UUID owner) { return store.history(owner); }
     public List<Notification> notifications(UUID owner) { return store.notifications(owner); }
+    public List<Payment> historyPage(UUID owner, PagePosition before, int limit) { return store.historyPage(owner, before, limit); }
+    public List<Notification> notificationsPage(UUID owner, PagePosition before, int limit) { return store.notificationsPage(owner, before, limit); }
     public Notification readNotification(UUID owner, UUID id) {
         return store.readNotification(owner, id).orElseThrow(() -> new PaymentFailure(404, "not_found"));
     }

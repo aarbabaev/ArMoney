@@ -179,6 +179,33 @@ read = expect(200, call('POST', '/v1/notifications/' + nid + '/read', bob))
 assert read['read_at'] and expect(200, call('POST', '/v1/notifications/' + nid + '/read', bob))['read_at'] == read['read_at']
 assert expect(200, call('GET', '/v1/notifications', outsider))['notifications'] == []
 assert len(expect(200, call('GET', '/v1/payments', bob))['payments']) == 4
+# Traverse the new public cursor routes using real completed/rejected payments.
+for resource in ('payments', 'notifications'):
+    expected = expect(200, call('GET', '/v1/' + resource, alice))[resource]
+    rows, seen_cursors, cursor = [], set(), None
+    for page_number in range(20):
+        query = '?limit=2' + ('&cursor=' + cursor if cursor else '')
+        page = expect(200, call('GET', '/v1/' + resource + '/page' + query, alice))
+        assert len(page[resource]) <= 2
+        rows.extend(page[resource])
+        assert 'next_cursor' in page
+        cursor = page['next_cursor']
+        if cursor is None:
+            break
+        assert cursor not in seen_cursors
+        seen_cursors.add(cursor)
+        expect(400, call('GET', '/v1/' + resource + '/page?cursor=' + cursor, outsider))
+        other = 'notifications' if resource == 'payments' else 'payments'
+        expect(400, call('GET', '/v1/' + other + '/page?cursor=' + cursor, alice))
+    else:
+        raise AssertionError('Cursor traversal did not terminate')
+    assert [row['id'] for row in rows] == [row['id'] for row in expected]
+    assert len({row['id'] for row in rows}) == len(rows)
+    assert expect(200, call('GET', '/v1/' + resource + '/page', outsider)) == {resource: [], 'next_cursor': None}
+    expect(400, call('GET', '/v1/' + resource + '/page?limit=101', alice))
+    expect(400, call('GET', '/v1/' + resource + '/page?limit=2&limit=3', alice))
+    expect(401, call('GET', '/v1/' + resource + '/page'))
+
 # Every projected balance agrees with the journal; all currencies remain globally balanced.
 assert sql('ledger-db', "SELECT count(*) FROM accounts a WHERE balance_minor <> COALESCE((SELECT sum(amount_minor) FROM postings p WHERE p.account_id=a.id),0);") == '0'
 assert sql('ledger-db', 'SELECT count(*) FROM (SELECT currency FROM postings GROUP BY currency HAVING sum(amount_minor) <> 0) x;') == '0'

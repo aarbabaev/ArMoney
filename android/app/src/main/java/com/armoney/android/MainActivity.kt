@@ -35,7 +35,7 @@ class MainActivity : ComponentActivity() {
     val tabs = listOf("Wallets", "Transfers", "Inbox", "Profile")
     Scaffold(bottomBar = {
         if (model.session != null) NavigationBar { tabs.forEachIndexed { index, title ->
-            NavigationBarItem(selected = index == tab, onClick = { tab = index; model.refresh() }, icon = { Text(listOf("◉", "↗", "✉", "●")[index]) }, label = { Text(title) })
+            NavigationBarItem(selected = index == tab, onClick = { tab = index }, icon = { Text(listOf("◉", "↗", "✉", "●")[index]) }, label = { Text(title) })
         } }
     }) { padding ->
         Column(Modifier.padding(padding).padding(20.dp).fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -105,12 +105,13 @@ class MainActivity : ComponentActivity() {
             }, confirmButton = { TextButton(onClick = { confirm = false; model.wallets.find { it.id == selected }?.let { model.submit(it, amount) } }, enabled = !model.busy) { Text("Confirm and send") } }, dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } })
         }
     }
-    HorizontalDivider(); Text("Recent transfers (up to 100)", style = MaterialTheme.typography.titleMedium)
+    HorizontalDivider(); Text("Transfer history", style = MaterialTheme.typography.titleMedium)
     model.payments.forEach { payment ->
         OutlinedButton(onClick = { model.paymentDetails(payment.id) }, enabled = !model.busy, modifier = Modifier.fillMaxWidth()) {
             Column { Text("${money(payment.amount_minor, payment.currency)} · ${payment.status}"); Text("${if (payment.requester_id == model.session?.identity?.id) "To" else "Incoming from"} ${if (payment.requester_id == model.session?.identity?.id) payment.recipient_phone else payment.requester_id}") }
         }
     }
+    PageControls(model.paymentPage, model.busy, "No transfers yet.", model::morePayments)
 }
 @Composable private fun InboxScreen(model: BankModel) {
     Text("In-app notifications refresh while you use the app. No background push delivery.")
@@ -120,6 +121,20 @@ class MainActivity : ComponentActivity() {
             TextButton(onClick = { model.paymentDetails(notice.payment_id) }, enabled = !model.busy) { Text("View transfer") }
             if (notice.read_at == null) TextButton(onClick = { model.readNotice(notice.id) }, enabled = !model.busy) { Text("Mark read") } else Text("Read")
         } }
+    }
+    PageControls(model.noticePage, model.busy, "No notifications yet.", model::moreNotices)
+}
+@Composable private fun <T> PageControls(page: PageState<T>, busy: Boolean, empty: String, load: () -> Unit) {
+    when {
+        page.loading -> Text("Loading history…")
+        page.error != null -> {
+            Text(page.error, color = MaterialTheme.colorScheme.error)
+            OutlinedButton(onClick = load, enabled = !busy) { Text(if (page.refreshRequired) "Refresh history" else "Retry page") }
+        }
+        !page.loaded -> Text("History has not loaded. Refresh to try again.")
+        page.items.isEmpty() -> Text(empty)
+        page.nextCursor == null -> Text("End of loaded history. Refresh for newer activity.")
+        else -> OutlinedButton(onClick = load, enabled = !busy) { Text("Load more") }
     }
 }
 @Composable private fun ProfileScreen(model: BankModel) {

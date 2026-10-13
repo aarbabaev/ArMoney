@@ -64,3 +64,5 @@ Role TOMLs live under `.codex/agents/`; executable skill instructions live under
 
 - [User profile sharding](adr/0012-user-profile-sharding.md): immutable email-prefix
   placement for new profiles, legacy data preservation and central phone authority.
+
+See [implemented features, deployment boundaries and agreed roadmap](delivery-status.md) for current versus planned capabilities.

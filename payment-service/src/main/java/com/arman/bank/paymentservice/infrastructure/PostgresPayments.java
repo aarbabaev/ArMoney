@@ -55,6 +55,28 @@ public final class PostgresPayments implements PaymentStore {
         return db.transaction(sql -> sql.fetch("select * from notifications where owner_id = ? order by created_at desc, id desc limit 100", owner)
                 .map(PostgresPayments::notification));
     }
+    @Override public List<Payment> historyPage(UUID owner, PagePosition before, int limit) {
+        if (limit < 1 || limit > 101) throw new IllegalArgumentException("Invalid page limit");
+        return db.transaction(sql -> {
+            String query = """
+                select * from payments where recipient_id is not null
+                  and (requester_id = ? or (recipient_id = ? and status = 'COMPLETED'))
+                """;
+            return (before == null
+                    ? sql.fetch(query + " order by created_at desc, id desc limit ?", owner, owner, limit)
+                    : sql.fetch(query + " and (created_at, id) < (cast(? as timestamptz), ?) order by created_at desc, id desc limit ?",
+                        owner, owner, before.createdAt().atOffset(ZoneOffset.UTC), before.id(), limit))
+                    .map(PostgresPayments::payment);
+        });
+    }
+    @Override public List<Notification> notificationsPage(UUID owner, PagePosition before, int limit) {
+        if (limit < 1 || limit > 101) throw new IllegalArgumentException("Invalid page limit");
+        return db.transaction(sql -> (before == null
+                ? sql.fetch("select * from notifications where owner_id = ? order by created_at desc, id desc limit ?", owner, limit)
+                : sql.fetch("select * from notifications where owner_id = ? and (created_at, id) < (cast(? as timestamptz), ?) order by created_at desc, id desc limit ?",
+                    owner, before.createdAt().atOffset(ZoneOffset.UTC), before.id(), limit))
+                .map(PostgresPayments::notification));
+    }
     @Override public Optional<Notification> readNotification(UUID owner, UUID id) {
         return db.transaction(sql -> Optional.ofNullable(sql.fetchOne("""
             update notifications set read_at = coalesce(read_at, clock_timestamp()) where id = ? and owner_id = ? returning *

@@ -91,7 +91,7 @@ builds all images, and probes all six services on the private Compose network.
 Missing Docker is a test failure, never a silent skip. Backend and Android jobs run
 on the disposable local Docker build machine; reports and APKs remain in its local
 artifact volume. See [local CI operations](infra/local-ci/README.md).
-Use a feature branch and PR; do not push to main or merge automatically.
+Use a feature branch and PR; never push directly to main. Independent reviewer merges follow docs/agents/merge-policy.md.
 Start feature branches from the latest main and target main in pull requests.
 Branch protection is a repository-owner setting; source code alone does not establish
 that it is enabled. Required checks must pass on the exact PR head before delivery.
@@ -193,3 +193,5 @@ payment state and in-app notifications. A separate worker retries delivery witho
 changing the transfer result. Delivery is disabled until configured; start with
 Mailtrap Sandbox. See [setup, contact verification and delivery guarantees](docs/email-notifications.md)
 and [ADR 0015](docs/adr/0015-transactional-email-outbox.md).
+
+See [implemented features, deployment boundaries and agreed roadmap](docs/delivery-status.md) for current versus planned capabilities.

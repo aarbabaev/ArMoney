@@ -35,6 +35,16 @@ display unavailable. No funding, SMS or push provider is added. Refresh while
 foregrounded or manually; payment status remains pending until the server reports
 ledger confirmation.
 
+Transfer history and inbox use the gateway's `/v1/payments/page` and
+`/v1/notifications/page` endpoints in pages of 50. Load more appends older rows
+without duplicate IDs. Failed pages preserve loaded rows and retry the same cursor;
+an invalid cursor offers a first-page refresh. Manual and foreground refresh replace
+the loaded history with the newest page. Switching tabs and marking notifications
+read preserve loaded pages. This is keyset traversal, not a historical snapshot:
+newer activity requires refresh. Page cursors are memory-only and cleared at sign-out;
+stale responses cannot populate a different session. Missing cursor metadata is an
+error, never evidence that history is complete.
+
 New recipient entry fixes the country to United Arab Emirates (+971), with no
 country selector. Enter nine local mobile digits beginning with 50, 52, 54, 55,
 56 or 58; the API receives canonical +971 syntax. Other countries, national
@@ -61,6 +71,9 @@ history before sending a replacement. Unreadable storage fails closed.
 JVM tests cover exact money, AED-only wallet eligibility, rejection of unsupported
 new currencies, input/identity, callback, refusal policy and preservation of legacy
 non-AED and foreign-phone uncertain commands, and UAE mobile prefix admission.
+Pagination JVM tests cover append/deduplication, exact-cursor retry, refresh,
+invalid/missing metadata, stale-response rejection after refresh/session reset,
+and notification updates that preserve loaded history.
 Instrumentation tests exercise real Android Keystore persistence, scope isolation
 and the native sign-in screen, fixed UAE entry and read-only registration phone.
 These tests do not constitute real-user browser,
