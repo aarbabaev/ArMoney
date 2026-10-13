@@ -12,3 +12,5 @@ compose.override.yaml
 **/xcuserdata/
 **/DerivedData/
 local-certs/
+__pycache__/
+*.pyc
