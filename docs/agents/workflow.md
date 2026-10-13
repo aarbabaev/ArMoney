@@ -139,3 +139,23 @@ See the measured [context audit](context-efficiency.md); do not interpret charac
 reductions as measured token savings.
 
 Reviewer merges follow [standing owner authorization](merge-policy.md); PR creation alone is insufficient. This policy overrides older example missions that prohibit merges unless the current owner explicitly places that task on hold.
+
+## Dashboard is the operational source of truth
+
+Owner instruction, 2026-10-13: keep working through authorized actionable tasks while the active session can progress, with truthful development, review and deployment status. When the authorized queue is empty, remain idle until asked; do not reinstate periodic polling. Backlog-only requests remain planned work, not automatic implementation authorization.
+
+Status contract and responsible actor:
+- Backlog: planned, not scheduled for execution.
+- Ready: authorized and eligible to start once recorded dependencies permit.
+- In Progress: implementing owner actively working; orchestrator records role/runtime, branch, start time and next milestone.
+- Review: independent reviewer actively reviewing the published PR; reviewer owns findings and status.
+- Awaiting merge: approved but merge is waiting on an explicit constraint; reviewer records it.
+- Awaiting deployment: merged application change not yet verified on the local stack; orchestrator owns deployment tracking.
+- Done: deployed revision and applicable readiness/acceptance checks confirm the application change is ready for owner use. Merge alone is insufficient. Documentation-only work may be Done after verified merge with an explicit no-deployment-needed reason.
+- Blocked: work cannot currently proceed; name the dependency, responsible party and next action. Never leave a blocked task presented as actively implementing.
+
+Until the board has a separate deployment status, use Awaiting deployment during both queued and running deployment, with an explicit activity checkpoint distinguishing them.
+At every meaningful handoff, the responsible actor updates the issue and Project together: active/queued/idle/blocked, actual agent role/runtime, PR and revision, completed evidence, next action, and deployment state. Include timestamps; do not post noisy unchanged updates.
+When work stops without completion, record the idle/waiting state and reason; In Progress must not imply an agent is running when none is.
+Record deploy start, deployed commit, result and readiness/acceptance evidence. A failed deploy cannot be Done. Preserve existing deployment authorization boundaries; when authorization is missing, make that waiting reason explicit.
+This is an on-demand agent workflow, not an always-running service. Do not claim continuous execution after all agents stop. Do not report completion or actual status changes before tool verification.

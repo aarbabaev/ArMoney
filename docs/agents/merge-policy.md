@@ -18,8 +18,8 @@ The assigned reviewer performs the merge using available authorized tooling. If 
 ## Reviewer owns task status updates
 
 Owner instruction, 2026-10-13: bank_reviewer updates linked GitHub issue/Project status itself as part of its verdict and merge handoff, rather than leaving this to an unspecified later orchestrator action.
-- Verified merge + all acceptance criteria met: Done; verify issue closure as appropriate.
-- Verified merge with required deployment still outstanding: Awaiting deployment.
+- Verified merge + all acceptance criteria met + deployed/readiness verified for application changes: Done; verify issue closure as appropriate. Merge alone is not Done. Documentation-only changes may explicitly record deployment not applicable.
+- Verified merge of an application change with deployment still outstanding: Awaiting deployment, even if the issue was automatically closed by GitHub.
 - External dependency, missing required evidence, failed infrastructure/CI or merge-protection blocker: Blocked, with concrete reason, evidence, responsible owner and next action.
 - Confirmed code defects / REQUEST_CHANGES: In Progress, with finding IDs routed through the orchestrator to implementation owners.
 - Review actively running: Review. Approval with an explicit merge hold: Awaiting merge.
