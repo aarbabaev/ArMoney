@@ -67,6 +67,7 @@ jobs:
           docker compose -p assistant-qa-ci -f compose.yaml -f compose.assistant.yaml -f compose.assistant-qa.yaml run --rm assistant-ingestion operator stage /policies/demo.json
           docker compose -p assistant-qa-ci -f compose.yaml -f compose.assistant.yaml -f compose.assistant-qa.yaml run --rm assistant-ingestion operator activate demo-main-112b01d-ft-v1
           docker compose -p assistant-qa-ci -f compose.yaml -f compose.assistant.yaml -f compose.assistant-qa.yaml up --build -d
+          python3 -B scripts/assistant-ready.py --project assistant-qa-ci
           printf '%s\n' '{"disposable":true,"compose_project":"assistant-qa-ci","gateway_origin":"http://localhost:18083"}' > /tmp/assistant-qa-marker.json
           python3 -B scripts/assistant-smoke.py --base http://localhost:18083 --disposable-marker /tmp/assistant-qa-marker.json
       - name: Assistant Compose cleanup
@@ -158,6 +159,7 @@ jobs:
             mcr.microsoft.com/dotnet/sdk:10.0@sha256:e70cdb7f80b0348f5cb85f19a8f670fca061f033d57eed12fa003d58b0e06317 \
             dotnet run --project tests/Assistant.Tests.csproj -c Release
           python3 -B scripts/test-assistant-smoke.py
+          python3 -B scripts/test-assistant-ready.py
           docker build -t armoney-assistant-ci ai-assistant-service
       - name: Assistant disposable database cleanup
         if: always() && steps.isolation.outcome == 'success'
