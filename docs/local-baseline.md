@@ -62,14 +62,17 @@ does not credit again. Do not invent a new funding ID to retry or refill an acco
 After all 200 users are funded, verify the fixed default baseline through Gateway:
 
 ```powershell
-python -B scripts/verify-local-baseline.py --apply --acknowledge-local-fixtures --gateway https://localhost:8443 --ca-file C:/private/armoney-root.crt --manifest C:/private/users.json --transfer-and-return
+python -B scripts/verify-local-baseline.py --apply --acknowledge-local-fixtures --gateway https://localhost:8443 --issuer https://localhost:8443/sso/realms/armoney --ca-file C:/private/armoney-root.crt --manifest C:/private/users.json --transfer-and-return
 ```
 
 This requires the same process-only fixture password. It checks all fixture mappings,
 profiles, wallet readiness and expected balances. The optional transfer flag posts
 1 AED between two fixture wallets, checks idempotent replay and changed-payload
-rejection, then transfers it back and verifies the original balances. Stable keys
-allow recovery after interruption. Omit the flag for read-only balance verification;
+rejection, then transfers it back and verifies the original balances. The same private
+manifest retains flushed intent, phase, key and payment-ID checkpoints before dispatch.
+Keep it for interrupted recovery; matching history alone is not proof that this verifier
+owns a transfer. Unexplained balance changes block before sending another payment.
+Omit the flag for read-only balance verification;
 without `--apply`, no requests are made. No emulator is launched.
 
 After acceptance checks pass:

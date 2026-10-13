@@ -132,6 +132,19 @@ def transfer_key(source, destination):
         f"{seed.NAMESPACE}:baseline-p2p:{source['wallet_id']}:{destination['wallet_id']}"))
 
 
+def save_checkpoint(path, manifest):
+    """Use private atomic replacement, then flush before a payment dispatch."""
+    seed.save_manifest(path, manifest)
+    with path.open("r+b") as checkpoint:
+        os.fsync(checkpoint.fileno())
+    if os.name != "nt":
+        descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
 def post_payment(http, gateway, token, body, key, statuses=(200, 202)):
     request = urllib.request.Request(gateway + "/v1/payments", json.dumps(body).encode(),
         {"Content-Type": "application/json", "Authorization": "Bearer " + token, "Idempotency-Key": key}, method="POST")
@@ -160,52 +173,86 @@ def completed(http, gateway, token, payment, body, source, destination):
     raise seed.Blocked("Payment outcome unresolved; rerun with the same manifest and transfer option")
 
 
-def transfer_and_return(pair, gateway, users):
+def transfer_and_return(pair, gateway, users, manifest, save):
+    """Caller holds manifest lock; save must durably persist before dispatch."""
     a, b = users["100"], users["101"]
     ha, ta = pair[0]
     hb, tb = pair[1]
     original = (amount_fils(100), amount_fils(101))
+    shifted = (original[0] - 100, original[1] + 100)
+    forward, reverse = command(a, b, 101), command(b, a, 100)
+    fk, rk = transfer_key(a, b), transfer_key(b, a)
+
     def balances():
         return balance(ha, gateway, ta, a), balance(hb, gateway, tb, b)
-    shifted = (original[0] - 100, original[1] + 100)
-    starting = balances()
-    require(starting in (original, shifted), "Pair balance differs from baseline or interrupted transfer")
-    interrupted_id = None
-    if starting == shifted:
-        # A shifted balance alone is not evidence that this checker sent money.
-        # Require a unique durable matching command, then require the stable-key
-        # replay to resolve to that exact payment before issuing any return.
-        wanted = command(a, b, 101)
-        matches, cursor, cursors = [], None, set()
-        for _ in range(100):
-            query = "?limit=100" + ("&cursor=" + urllib.parse.quote(cursor, safe="") if cursor else "")
-            page = ha.json("GET", gateway + "/v1/payments/page" + query, token=ta)
-            matches.extend(p for p in page["payments"] if all(p.get(k) == v for k, v in wanted.items())
-                           and p.get("requester_id") == a["identity_id"]
-                           and p.get("destination_wallet_id") == b["wallet_id"]
-                           and p.get("status") in ("PENDING", "COMPLETED"))
-            cursor = page["next_cursor"]
-            if cursor is None:
-                break
-            require(isinstance(cursor, str) and cursor not in cursors, "Payment history cursor invalid")
-            cursors.add(cursor)
+
+    checkpoint = manifest.get("acceptance_transfer")
+    if checkpoint is None:
+        require(balances() == original, "Unowned balance shift; no payment will be sent")
+        checkpoint = {"version": 1, "invocation_id": str(uuid.uuid4()), "phase": "FORWARD_INTENT",
+                      "forward_key": fk, "return_key": rk, "forward_body": forward, "return_body": reverse,
+                      "forward_id": None, "return_id": None}
+        manifest["acceptance_transfer"] = checkpoint
+        save()
+    require(isinstance(checkpoint, dict) and type(checkpoint.get("version")) is int
+            and checkpoint["version"] == 1 and checkpoint.get("forward_key") == fk
+            and checkpoint.get("return_key") == rk and checkpoint.get("forward_body") == forward
+            and checkpoint.get("return_body") == reverse, "Acceptance checkpoint contract mismatch")
+    seed.identifier(checkpoint.get("invocation_id"))
+    phase = checkpoint.get("phase")
+    require(phase in ("FORWARD_INTENT", "FORWARD_CONFIRMED", "RETURN_INTENT", "DONE"), "Invalid acceptance phase")
+    if phase == "FORWARD_INTENT":
+        require(checkpoint.get("forward_id") is None and checkpoint.get("return_id") is None, "Invalid forward intent")
+    else:
+        seed.identifier(checkpoint.get("forward_id"))
+        if phase == "DONE":
+            seed.identifier(checkpoint.get("return_id"))
         else:
-            raise seed.Blocked("Payment history exceeds bounded acceptance scan")
-        require(len(matches) == 1, "Shifted balances lack a unique matching durable payment")
-        interrupted_id = seed.identifier(matches[0].get("id"))
-    # Both directions use stable IDs. A rerun after either response is lost replays
-    # the original commands, even when the return has already completed.
-    for http, token, source, destination, ordinal in ((ha, ta, a, b, 101), (hb, tb, b, a, 100)):
-        body, key = command(source, destination, ordinal), transfer_key(source, destination)
-        pid = completed(http, gateway, token, post_payment(http, gateway, token, body, key), body, source, destination)
-        if source is a and interrupted_id:
-            require(pid == interrupted_id, "Recovery key resolved to a different payment; stop and investigate")
-        before = balances()
-        replay = completed(http, gateway, token, post_payment(http, gateway, token, body, key), body, source, destination)
-        require(replay == pid and balances() == before, "Replay changed payment identity or balances")
+            require(checkpoint.get("return_id") is None, "Unexpected return checkpoint")
+
+    def advance(phase, **fields):
+        checkpoint.update(fields, phase=phase)
+        save()
+
+    def send(http, token, body, key, source, destination):
+        return completed(http, gateway, token, post_payment(http, gateway, token, body, key), body, source, destination)
+
+    def lookup(http, token, pid, body, source, destination):
+        actual = completed(http, gateway, token,
+            http.json("GET", gateway + "/v1/payments/" + pid, token=token), body, source, destination)
+        require(actual == pid, "Durable payment identity changed")
+
+    def replay(http, token, body, key, source, destination, pid, expected):
+        require(balances() == expected, "Unexpected balances before replay")
+        require(send(http, token, body, key, source, destination) == pid and balances() == expected,
+                "Replay changed payment identity or balances")
         post_payment(http, gateway, token, dict(body, amount_minor=101), key, statuses=(409,))
-        require(balances() == before, "Conflicting payload changed balances")
-        require(before in (original, shifted), "Unexpected transfer balances")
+        require(balances() == expected, "Conflicting payload changed balances")
+
+    if phase == "FORWARD_INTENT":
+        require(balances() in (original, shifted), "Forward intent has unexpected balances")
+        pid = send(ha, ta, forward, fk, a, b)
+        # No return was dispatched under this intent. COMPLETED alone never
+        # proves money movement, and original balances cannot pass this phase.
+        require(balances() == shifted, "Forward did not move exactly 100 fils")
+        advance("FORWARD_CONFIRMED", forward_id=pid)
+        phase = "FORWARD_CONFIRMED"
+    if phase == "FORWARD_CONFIRMED":
+        lookup(ha, ta, checkpoint["forward_id"], forward, a, b)
+        replay(ha, ta, forward, fk, a, b, checkpoint["forward_id"], shifted)
+        advance("RETURN_INTENT")
+        phase = "RETURN_INTENT"
+    if phase == "RETURN_INTENT":
+        lookup(ha, ta, checkpoint["forward_id"], forward, a, b)
+        require(balances() in (shifted, original), "Return intent has unexpected balances")
+        pid = send(hb, tb, reverse, rk, b, a)
+        require(balances() == original, "Return did not restore exact original balances")
+        advance("DONE", return_id=pid)
+    # Only a durable return checkpoint allows forward replay at original balances.
+    lookup(ha, ta, checkpoint["forward_id"], forward, a, b)
+    lookup(hb, tb, checkpoint["return_id"], reverse, b, a)
+    replay(ha, ta, forward, fk, a, b, checkpoint["forward_id"], original)
+    replay(hb, tb, reverse, rk, b, a, checkpoint["return_id"], original)
     require(balances() == original, "Return did not restore baseline balances")
 
 
@@ -233,7 +280,12 @@ def main(argv=None):
     with seed.manifest_lock(path):
         require(not path.is_symlink(), "Manifest must not be a symlink")
         seed.owner_only(path)
-        users = validate(json.loads(path.read_text(encoding="utf-8")), gateway, issuer)
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        users = validate(manifest, gateway, issuer)
+        if not args.transfer_and_return:
+            checkpoint = manifest.get("acceptance_transfer")
+            require(checkpoint is None or isinstance(checkpoint, dict) and checkpoint.get("phase") == "DONE",
+                    "Acceptance transfer unresolved; rerun with --transfer-and-return")
         # Validate the two participants first; retain fresh sessions only for the
         # optional transfer, then check every balance after recovery/return.
         if args.transfer_and_return:
@@ -246,7 +298,7 @@ def main(argv=None):
                 for http, token, foreign in ((ha, ta, users["101"]), (hb, tb, users["100"])):
                     http.json("GET", gateway + "/v1/wallets/" + foreign["wallet_id"] + "/balance", token=token, statuses=(404,))
                 ha.json("GET", gateway + "/v1/wallets", statuses=(401,))
-                transfer_and_return(pair, gateway, users)
+                transfer_and_return(pair, gateway, users, manifest, lambda: save_checkpoint(path, manifest))
         for n in range(100, 300):
             with session(args.ca_file, issuer, gateway, n, users[str(n)], password) as (http, token):
                 require(verify_user(http, gateway, token, n, users[str(n)]) == amount_fils(n), "Funded balance mismatch")

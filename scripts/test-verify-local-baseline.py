@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import io
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -29,6 +30,17 @@ def manifest():
 
 
 class VerifyTests(unittest.TestCase):
+    def test_real_checkpoint_save_roundtrip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            expected = manifest()
+            with verify.seed.manifest_lock(path):
+                verify.save_checkpoint(path, expected)
+                self.assertEqual(expected, json.loads(path.read_text(encoding="utf-8")))
+                expected["acceptance_transfer"] = {"phase": "FORWARD_INTENT"}
+                verify.save_checkpoint(path, expected)
+                self.assertEqual(expected, json.loads(path.read_text(encoding="utf-8")))
+
     def test_offline_plan_never_constructs_http_or_reads_manifest(self):
         with patch.object(verify.seed, "Http", side_effect=AssertionError("network")), patch.object(verify, "manifest_path", side_effect=AssertionError("file")), patch("sys.stdout", new_callable=io.StringIO) as out:
             verify.main(["--transfer-and-return"])
@@ -119,7 +131,114 @@ class VerifyTests(unittest.TestCase):
         pair = [(EmptyHistory(), "synthetic-a"), (EmptyHistory(), "synthetic-b")]
         with patch.object(verify, "balance", side_effect=[99900, 108019]), patch.object(verify, "post_payment", side_effect=AssertionError("must not post")):
             with self.assertRaises(verify.seed.Blocked):
-                verify.transfer_and_return(pair, GATEWAY, users)
+                verify.transfer_and_return(pair, GATEWAY, users, {}, lambda: None)
+
+
+class TransferOrchestrationTests(unittest.TestCase):
+    """Synthetic control-flow tests; these do not prove ledger transactions."""
+    def setUp(self):
+        self.manifest = manifest()
+        self.users = self.manifest["users"]
+        self.amounts = {self.users[str(n)]["wallet_id"]: verify.amount_fils(n) for n in (100, 101)}
+        self.saved = []
+        self.payments = {}
+        self.requests = []
+        self.moving = True
+        self.lose_direction = None
+        self.new_posts = 0
+        class Http:
+            def __init__(inner, test):
+                inner.test = test
+            def json(inner, method, address, **kwargs):
+                return next(copy.deepcopy(p) for p in inner.test.payments.values() if address.endswith(p["id"]))
+        self.pair = [(Http(self), "a"), (Http(self), "b")]
+
+    def save(self):
+        self.saved.append(copy.deepcopy(self.manifest["acceptance_transfer"]))
+
+    def post(self, http, gateway, token, body, key, statuses=(200, 202)):
+        self.assertTrue(self.saved, "Intent must persist before dispatch")
+        self.requests.append((key, statuses))
+        if statuses == (409,):
+            self.assertIn(key, self.payments)
+            return {"error": "conflict"}
+        if key not in self.payments:
+            forward = body["source_wallet_id"] == self.users["100"]["wallet_id"]
+            self.assertEqual("FORWARD_INTENT" if forward else "RETURN_INTENT", self.saved[-1]["phase"])
+            source, destination = (self.users["100"], self.users["101"]) if forward else (self.users["101"], self.users["100"])
+            payment = dict(body, id=str(uuid.uuid4()), requester_id=source["identity_id"],
+                           destination_wallet_id=destination["wallet_id"], status="COMPLETED", rejection_reason=None)
+            self.payments[key] = payment
+            self.new_posts += 1
+            if self.moving:
+                self.amounts[source["wallet_id"]] -= 100
+                self.amounts[destination["wallet_id"]] += 100
+            if self.lose_direction == ("forward" if forward else "return"):
+                self.lose_direction = None
+                raise OSError("Synthetic lost response")
+        return copy.deepcopy(self.payments[key])
+
+    def run_flow(self, save=None):
+        with patch.object(verify, "balance", side_effect=lambda h, g, t, e: self.amounts[e["wallet_id"]]), patch.object(verify, "post_payment", side_effect=self.post):
+            verify.transfer_and_return(self.pair, GATEWAY, self.users, self.manifest, save or self.save)
+
+    def test_fresh_flow_observes_exact_movement_and_persists_phases(self):
+        self.run_flow()
+        self.assertEqual(["FORWARD_INTENT", "FORWARD_CONFIRMED", "RETURN_INTENT", "DONE"], [s["phase"] for s in self.saved])
+        self.assertEqual(2, self.new_posts)
+        self.assertEqual(verify.amount_fils(100), self.amounts[self.users["100"]["wallet_id"]])
+
+    def test_completed_without_money_movement_is_rejected(self):
+        self.moving = False
+        with self.assertRaisesRegex(verify.seed.Blocked, "Forward did not move"):
+            self.run_flow()
+        self.assertEqual(1, self.new_posts)
+        self.assertEqual("FORWARD_INTENT", self.saved[-1]["phase"])
+
+    def test_interrupted_forward_replays_owned_key_and_restores(self):
+        self.lose_direction = "forward"
+        with self.assertRaises(OSError):
+            self.run_flow()
+        self.assertEqual("FORWARD_INTENT", self.saved[-1]["phase"])
+        first_key = next(iter(self.payments))
+        self.run_flow()
+        self.assertEqual(2, self.new_posts)
+        self.assertEqual(first_key, self.manifest["acceptance_transfer"]["forward_key"])
+        self.assertEqual("DONE", self.saved[-1]["phase"])
+
+    def test_interrupted_return_replays_without_new_forward(self):
+        self.lose_direction = "return"
+        with self.assertRaises(OSError):
+            self.run_flow()
+        self.assertEqual("RETURN_INTENT", self.saved[-1]["phase"])
+        self.run_flow()
+        self.assertEqual(2, self.new_posts)
+        self.assertEqual("DONE", self.saved[-1]["phase"])
+
+    def test_completed_rerun_requires_saved_payment_ids_and_no_new_post(self):
+        self.run_flow()
+        checkpoint = copy.deepcopy(self.manifest["acceptance_transfer"])
+        self.run_flow()
+        self.assertEqual(2, self.new_posts)
+        self.assertEqual(checkpoint, self.manifest["acceptance_transfer"])
+
+    def test_unrelated_identical_history_shift_rejected_before_any_post(self):
+        a, b = self.users["100"], self.users["101"]
+        self.amounts[a["wallet_id"]] -= 100
+        self.amounts[b["wallet_id"]] += 100
+        self.payments["unrelated-key"] = dict(verify.command(a, b, 101), id=str(uuid.uuid4()),
+            requester_id=a["identity_id"], destination_wallet_id=b["wallet_id"], status="COMPLETED")
+        with self.assertRaisesRegex(verify.seed.Blocked, "Unowned balance shift"):
+            self.run_flow()
+        self.assertEqual([], self.requests)
+        self.assertEqual([], self.saved)
+
+    def test_failed_intent_persistence_prevents_dispatch(self):
+        def failed_save():
+            raise OSError("Synthetic disk failure")
+        with self.assertRaises(OSError):
+            self.run_flow(failed_save)
+        self.assertEqual([], self.requests)
 
 
 if __name__ == "__main__":
