@@ -1,0 +1,37 @@
+# Manual disposable validation helper, never a GitHub runner or user bank stack.
+name: armoney-assistant-validation
+services:
+  daemon:
+    image: docker:29.8.1-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    command: ["dockerd", "--host=unix:///run/assistant-docker/docker.sock", "--storage-driver=overlay2"]
+    volumes:
+      - validation-data:/var/lib/docker
+      - validation-socket:/run/assistant-docker
+      - validation-workspace:/work
+    healthcheck:
+      test: ["CMD", "docker", "--host=unix:///run/assistant-docker/docker.sock", "info"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+  helper:
+    image: armoney-local-runner:2.338.0
+    entrypoint: ["bash", "-lc", "exec sleep infinity"]
+    network_mode: service:daemon
+    environment:
+      DOCKER_HOST: unix:///run/assistant-docker/docker.sock
+      TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: /run/assistant-docker/docker.sock
+      TESTCONTAINERS_HOST_OVERRIDE: localhost
+      JAVA_TOOL_OPTIONS: -Dapi.version=1.44
+    volumes:
+      - validation-socket:/run/assistant-docker
+      - validation-workspace:/work
+    depends_on:
+      daemon:
+        condition: service_healthy
+volumes:
+  validation-data:
+  validation-socket:
+  validation-workspace:

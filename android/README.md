@@ -45,6 +45,20 @@ newer activity requires refresh. Page cursors are memory-only and cleared at sig
 stale responses cannot populate a different session. Missing cursor metadata is an
 error, never evidence that history is complete.
 
+The authenticated Assistant tab sends one standalone question to
+`POST /v1/assistant/messages` using the existing bank session. It sends no
+conversation history or client-selected identity and stores no conversation on
+disk. The latest turn is held in memory and cleared on sign-out, session change
+or expiry; stale responses cannot repopulate it. Questions are limited to 2,000
+Unicode code points and a 4,096-byte JSON request. The assistant uses a separate
+40-second timeout and bounded 32,768-byte response, with no automatic POST retry.
+Loading, unavailable, expired, insufficient-evidence, empty-history and conflicting
+sources have explicit states. Live AED facts use exact integer fils and display
+source fetch times in Asia/Dubai separately from demonstration policy citations.
+Citations show document, version, section and excerpt as plain text; no external
+links or HTML are executed. No provider key is included in the app, and the
+assistant cannot submit transfers.
+
 New recipient entry fixes the country to United Arab Emirates (+971), with no
 country selector. Enter nine local mobile digits beginning with 50, 52, 54, 55,
 56 or 58; the API receives canonical +971 syntax. Other countries, national
@@ -74,8 +88,12 @@ non-AED and foreign-phone uncertain commands, and UAE mobile prefix admission.
 Pagination JVM tests cover append/deduplication, exact-cursor retry, refresh,
 invalid/missing metadata, stale-response rejection after refresh/session reset,
 and notification updates that preserve loaded history.
+Assistant JVM tests cover encoded request limits, malformed or ambiguous response
+rejection, exact large integer balances, session-bound stale-result rejection,
+logout/expiry clearing and explicit resubmission after errors.
 Instrumentation tests exercise real Android Keystore persistence, scope isolation
 and the native sign-in screen, fixed UAE entry and read-only registration phone.
 These tests do not constitute real-user browser,
 LAN certificate or physical-device acceptance. See [Android contract](../docs/android-contract.md)
 and [P2P contract](../docs/p2p-contract.md) for the frozen contract and integration evidence.
+
