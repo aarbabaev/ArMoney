@@ -45,3 +45,6 @@
 - Use docs/agents/context-map.md to select relevant references. Read each applicable instruction once per context, then use source for current facts.
 - Give workers scoped briefs without the full conversation when sufficient. Reuse a worker for fixes; avoid duplicate research and unbounded tool output.
 - Preserve independent security/financial validation; instruction character counts are not measured token or billing savings.
+
+## Standing reviewer merge authorization
+Owner authorized independent reviewer merges on 2026-10-13 under docs/agents/merge-policy.md. This is the explicit exception to earlier merge restrictions; other workers still cannot merge.

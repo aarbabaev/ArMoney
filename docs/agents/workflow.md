@@ -46,7 +46,7 @@ Format reference: [official OpenAI documentation](https://learn.chatgpt.com/docs
 | ledger_owner | ledger-service/ | Accounts, balances, immutable balanced postings |
 | qa_integration | Read-only until assigned exact test files | Cross-service acceptance, outages, recovery |
 | qa_security | Read-only until assigned exact test files | Identity isolation and financial invariants |
-| bank_reviewer | Read-only | Independent correctness and architecture review |
+| bank_reviewer | Read-only source; gated PR merge | Independent correctness and architecture review |
 | security_auditor | Read-only until assigned exact regression files | System-security review and independent vulnerability retesting |
 
 Owners include their module's tests and OpenAPI. Shared business models must not
@@ -112,8 +112,7 @@ Run focused checks first. Runtime/schema changes require the repository's full
 separately from proposed cases; unavailable tests remain blocked. The independent
 reviewer reviews the integrated revision after owners finish. Fix findings and
 rerun affected checks. Final delivery needs green required CI on the exact PR
-head, evidence links and explicit remaining limitations. Neither green CI nor a
-reviewer's approval authorizes merging.
+head, evidence links and explicit remaining limitations. Owner standing authorization permits reviewer merges only under [merge policy](merge-policy.md).
 
 ## Architecture documentation
 
@@ -138,3 +137,5 @@ entire conversation. Reuse that worker for corrections. Read selected instructio
 in full once, return bounded evidence, and avoid repeated polling of unchanged work.
 See the measured [context audit](context-efficiency.md); do not interpret character
 reductions as measured token savings.
+
+Reviewer merges follow [standing owner authorization](merge-policy.md); PR creation alone is insufficient. This policy overrides older example missions that prohibit merges unless the current owner explicitly places that task on hold.
