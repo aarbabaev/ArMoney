@@ -1,7 +1,8 @@
 # ADR 0020: Proposed banking assistant boundary, retrieval and trust
 
-Status: Accepted for implementation; feature source exists, integration and
-deployment validation remain pending. Date: 2026-10-13.
+Status: Accepted and implemented in PR #46. Required CI, independent review and
+local rollout verified on 2026-10-13 at revision `ce5175bb`. This ADR retains the
+original proposal context; measured evidence and limits are in the outcome matrix.
 Related: [mission](../agents/missions/ai-assistant.md).
 
 ## Context and proposed decisions

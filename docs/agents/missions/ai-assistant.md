@@ -1,8 +1,8 @@
 # Banking AI assistant mission
 
-Status: feature source implemented; local focused checks passed. Integrated
-Compose/model evaluation, independent retesting, exact-head CI and deployment
-remain pending. This is not a completed or deployed banking feature.
+Status: first feature slice delivered in PR #46. Exact-head CI #91, independent
+QA/security/review and local rollout of merged revision ce5175bb passed on
+2026-10-13. Live-owner messages and physical-device UX were not run.
 Tracking: [issue #43](https://github.com/aarbabaev/ArMoney/issues/43),
 [delivery board](https://github.com/users/aarbabaev/projects/1).
 Remote source baseline: main `112b01d90c247bd774db7fa9f9720edcc0b439f8`.
@@ -44,14 +44,14 @@ and fewer unsupported claims, not by adding agent complexity.
 
 | ID | Role | Writable scope | Dependency / next milestone | State |
 | --- | --- | --- | --- | --- |
-| AI-PLAN | bank_orchestrator | Shared docs, role/config, CI/Compose; publication | Integrated checks and truthful evidence | Active integration |
-| AI-API-DESIGN | gateway_owner | app-gateway/** | Frozen delegation/message contract; 58 unit tests passed | Owner handoff ready; integration pending |
-| AI-SEC-DESIGN | security_auditor | None | Original-bearer design rejected; opaque delegation inspected | Independent runtime retest passed; exact-head review pending |
-| AI-SERVICE | ai_assistant_owner | ai-assistant-service/** including tests | 70 deterministic/real PostgreSQL assertions; 22-question actual-model gate passed | Owner handoff ready; integration pending |
-| AI-ANDROID | android_owner | android/** | 31 JVM tests, lint and APK passed; no device/emulator claim | Owner handoff ready; integration pending |
+| AI-PLAN | bank_orchestrator | Shared docs, role/config, CI/Compose; publication | Integrated checks and truthful evidence | Delivered; local rollout verified |
+| AI-API-DESIGN | gateway_owner | app-gateway/** | Frozen delegation/message contract; 58 unit tests passed | Integrated and verified |
+| AI-SEC-DESIGN | security_auditor | None | Original-bearer design rejected; opaque delegation inspected | Independent runtime retest and exact-head review passed |
+| AI-SERVICE | ai_assistant_owner | ai-assistant-service/** including tests | 70 deterministic/real PostgreSQL assertions; 22-question actual-model gate passed | Integrated and verified |
+| AI-ANDROID | android_owner | android/** | 31 JVM tests, lint and APK passed; no device/emulator claim | Integrated and verified |
 | AI-QA | qa_integration | Only individually leased acceptance/evaluation files | Five offline checks; independent actual-provider 35-request smoke passed | Scoped local verification passed |
 | AI-SEC | security_auditor | Read-only; exact regression files only by lease | Delegation, containment, metric and grounding findings independently retested | Scoped local verification passed |
-| AI-REVIEW | bank_reviewer | Read-only source; verdict/status per merge policy | Exact head green CI, QA/security evidence | Queued |
+| AI-REVIEW | bank_reviewer | Read-only source; verdict/status per merge policy | Exact head green CI, QA/security evidence | Approved and merged |
 
 Runtime agent IDs and changing checkpoints belong in issue/PR handoffs; this table
 does not start workers. Service owners must not edit shared docs or publish.
