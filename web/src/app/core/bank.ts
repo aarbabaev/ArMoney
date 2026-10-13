@@ -59,6 +59,7 @@ export class Bank {
   private token: string | null = null;
   private expires = 0;
   private generation = 0;
+  private operation = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
   readonly store = new Store();
   money = money;
@@ -79,24 +80,25 @@ export class Bank {
   });
   async task(action: () => Promise<void>) {
     if (this.busy()) return;
-    const epoch = this.generation;
+    const ticket = ++this.operation;
     this.busy.set(true);
     this.message.set("");
     try {
       await action();
     } catch (e) {
-      if (epoch !== this.generation) return;
+      if (ticket !== this.operation) return;
       this.message.set(
         e instanceof Error
           ? e.message
           : "Unable to confirm request. Saved transfers are preserved.",
       );
     } finally {
-      if (epoch === this.generation) this.busy.set(false);
+      if (ticket === this.operation) this.busy.set(false);
     }
   }
   private clear() {
     this.generation++;
+    this.operation++;
     this.busy.set(false);
     this.pageGeneration.payments++;
     this.pageGeneration.notifications++;
@@ -200,6 +202,7 @@ export class Bank {
         );
         uuid(identity.id);
         if (epoch !== this.generation) return;
+        this.generation++;
         this.token = session.access_token;
         this.owner.set(identity.id);
         this.timer = setTimeout(() => {
@@ -218,7 +221,7 @@ export class Bank {
   async logout() {
     const token = this.token;
     this.clear();
-    this.busy.set(false);
+    const epoch = this.generation;
     try {
       if (token)
         await this.request(
@@ -229,18 +232,21 @@ export class Bank {
           token,
         );
     } catch {
-      this.message.set(
-        "Local sign-out complete; server revocation could not be confirmed.",
-      );
-    } finally {
-      await this.oidc.removeUser();
+      if (epoch === this.generation)
+        this.message.set(
+          "Local sign-out complete; server revocation could not be confirmed.",
+        );
     }
+    if (epoch !== this.generation) return;
+    await this.oidc.removeUser();
+    if (epoch !== this.generation) return;
     try {
       await this.oidc.signoutRedirect();
     } catch {
-      this.message.set(
-        "Signed out locally. Provider sign-out could not be opened.",
-      );
+      if (epoch === this.generation)
+        this.message.set(
+          "Signed out locally. Provider sign-out could not be opened.",
+        );
     }
   }
 

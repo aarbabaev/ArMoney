@@ -194,7 +194,7 @@ p {
   transition: box-shadow 0.2s;
 }
 .account:hover {
-  box-shadow: 0 5px 20px #6750a422;
+  box-shadow: 0 5px 20px #191c1f22;
 }
 .balance {
   font-size: clamp(25px, 3vw, 38px);
@@ -318,7 +318,7 @@ dd {
   font-size: 14px;
 }
 .detail {
-  box-shadow: 0 5px 30px #6750a422;
+  box-shadow: 0 5px 30px #191c1f22;
 }
 footer {
   padding: 20px 40px;

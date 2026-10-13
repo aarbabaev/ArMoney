@@ -248,6 +248,60 @@ describe("session isolation and recovery", () => {
     expect(b.message()).toBe("Write failed");
   });
 });
+describe("new session and stale revocation", () => {
+  it("keeps a newly verified login when an earlier logout returns HTTP 401", async () => {
+    const b = bank(),
+      held = deferred();
+    vi.stubGlobal("history", { replaceState: vi.fn() });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path === "/v1/auth/logout") return held.promise;
+        return new Response(
+          JSON.stringify(
+            path === "/v1/auth/sso"
+              ? {
+                  access_token: "b".repeat(43),
+                  token_type: "Bearer",
+                  expires_at: new Date(Date.now() + 1800000).toISOString(),
+                }
+              : { id: recipient, email: null },
+          ),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    vi.spyOn((b as any).oidc, "signinRedirectCallback").mockResolvedValue({
+      access_token: "synthetic-provider-token",
+    });
+    vi.spyOn(b, "refresh").mockResolvedValue();
+    const logout = b.logout();
+    await b.callback();
+    expect(b.owner()).toBe(recipient);
+    expect(b.busy()).toBe(false);
+    held.resolve(
+      new Response('{"error":"unauthorized"}', {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    await logout;
+    expect(b.owner()).toBe(recipient);
+    expect((b as any).token).toBe("b".repeat(43));
+    expect((b as any).oidc.signoutRedirect).not.toHaveBeenCalled();
+    (b as any).clear();
+  });
+  it("expiry clears the busy flag and allows another sign-in task", async () => {
+    const b = bank();
+    b.busy.set(true);
+    Object.assign(b, { expires: Date.now() - 1 });
+    await expect(b.request("/v1/wallets")).rejects.toThrow("Session expired");
+    expect(b.busy()).toBe(false);
+    const action = vi.fn(async () => {});
+    await b.task(action);
+    expect(action).toHaveBeenCalledOnce();
+  });
+});
 describe("cursor and notification contract", () => {
   it("does not restart exhausted history and supersedes held older page", async () => {
     const b = bank(),

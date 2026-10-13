@@ -1,7 +1,7 @@
 # ArMoney browser client
 
 Tracking: [issue #44](https://github.com/aarbabaev/ArMoney/issues/44).
-Source implementation and checks are in progress. Deployment and real backend
+Source implementation is ready for independent review. Deployment and real backend
 browser acceptance are pending; this document is not a readiness certificate.
 AI integration depends on the protected contract from separate issue #43.
 
@@ -86,9 +86,9 @@ outcomes. Real browser smoke must cover callback/login, logout/expiry, owner iso
 recovery across reload/tabs and demo corruption. Full Gradle check, native/SSO
 regressions and mandatory exact-head CI remain required for this runtime change.
 
-SEC-WEB-001 (logout during pending work and stale card responses) and QA pagination,
-immutable-notification and card-capacity findings are assigned to web_owner. Developer
-fix reports remain pending independent retest. Final PR records exact revision,
+SEC-WEB-001 (logout during pending work and stale card responses), session-generation
+races and QA pagination, immutable-notification and card-capacity findings have developer
+fixes. Independent exact-revision retest remains required. Final PR records exact revision,
 executed commands, outcomes, blocked checks and deployment status. No completed
 AI integration, device acceptance or persistent deployment is implied by a build.
 
@@ -103,3 +103,15 @@ This local evidence does not replace exact-head CI or disposable web/SSO smoke.
 Compose config with synthetic configuration values and Python AST validation of
 web-smoke, sso-smoke and browser-CA helper also passed; these are structural checks,
 not runtime acceptance.
+
+### Browser developer evidence
+
+Angular 22.2.2 production build and pinned dependency audit passed; audit reports
+zero vulnerabilities. Vitest covers exact long money, immutable command recovery,
+held logout/expiry operations, session generation, cursor supersession and notification
+immutability. Six Playwright fixtures cover mobile/desktop light/dark axe checks,
+exact money, reload recovery, two real tabs/Web Locks, demo cards and storage corruption.
+These fixtures use a separate HTTP loopback test entry and synthetic sessions;
+production builds exclude that entry. No TLS certificate bypass is configured.
+Independent execution, exact-head CI and real disposable smoke are tracked in
+[PR #49](https://github.com/aarbabaev/ArMoney/pull/49); pending checks are not success.

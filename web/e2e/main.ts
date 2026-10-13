@@ -9,6 +9,7 @@ class SyntheticBank extends Bank {
   override signIn() {
     return this.task(async () => {
       const identity = await this.request("/v1/auth/me");
+      (this as any).generation++;
       this.owner.set(identity.id);
       Object.assign(this, {
         token: "synthetic-ui-session-".padEnd(43, "x"),

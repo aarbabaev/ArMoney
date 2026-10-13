@@ -207,7 +207,7 @@ same issuer/subject to one bank identity. No new financial service is introduced
 
 The Angular project lives in web/. Its source and acceptance are tracked in
 [issue #44](https://github.com/aarbabaev/ArMoney/issues/44), [web guide](docs/web-client.md)
-and [ADR 0021](docs/adr/0021-browser-spa-session.md). Implementation is in progress;
+and [ADR 0021](docs/adr/0021-browser-spa-session.md). Browser source is implemented;
 this map does not claim deployment or completed end-to-end acceptance.
 
 The optional web overlay routes SPA assets through the existing HTTPS edge;
@@ -732,12 +732,13 @@ flowchart LR
 | Ledger smoke in CI | Private posting with synthetic funds |
 | `scripts/p2p-smoke.py` in disposable CI | Phone resolution, public P2P, duplicate/concurrent spending, outages, post-commit recovery, notification isolation and journal reconciliation |
 | Android CI | Debug APK, lint and JVM tests; emulator checks only on explicit owner request |
-| SSO browser smoke in CI | Disposable Keycloak authorization code/PKCE and gateway exchange for iOS and Android |
+| Angular CI | Production build, unit/client contracts, browser fixtures and dependency audit; real backend acceptance in the disposable SSO job |
+| SSO browser smoke in CI | Disposable Keycloak authorization code/PKCE and gateway exchange for iOS, Android and web; real Angular gateway smoke |
 | iOS validation | Paused by owner; existing script requires Mac/Xcode when resumed |
 
 ### Local build infrastructure
 
-GitHub Actions schedules backend and Android work on a disposable Linux Docker runner
+GitHub Actions schedules backend, Android and Angular work on a disposable Linux Docker runner
 labelled `armoney-local`. A Windows controller registers one job at a time, then removes
 that job's runner, workspace and dedicated Docker daemon storage. Artifacts persist in
 `armoney-ci-artifacts`. The application's running Docker stack is separate. PostgreSQL readiness probes use
@@ -745,7 +746,7 @@ TCP loopback to avoid accepting the temporary initialization server as ready.
 
 ```mermaid
 flowchart LR
-    GH["GitHub Actions: checks and scheduling"] --> R["Ephemeral Linux runner: Java and Android"]
+    GH["GitHub Actions: checks and scheduling"] --> R["Ephemeral Linux runner: Java, Android and Angular"]
     H["Windows controller: registration and cleanup"] --> R
     R --> D["Dedicated inner Docker daemon: disposable databases and smoke tests"]
     R --> A["Local artifact volume: reports and APK"]
