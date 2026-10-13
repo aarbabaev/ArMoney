@@ -197,6 +197,9 @@ Mac/iPhone/Android device; native code never bypasses certificate validation. Se
 
 Android build/configuration and acceptance are described in [android/README.md](android/README.md),
 [Android contract](docs/android-contract.md) and [ADR 0010](docs/adr/0010-native-android.md).
+The native presentation uses the semantic light/dark tokens documented in
+[Android design](docs/android-design.md); device visual acceptance remains separate
+from JVM contrast checks and successful compilation.
 The Android public client uses its own exact callback; both native clients map the
 same issuer/subject to one bank identity. No new financial service is introduced.
 
