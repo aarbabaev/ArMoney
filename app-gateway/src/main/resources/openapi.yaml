@@ -561,6 +561,43 @@ paths:
         '429':
           description: 'Request or concurrency limit; Retry-After: 60'
       parameters: []
+  /v1/payments/page:
+    get:
+      operationId: paymentHistoryPage
+      security:
+      - BearerAuth: []
+      description: Cursor page ordered by created_at and id descending. Sender sees
+        all own statuses; recipient sees completed incoming payments only. Cursors
+        are opaque and bound to the authenticated owner and this resource. This is
+        a live traversal, not a snapshot; later status changes can change visibility.
+        Legacy GET /v1/payments remains unchanged.
+      parameters:
+      - $ref: '#/components/parameters/PageLimit'
+      - $ref: '#/components/parameters/PageCursor'
+      responses:
+        '200':
+          description: Visible payment page; next_cursor is null when no further page exists
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [payments, next_cursor]
+                properties:
+                  payments:
+                    type: array
+                    maxItems: 100
+                    items:
+                      $ref: '#/components/schemas/Payment'
+                  next_cursor:
+                    $ref: '#/components/schemas/NextCursor'
+        '400':
+          $ref: '#/components/responses/InvalidPageRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Authentication or payment service unavailable
   /v1/payments/{id}:
     get:
       operationId: paymentDetails
@@ -644,6 +681,42 @@ paths:
         '429':
           description: 'Request or concurrency limit; Retry-After: 60'
       parameters: []
+  /v1/notifications/page:
+    get:
+      operationId: notificationsPage
+      security:
+      - BearerAuth: []
+      description: Owner-only cursor page ordered by created_at and id descending.
+        Cursors are opaque and bound to the authenticated owner and this resource.
+        Read-state updates do not change the ordering. This is a live traversal,
+        not a snapshot. Legacy GET /v1/notifications remains unchanged.
+      parameters:
+      - $ref: '#/components/parameters/PageLimit'
+      - $ref: '#/components/parameters/PageCursor'
+      responses:
+        '200':
+          description: Owner notification page; next_cursor is null when no further page exists
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notifications, next_cursor]
+                properties:
+                  notifications:
+                    type: array
+                    maxItems: 100
+                    items:
+                      $ref: '#/components/schemas/Notification'
+                  next_cursor:
+                    $ref: '#/components/schemas/NextCursor'
+        '400':
+          $ref: '#/components/responses/InvalidPageRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Authentication or payment service unavailable
   /v1/notifications/{id}/read:
     post:
       operationId: readNotification
@@ -692,7 +765,36 @@ paths:
         '429':
           description: 'Request or concurrency limit; Retry-After: 60'
 components:
+  parameters:
+    PageLimit:
+      name: limit
+      in: query
+      required: false
+      description: Canonical decimal digits only, without leading zeros. Defaults to 50.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    PageCursor:
+      name: cursor
+      in: query
+      required: false
+      description: Pass next_cursor unchanged; omit for the first page. Only canonical
+        URL-safe values are accepted. Raw page query is limited to 1024 characters;
+        unknown, repeated, blank or malformed parameters are rejected.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+        pattern: '^[A-Za-z0-9_-]+$'
   schemas:
+    NextCursor:
+      type: string
+      nullable: true
+      minLength: 1
+      maxLength: 512
+      pattern: '^[A-Za-z0-9_-]+$'
     Wallet:
       type: object
       required:
@@ -1038,6 +1140,18 @@ components:
           schema:
             $ref: '#/components/schemas/Registration'
   responses:
+    InvalidPageRequest:
+      description: Invalid query, malformed or tampered cursor, or cursor for a different
+        owner or resource
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: string
+                enum: [invalid_page_request]
     BadRequest:
       description: Malformed JSON, invalid email or password
       content:

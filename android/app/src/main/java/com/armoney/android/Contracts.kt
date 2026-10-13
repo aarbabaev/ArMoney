@@ -65,8 +65,10 @@ object Callback {
     }
 }
 @Serializable data class Payments(val payments: List<Payment>)
+@Serializable data class PaymentPage(val payments: List<Payment>, val next_cursor: String?)
 @Serializable data class Notice(val id: String, val payment_id: String, val type: String, val currency: String, val amount_minor: Long, val created_at: String, val read_at: String? = null)
 @Serializable data class Notices(val notifications: List<Notice>)
+@Serializable data class NoticePage(val notifications: List<Notice>, val next_cursor: String?)
 @Serializable data class OAuthPending(val state: String, val verifier: String, val created: Long)
 class HttpFailure(val status: Int, val code: String?) : Exception("Request failed (HTTP $status). Please retry.") {
     val refused get() = (status == 400 && code in setOf("invalid_request", "request_rejected")) || (status == 404 && code == "not_found") || (status == 409 && code in setOf("recipient_changed", "wallet_ineligible"))

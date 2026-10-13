@@ -24,7 +24,7 @@ New commands require a UAE recipient; historical accepted commands retain read/r
 
 Worker uses durable leases/fencing, bounded HTTP body/timeouts, bounded retry backoff and stable command IDs; expiry/crash safely reclaims work. Only ledger POSTED gives COMPLETED; matching recognized durable ledger rejection gives REJECTED. Network errors/unknown/invalid responses remain PENDING. Validate complete ledger response against stored payment, debit/credit accounts,currency,amount. Never mark terminal on timeout or create replacement payment IDs. Legacy scaffold rows with no resolved mappings must fail closed and remain unprocessed; no invented mappings.
 
-Payment JSON: {id,requester_id,recipient_id,source_wallet_id,destination_wallet_id,recipient_phone,currency,amount_minor,status,rejection_reason,created_at,updated_at}. rejection_reason nullable. GET /v1/payments/{id}: requester or completed recipient only, otherwise404. GET /v1/payments returns {payments:[...]} newest100 visible rows (created_at,id descending), explicitly bounded recent history, no pagination promise. Recipient sees only completed incoming payments.
+Payment JSON: {id,requester_id,recipient_id,source_wallet_id,destination_wallet_id,recipient_phone,currency,amount_minor,status,rejection_reason,created_at,updated_at}. rejection_reason nullable. GET /v1/payments/{id}: requester or completed recipient only, otherwise404. GET /v1/payments returns {payments:[...]} newest100 visible rows (created_at,id descending), the legacy bounded recent-history endpoint. Cursor pagination is available separately below. Recipient sees only completed incoming payments.
 
 ## In-app notifications
 
@@ -41,3 +41,26 @@ SwiftUI tabs Wallets, Transfers, Notifications, Profile. Real balances, create-w
 Real PostgreSQL tests for registration uniqueness/immutable claims, ownership, idempotency concurrency, terminal notification atomicity and durable claims. Disposable CI verifies balanced synthetic funding, successful cross-user transfer once, insufficient funds, payload conflict, ownership spoof, ledger outage/restart recovery, notification isolation/read idempotency and balance reconciliation. Never seed/fund/clear the persistent user stack. Independent security/financial review required; iOS development and CI are paused by owner instruction (2026-10-12); resumption requires Mac/Xcode. Published migrations remain append-only. All PRs target main; no automatic merge.
 
 Terminal outcomes also enqueue durable email events in the same transaction as in-app notifications. Delivery is disabled by default and does not change the public payment result. See [email delivery contract and limitations](email-notifications.md).
+
+
+## Cursor pagination
+
+GET `/v1/payments/page` and `/v1/notifications/page` accept `limit` (default 50,
+1-100) and an optional opaque `cursor`. Responses retain the corresponding
+`payments` or `notifications` array and always include `next_cursor` (string or
+null). A null cursor ends traversal. Legacy endpoints retain their newest-100
+shape for existing clients, including the paused iOS client.
+
+The order is `(created_at DESC, id DESC)`; each page selects strictly older keys.
+Concurrent newer inserts do not shift page boundaries. This is not a database
+snapshot: newer rows and incoming payments that become visible above a cursor
+require refreshing from the first page. Mutable status/read fields reflect the
+current state when read. No total-count promise is made.
+
+Cursors are versioned, signed with a purpose-separated HMAC, and bound to the
+verified owner and resource. They are opaque continuation positions, never an
+authorization substitute. Internal-key rotation invalidates cursors. Unknown,
+duplicate, empty, oversized or malformed parameters and invalid/foreign cursors
+return HTTP 400 with `invalid_page_request`; clients should offer a first-page
+refresh. Raw query length is bounded at 1024 characters; cursor transport uses
+1-512 URL-safe base64 characters without padding. See ADR 0018.

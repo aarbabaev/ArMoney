@@ -27,8 +27,12 @@ class BankModel(application: Application) : AndroidViewModel(application) {
     var storageBlocked by mutableStateOf(false); private set
     var wallets by mutableStateOf<List<Wallet>>(emptyList()); private set
     var balances by mutableStateOf<Map<String, Long?>>(emptyMap()); private set
-    var payments by mutableStateOf<List<Payment>>(emptyList()); private set
-    var notices by mutableStateOf<List<Notice>>(emptyList()); private set
+    var paymentPage by mutableStateOf(PageState<Payment>()); private set
+    var noticePage by mutableStateOf(PageState<Notice>()); private set
+    val payments get() = paymentPage.items
+    val notices get() = noticePage.items
+    private val paymentPages = CursorPage<Payment>({ it.id }) { paymentPage = it }
+    private val noticePages = CursorPage<Notice>({ it.id }) { noticePage = it }
     var profile by mutableStateOf<Profile?>(null); private set
     var recipient by mutableStateOf<Recipient?>(null); private set
     var pending by mutableStateOf<Pending?>(null); private set
@@ -102,19 +106,45 @@ class BankModel(application: Application) : AndroidViewModel(application) {
         }
         if (generation != epoch) return
         balances = bs
-        val ps = wire.decodeFromString<Payments>(http.send("/v1/payments", token = token)).payments
-        require(ps.size <= 100 && ps.all { it.requester_id == verified.id || (it.recipient_id == verified.id && it.status == "COMPLETED") })
+        loadPayments(s, epoch, refresh = true)
         if (generation != epoch) return
-        payments = ps
-        val ns = wire.decodeFromString<Notices>(http.send("/v1/notifications", token = token)).notifications
-        require(ns.size <= 100)
+        loadNotices(s, epoch, refresh = true)
         if (generation != epoch) return
-        notices = ns
         val p = try { wire.decodeFromString<Profile>(http.send("/v1/users/me", token = token)) } catch (f: HttpFailure) { if (f.status == 404) null else throw f }
         require(p == null || p.identity_id == verified.id)
         if (generation == epoch) profile = p
     }
     private fun authenticated(action: suspend (SavedSession, Int) -> Unit) = task { val s = session ?: error("Sign in first"); action(s, generation) }
+    fun morePayments() = authenticated { s, epoch -> loadPayments(s, epoch, paymentPage.refreshRequired) }
+    fun moreNotices() = authenticated { s, epoch -> loadNotices(s, epoch, noticePage.refreshRequired) }
+    private suspend fun loadPayments(s: SavedSession, epoch: Int, refresh: Boolean) {
+        if (generation != epoch) return
+        val request = paymentPages.begin(refresh) ?: return
+        try {
+            val page = wire.decodeFromString<PaymentPage>(http.send(pagePath("payments", request.cursor), token = s.session.access_token))
+            require(page.payments.all { it.requester_id == s.identity.id || (it.recipient_id == s.identity.id && it.status == "COMPLETED") })
+            page.payments.forEach { uuid(it.id) }
+            if (generation == epoch) paymentPages.complete(request, page.payments, page.next_cursor)
+        } catch (failure: Exception) {
+            if (generation == epoch) paymentPages.fail(request, pageFailure(failure), failure is HttpFailure && failure.code == "invalid_page_request")
+        }
+    }
+    private suspend fun loadNotices(s: SavedSession, epoch: Int, refresh: Boolean) {
+        if (generation != epoch) return
+        val request = noticePages.begin(refresh) ?: return
+        try {
+            val page = wire.decodeFromString<NoticePage>(http.send(pagePath("notifications", request.cursor), token = s.session.access_token))
+            page.notifications.forEach { uuid(it.id); uuid(it.payment_id) }
+            if (generation == epoch) noticePages.complete(request, page.notifications, page.next_cursor)
+        } catch (failure: Exception) {
+            if (generation == epoch) noticePages.fail(request, pageFailure(failure), failure is HttpFailure && failure.code == "invalid_page_request")
+        }
+    }
+    private fun pageFailure(failure: Exception): String = when {
+        failure is HttpFailure && failure.status == 401 -> "Session expired. Sign out and sign in again; saved transfers are preserved."
+        failure is HttpFailure && failure.code == "invalid_page_request" -> "This history cursor is no longer valid. Refresh to load the newest page."
+        else -> "Unable to load this page. Loaded rows are preserved; retry or refresh."
+    }
     fun openWallet(currency: String) = authenticated { s, _ -> supportedCurrency(currency); http.send("/v1/wallets", "POST", json("currency", currency), s.session.access_token); load(s) }
     fun resolve(value: String) = authenticated { s, epoch ->
         recipient = null
@@ -153,12 +183,17 @@ class BankModel(application: Application) : AndroidViewModel(application) {
         if (generation == epoch) detail = p
     }
     fun closeDetails() { detail = null }
-    fun readNotice(id: String) = authenticated { s, _ -> http.send("/v1/notifications/${uuid(id)}/read", "POST", token = s.session.access_token); load(s) }
+    fun readNotice(id: String) = authenticated { s, epoch ->
+        val previous = notices.firstOrNull { it.id == id } ?: error("Notification is no longer loaded")
+        val updated = wire.decodeFromString<Notice>(http.send("/v1/notifications/${uuid(id)}/read", "POST", token = s.session.access_token))
+        require(updated.read_at != null && updated.copy(read_at = previous.read_at) == previous)
+        if (generation == epoch) noticePages.update(updated)
+    }
     fun saveName(value: String) = authenticated { s, _ -> require(value.trim().length in 1..100); http.send("/v1/users/me", "PUT", json("display_name", value.trim()), s.session.access_token); load(s) }
     fun logout() = task {
         val s = session ?: return@task
         store.remove(sessionScope); store.remove(Login.scope(config.origin))
-        generation++; session = null; pending = null; profile = null; recipient = null; wallets = emptyList(); balances = emptyMap(); payments = emptyList(); notices = emptyList(); detail = null
+        generation++; session = null; pending = null; profile = null; recipient = null; wallets = emptyList(); balances = emptyMap(); paymentPages.reset(); noticePages.reset(); detail = null
         try { http.send("/v1/auth/logout", "POST", token = s.session.access_token) }
         catch (_: Exception) { message = "Signed out on this device. Server revocation could not be confirmed; the session expires automatically." }
     }
