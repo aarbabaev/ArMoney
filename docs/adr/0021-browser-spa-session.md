@@ -53,4 +53,3 @@ encrypted hardware-backed vault. Same-origin security and owner checks cannot
 protect against a fully compromised browser profile. Existing backend contracts
 and native sessions remain compatible. A future BFF would require a separate ADR
 covering cookie CSRF, fixation, rotation and revocation before implementation.
-

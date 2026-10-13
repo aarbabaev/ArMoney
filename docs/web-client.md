@@ -8,6 +8,8 @@ AI integration depends on the protected contract from separate issue #43.
 ## Source baseline and parity audit
 
 Remote main baseline: `112b01d90c247bd774db7fa9f9720edcc0b439f8`.
+Latest main integrated during implementation: `7a99a668f4689121b30c284e3cc5c8ddbcfeb37b`
+(Android semantic design, [tokens](android-design.md)).
 The original sibling arman-bank directory is a preserved source snapshot without
 Git metadata. Its account/detail/demo-card functionality is included in scope,
 but it cannot be honestly assigned a Git revision. Current main Android includes
@@ -89,3 +91,15 @@ immutable-notification and card-capacity findings are assigned to web_owner. Dev
 fix reports remain pending independent retest. Final PR records exact revision,
 executed commands, outcomes, blocked checks and deployment status. No completed
 AI integration, device acceptance or persistent deployment is implied by a build.
+
+### Local backend evidence (2026-10-13)
+
+Primary executed `gradlew.bat --no-daemon check` with Java 21 and real PostgreSQL
+Testcontainers: BUILD SUCCESSFUL, 34 tasks, 10m8s. XML reports contain 314 unit
+and 186 integration cases, zero failures/errors/skips. The tested backend source
+includes the browser allowlist/mandatory azp change; no service source changed
+subsequently. Main design merge 7a99a668 changes Android presentation only.
+This local evidence does not replace exact-head CI or disposable web/SSO smoke.
+Compose config with synthetic configuration values and Python AST validation of
+web-smoke, sso-smoke and browser-CA helper also passed; these are structural checks,
+not runtime acceptance.

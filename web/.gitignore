@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.angular/
+out-tsc/
+test-results/
+playwright-report/
+node_modules-pnpm/
+audit-local.json

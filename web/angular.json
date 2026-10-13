@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "projects": {
+    "armoney": {
+      "projectType": "application",
+      "root": "",
+      "sourceRoot": "src",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:application",
+          "options": {
+            "browser": "src/main.ts",
+            "index": "src/index.html",
+            "tsConfig": "tsconfig.app.json",
+            "styles": ["src/styles.css"],
+            "outputPath": "dist/armoney"
+          },
+          "configurations": {
+            "production": {
+              "outputHashing": "all",
+              "budgets": [
+                {
+                  "type": "initial",
+                  "maximumWarning": "750kB",
+                  "maximumError": "1MB"
+                }
+              ]
+            },
+            "development": {
+              "optimization": false,
+              "sourceMap": true,
+              "fileReplacements": [
+                {
+                  "replace": "src/environment.ts",
+                  "with": "src/environment.development.ts"
+                }
+              ]
+            },
+            "browser-test": {
+              "browser": "e2e/main.ts",
+              "tsConfig": "tsconfig.browser-test.json",
+              "optimization": false,
+              "sourceMap": true
+            }
+          },
+          "defaultConfiguration": "production"
+        },
+        "serve": {
+          "builder": "@angular/build:dev-server",
+          "options": {
+            "buildTarget": "armoney:build:development",
+            "proxyConfig": "proxy.conf.json"
+          },
+          "configurations": {
+            "browser-test": {
+              "buildTarget": "armoney:build:browser-test"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+ admin off
+ auto_https off
+ persist_config off
+}
+:8080 {
+ root * /srv
+ encode zstd gzip
+ header {
+  X-Content-Type-Options nosniff
+  Referrer-Policy no-referrer
+  X-Frame-Options DENY
+  Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+  Cache-Control "no-store"
+ }
+ @api path /v1 /v1/* /sso /sso/*
+ respond @api "API routing requires the HTTPS edge" 404
+ try_files {path} /index.html
+ file_server
+}

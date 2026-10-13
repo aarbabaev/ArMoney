@@ -243,6 +243,40 @@ try:
         collision_oidc = expect(200, redeem(collision_code, collision_verifier, "armoney-android"))
         expect(409, request("POST", PUBLIC + "/v1/auth/sso", {"access_token": collision_oidc["access_token"]}))
         collision_context.close()
+        # Web must reject unregistered redirects and missing/plain PKCE without issuing code.
+        negative_page = context.new_page()
+        for mutation in (
+            {"redirect_uri": PUBLIC + "/oauth/callback/extra"},
+            {"redirect_uri": "http://localhost:8443/oauth/callback"},
+            {"redirect_uri": "https://attacker.invalid/oauth/callback"},
+            {"code_challenge_method": "plain"},
+            {"code_challenge": None, "code_challenge_method": None},
+        ):
+            callback_result = {}
+            def reject_callback(route):
+                callback_result.update(urllib.parse.parse_qs(urllib.parse.urlsplit(route.request.url).query))
+                route.fulfill(status=200, content_type="text/plain", body="Negative callback")
+            negative_page.route("**/oauth/callback**", reject_callback)
+            verifier = secrets.token_urlsafe(32)
+            query = {"client_id": "armoney-web", "response_type": "code", "scope": "openid",
+                     "redirect_uri": callbacks["armoney-web"], "state": secrets.token_urlsafe(32),
+                     "code_challenge_method": "S256", "code_challenge": base64.urlsafe_b64encode(
+                         hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()}
+            for key, value in mutation.items():
+                if value is None:
+                    query.pop(key, None)
+                else:
+                    query[key] = value
+            negative_page.goto(discovery["authorization_endpoint"] + "?" + urllib.parse.urlencode(query))
+            if callback_result:
+                assert mutation.get("redirect_uri") is None, "Invalid redirect must never be followed"
+                assert "error" in callback_result and "code" not in callback_result
+            else:
+                negative_page.locator("#kc-error-message").wait_for(state="visible")
+            assert "code" not in callback_result
+            negative_page.unroute("**/oauth/callback**")
+        negative_page.close()
+
         sessions = {}
         principal_id = None
         for client_id in PUBLIC_CLIENTS:
