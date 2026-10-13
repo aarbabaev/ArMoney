@@ -49,3 +49,22 @@ Run ./gradlew :ledger-service:check with Docker to run the real PostgreSQL suite
 scripts/ledger-smoke.py is intentionally CI-only: it inserts synthetic clearing
 funding into disposable databases. It must not be used as a real top-up tool.
 See ADR 0005 for locking, trust boundaries, migration and recovery semantics.
+
+## Explicit local synthetic baseline
+
+Issue #29 adds an operator-only offline CLI (see
+[ADR 0019](adr/0019-local-synthetic-baseline.md)). This is separate from disposable
+CI funding and is not a public top-up endpoint.
+
+Invocation requires APP_ENV=local and
+ARMONEY_LOCAL_DEMO_FUNDING=I_UNDERSTAND_SYNTHETIC_FUNDS in the CLI environment.
+LocalDemoFundingMain accepts funding ID, owner ID, wallet ID, account ID and
+integer fils. It uses the normal ledger database configuration without exposing
+credentials on the command line. Accounts must already exist with the correct
+owner/wallet/AED mapping and have no journal activity for first funding.
+
+A stable identical command can be replayed after spending without funding again;
+a new funding ID cannot refill an account. The dedicated clearing counter-account
+and customer posting commit atomically. No migrations or HTTP routes are added.
+This source capability still requires reviewed deployment and isolated acceptance
+before operating the persistent local baseline.
