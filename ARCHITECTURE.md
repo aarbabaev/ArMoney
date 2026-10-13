@@ -34,6 +34,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | Ledger | Private accounts, balances, atomic postings; optional two direct physical standbys and fenced balance reads | Manual failover; production HA and backup/PITR |
 | Payment | Durable P2P, requester idempotency, recovery, history, in-app notifications and transactional Mailtrap email outbox | Email disabled until configured; real sending requires verified contact; duplicates possible after ambiguous provider acceptance |
 | Gateway | Auth, profile/phone, wallets/balances, P2P and notifications | Further hardening |
+| Local SMS sandbox | Optional authenticated capture API and web inbox, bounded persistent file storage; no carrier delivery | Identity OTP and transaction producers are separate integration tasks |
 
 Java 21, Gradle multi-project, Javalin, PostgreSQL, Flyway, jOOQ, HikariCP;
 Spock, Testcontainers, ArchUnit; REST/OpenAPI; Docker Compose, GitHub Actions.
@@ -43,6 +44,21 @@ Spring, Kafka, Redis and Kubernetes are not implemented. Native iOS uses SwiftUI
 Keycloak and Caddy are optional container services, configured by compose.sso.yaml.
 
 ## Services and runtime
+
+The optional [SMS sandbox](docs/sms-sandbox.md) runs from `compose.sms.yaml` on
+a dedicated Docker bridge network with loopback-only ingress. It has its own persistent
+volume and independent sender/reader credentials. It is not connected to the
+identity or payment flows yet; see [ADR 0020](docs/adr/0020-local-sms-sandbox.md).
+
+```mermaid
+flowchart LR
+    Operator["Local operator browser / reader credential"] --> Inbox["SMS sandbox HTTP inbox"]
+    Fixture["Authorized test sender / sender credential"] --> Inbox
+    Inbox --> Store["Private bounded file snapshot and replay tombstones"]
+```
+
+No external SMS provider is called. The sandbox does not decide whether an OTP
+is valid and is not a production delivery or multi-instance messaging service.
 
 **Base backend connections are shown below; the optional native-client SSO edge is described separately.** Wallet provisions accounts through the
 private ledger API. Payment validates user/wallet mappings and posts through ledger.
