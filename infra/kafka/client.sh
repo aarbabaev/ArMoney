@@ -9,7 +9,7 @@ case "${1:-}" in
     ;;
   consume)
     [[ $# == 5 && "$4" =~ ^[1-9][0-9]{0,5}$ && "$5" =~ ^[1-9][0-9]{0,6}$ ]] || exit 2
-    exec /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server "$bootstrap" --consumer.config "$config" --topic "$2" --group "$3" --from-beginning --max-messages "$4" --timeout-ms "$5" --property print.key=true --property key.separator=:
+    exec /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server "$bootstrap" --command-config "$config" --topic "$2" --group "$3" --from-beginning --max-messages "$4" --timeout-ms "$5" --formatter-property print.key=true --formatter-property key.separator=:
     ;;
   topics)
     [[ $# == 1 ]] || exit 2
