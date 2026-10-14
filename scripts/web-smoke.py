@@ -103,7 +103,10 @@ with sync_playwright() as playwright:
         tab.get_by_role("button", name="Sign in securely", exact=False).click()
         tab.locator("#username").fill(user[0])
         tab.locator("#password").fill(user[1])
-        tab.locator("#kc-login").click()
+        with tab.expect_response(lambda response: response.url == PUBLIC + "/v1/users/me"
+                                 and response.request.method == "GET") as refreshed:
+            tab.locator("#kc-login").click()
+        require(refreshed.value.finished() is None, "Sign-in refresh response must finish")
         expect(tab.get_by_role("navigation", name="Main navigation")).to_be_visible()
         expect(tab.get_by_role("button", name="Refresh", exact=True)).to_be_enabled()
         # The final captured credential is the exchanged bank session, not OIDC.
@@ -114,10 +117,16 @@ with sync_playwright() as playwright:
 
     def open_account(tab, token):
         navigate(tab, "Accounts")
-        with tab.expect_response(lambda response: response.url == PUBLIC + "/v1/wallets"
-                                 and response.request.method == "POST") as opened:
-            tab.get_by_role("button", name="Open AED account", exact=True).click()
+        # Bank.openWallet awaits refresh; users/me is its final network stage.
+        # Register before the action so an initially enabled button cannot stand
+        # in for completion of the refresh that follows the command response.
+        with tab.expect_response(lambda response: response.url == PUBLIC + "/v1/users/me"
+                                 and response.request.method == "GET") as refreshed:
+            with tab.expect_response(lambda response: response.url == PUBLIC + "/v1/wallets"
+                                     and response.request.method == "POST") as opened:
+                tab.get_by_role("button", name="Open AED account", exact=True).click()
         require(opened.value.status in (200, 202), "Wallet creation must be accepted")
+        require(refreshed.value.finished() is None, "Account refresh response must finish")
         expect(tab.get_by_role("button", name="Refresh", exact=True)).to_be_enabled()
         wallets = status(200, request("GET", "/v1/wallets", token=token))["wallets"]
         require(len(wallets) == 1, "Fresh synthetic owner should have one wallet")
@@ -125,7 +134,10 @@ with sync_playwright() as playwright:
         for _ in range(30):
             if wallet["status"] == "ACTIVE" and wallet["provisioning_status"] == "READY":
                 break
-            tab.get_by_role("button", name="Refresh", exact=True).click()
+            with tab.expect_response(lambda response: response.url == PUBLIC + "/v1/users/me"
+                                     and response.request.method == "GET") as refreshed:
+                tab.get_by_role("button", name="Refresh", exact=True).click()
+            require(refreshed.value.finished() is None, "Wallet polling refresh response must finish")
             expect(tab.get_by_role("button", name="Refresh", exact=True)).to_be_enabled()
             wallet = status(200, request("GET", "/v1/wallets", token=token))["wallets"][0]
         require(wallet["provisioning_status"] == "READY", "Wallet must converge to READY")
@@ -145,9 +157,32 @@ with sync_playwright() as playwright:
 
     navigate(page, "Profile")
     page.get_by_label("Display name", exact=True).fill("Web acceptance owner")
-    with page.expect_response(lambda response: response.url == PUBLIC + "/v1/users/me"
-                              and response.request.method == "PUT") as saved:
-        page.get_by_role("button", name="Save name", exact=True).click()
+    profile_events = []
+
+    def profile_response(response):
+        path = urllib.parse.urlsplit(response.url).path
+        if path in ("/v1/auth/me", "/v1/users/me", "/v1/wallets"):
+            profile_events.append((response.request.method, path, response.status))
+            del profile_events[:-20]
+
+    page.on("response", profile_response)
+    try:
+        with page.expect_response(lambda response: response.url == PUBLIC + "/v1/users/me"
+                                  and response.request.method == "PUT") as saved:
+            page.get_by_role("button", name="Save name", exact=True).click()
+    except Exception:
+        # Only technical state: never values, alert text, URLs with queries or bodies.
+        print("Profile submit diagnostic:", json.dumps({
+            "responses": profile_events,
+            "save_disabled": page.get_by_role("button", name="Save name", exact=True).is_disabled(),
+            "refresh_disabled": page.get_by_role("button", name="Refresh", exact=True).is_disabled(),
+            "input_valid": page.get_by_label("Display name", exact=True).evaluate("element => element.validity.valid"),
+            "input_length": len(page.get_by_label("Display name", exact=True).input_value()),
+            "alerts": page.get_by_role("alert").count(),
+        }))
+        raise
+    finally:
+        page.remove_listener("response", profile_response)
     require(saved.value.status == 200, "Profile update must succeed")
     expect(page.get_by_role("button", name="Refresh", exact=True)).to_be_enabled()
     require(status(200, request("GET", "/v1/users/me", token=token_a))["display_name"] == "Web acceptance owner", "Profile update must persist")

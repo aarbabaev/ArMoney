@@ -93,6 +93,39 @@ async function signIn(page: Page) {
     page.getByText("AED 92233720368547758.07", { exact: true }),
   ).toBeVisible();
 }
+
+test("profile form submits the edited name to the gateway", async ({ page }) => {
+  await mock(page);
+  let displayName: string | null = null;
+  let releaseProfile!: () => void;
+  const heldProfile = new Promise<void>(resolve => { releaseProfile = resolve; });
+  await page.route("**/v1/users/me", async route => {
+    if (route.request().method() === "PUT") displayName = route.request().postDataJSON().display_name;
+    if (displayName === null) {
+      await heldProfile;
+      return route.fulfill({ status: 404, contentType: "application/json", body: '{"error":"not_found"}' });
+    }
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify({
+      id: wallet, identity_id: owner, display_name: displayName,
+      phone_number: "+971501234567", phone_verified: false,
+    }) });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sign in securely" }).click();
+  await expect(page.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
+  await page.getByRole("navigation").getByRole("link", { name: "Profile", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Save name", exact: true })).toBeDisabled();
+  releaseProfile();
+  await expect(page.getByRole("button", { name: "Save name", exact: true })).toBeEnabled();
+  await page.getByLabel("Display name", { exact: true }).fill("Edited owner");
+  const saved = page.waitForResponse(response => new URL(response.url()).pathname === "/v1/users/me" && response.request().method() === "PUT");
+  await page.getByRole("button", { name: "Save name", exact: true }).click();
+  const response = await saved;
+  expect(response.status()).toBe(200);
+  expect(response.request().postDataJSON()).toEqual({ display_name: "Edited owner" });
+  await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
+  expect(displayName).toBe("Edited owner");
+});
 test("mobile/desktop light/dark UI is keyboard labelled and shows exact ledger balance", async ({
   page,
 }) => {
