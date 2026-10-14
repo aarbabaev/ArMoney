@@ -53,17 +53,19 @@ def workflow_steps():
     return result
 
 
-def evaluate_cleanup_condition(condition, isolation, failure):
+def evaluate_cleanup_condition(condition, isolation, failure, sms_project=""):
     if condition is None:
         raise AssertionError("Docker finalizer must explicitly gate isolation")
     expression = condition.removeprefix("${{").removesuffix("}}").strip()
     match = re.fullmatch(
-        r"(always|failure)\(\)\s*&&\s*steps\.isolation\.outcome\s*==\s*'success'",
+        r"(always|failure)\(\)\s*&&\s*steps\.isolation\.outcome\s*==\s*'success'"
+        r"(\s*&&\s*env\.SMS_TEST_PROJECT\s*!=\s*'')?",
         expression,
     )
     if not match:
         raise AssertionError(f"Unrecognized or unsafe cleanup gate: {condition}")
-    return isolation == "success" and (match.group(1) == "always" or failure)
+    return (isolation == "success" and (match.group(1) == "always" or failure)
+            and (match.group(2) is None or sms_project != ""))
 
 
 class LocalCiGuards(unittest.TestCase):
@@ -82,6 +84,7 @@ class LocalCiGuards(unittest.TestCase):
             "ARMONEY_DISPOSABLE_CI": "true",
             "GITHUB_WORKSPACE": "/work/synthetic/repo",
             "LOCAL_DB_PASSWORD": "synthetic-ci-only",
+            "SMS_TEST_PROJECT": "armoney-sms-test-" + "a" * 32,
         }
         self.stub("docker", 'printf "%s\\n" "$*" >> "$DOCKER_CALLS"\n')
         self.stub("java", "exit 0\n")
@@ -109,14 +112,16 @@ class LocalCiGuards(unittest.TestCase):
             {name for name, _, _ in steps},
             {"Container diagnostics", "Sharding diagnostics and cleanup",
              "SSO diagnostics and cleanup", "Stop containers",
-             "Assistant Compose cleanup", "Assistant disposable database cleanup"},
+             "Assistant Compose cleanup", "Assistant disposable database cleanup",
+             "Clean isolated SMS sandbox"},
             "Workflow finalizers changed; update coverage explicitly",
         )
         return steps
 
     def run_finalizers(self, isolation, failure):
         for _, condition, body in self.finalizers():
-            if evaluate_cleanup_condition(condition, isolation, failure):
+            if evaluate_cleanup_condition(condition, isolation, failure,
+                                          self.env.get("SMS_TEST_PROJECT", "")):
                 result = self.run_shell(body)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -153,11 +158,53 @@ class LocalCiGuards(unittest.TestCase):
         self.assertNotEqual(self.run_shell("exit 42").returncode, 0)
         self.run_finalizers("success", True)
         calls = self.docker_calls()
-        self.assertEqual(sum("down --volumes" in call for call in calls), 4, calls)
+        self.assertEqual(sum("down --volumes" in call for call in calls), 5, calls)
         self.assertEqual(sum(call.endswith(" down") for call in calls), 1, calls)
         self.assertTrue(any("-p assistant-qa-ci " in call and "down --volumes" in call for call in calls), calls)
         self.assertTrue(any("-p armoney-assistant-check " in call and call.endswith(" down") for call in calls), calls)
         self.assertTrue(any("logs --no-color" in call for call in calls), calls)
+        self.assertIn(f"compose -p {self.env['SMS_TEST_PROJECT']} -f compose.sms.yaml down --volumes", calls)
+
+    def sms_finalizer(self):
+        steps = [step for step in self.finalizers() if step[0] == "Clean isolated SMS sandbox"]
+        self.assertEqual(len(steps), 1)
+        return steps[0][1:]
+
+    def test_sms_cleanup_requires_successful_isolation_and_created_project(self):
+        condition, body = self.sms_finalizer()
+        project = self.env["SMS_TEST_PROJECT"]
+        for isolation in ("success", "failure", "skipped", "cancelled"):
+            for failure in (False, True):
+                for sms_project in ("", project):
+                    with self.subTest(isolation=isolation, failure=failure, project=sms_project):
+                        self.env["SMS_TEST_PROJECT"] = sms_project
+                        if self.calls.exists():
+                            self.calls.unlink()
+                        allowed = evaluate_cleanup_condition(condition, isolation, failure, sms_project)
+                        self.assertEqual(allowed, isolation == "success" and sms_project != "")
+                        if allowed:
+                            result = self.run_shell(body)
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                        expected = [f"compose -p {project} -f compose.sms.yaml down --volumes"] if allowed else []
+                        self.assertEqual(self.docker_calls(), expected)
+
+    def test_sms_cleanup_rejects_non_sandbox_project_before_docker(self):
+        condition, body = self.sms_finalizer()
+        for project in ("arman-bank", "armoney-ci-buildmachine", "armoney-sms-test-123", "armoney-sms-test-" + "a" * 32 + ";echo unsafe"):
+            with self.subTest(project=project):
+                self.env["SMS_TEST_PROJECT"] = project
+                self.assertTrue(evaluate_cleanup_condition(condition, "success", True, project))
+                result = self.run_shell(body)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.docker_calls(), [])
+
+    def test_unknown_or_unsafe_cleanup_conditions_fail_closed(self):
+        for condition in (None, "always()", "always() && env.SMS_TEST_PROJECT != ''",
+                          "always() || steps.isolation.outcome == 'success'",
+                          "always() && steps.isolation.outcome == 'success' || env.SMS_TEST_PROJECT != ''"):
+            with self.subTest(condition=condition):
+                with self.assertRaises(AssertionError):
+                    evaluate_cleanup_condition(condition, "success", True, self.env["SMS_TEST_PROJECT"])
 
     def prepare_entrypoint(self):
         runner = self.root / "runner"

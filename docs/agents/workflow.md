@@ -5,6 +5,13 @@ GitHub, or start work when the chat is closed. Roles inherit the user's model,
 tools and permissions; instructions are coordination rules, not access controls.
 Three workers may run concurrently; other roles wait for the next wave.
 
+Independent feature implementation may continue in separate worktrees while the
+orchestrator validates or deploys an earlier integration. Do not idle all owners
+merely because another task is Awaiting deployment. Keep writable paths disjoint,
+serialize shared builds and persistent-stack operations, and record each active
+task's runtime agent and current stage on its Project item. Review and deployment
+are active work even when the In Progress development column is empty.
+
 ## Start
 
 Open the repository folder in Codex (the folder containing `settings.gradle` and

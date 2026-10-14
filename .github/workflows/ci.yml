@@ -41,6 +41,25 @@ jobs:
         env:
           LOCAL_DB_PASSWORD: ci-only-password
         run: docker compose config --quiet
+      - name: Isolated local SMS sandbox acceptance
+        env:
+          SMS_SANDBOX_SEND_TOKEN: ci-only-sms-sender-token-32-characters
+          SMS_SANDBOX_READ_TOKEN: ci-only-sms-reader-token-32-characters
+          SMS_SANDBOX_PORT: "18026"
+        run: |
+          project="armoney-sms-test-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+          echo "SMS_TEST_PROJECT=$project" >> "$GITHUB_ENV"
+          docker compose -p "$project" -f compose.sms.yaml up --build -d
+          python3 scripts/sms-sandbox-smoke.py --project "$project" --base-url http://127.0.0.1:18026
+      - name: Clean isolated SMS sandbox
+        if: always() && steps.isolation.outcome == 'success' && env.SMS_TEST_PROJECT != ''
+        env:
+          SMS_SANDBOX_SEND_TOKEN: ci-only-sms-sender-token-32-characters
+          SMS_SANDBOX_READ_TOKEN: ci-only-sms-reader-token-32-characters
+          SMS_SANDBOX_PORT: "18026"
+        run: |
+          [[ "$SMS_TEST_PROJECT" =~ ^armoney-sms-test-[a-f0-9]{32}$ ]]
+          docker compose -p "$SMS_TEST_PROJECT" -f compose.sms.yaml down --volumes
       - name: Build and smoke-test all service containers
         env:
           LOCAL_DB_PASSWORD: ci-only-password
