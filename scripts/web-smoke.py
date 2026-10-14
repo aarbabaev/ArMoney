@@ -114,7 +114,10 @@ with sync_playwright() as playwright:
 
     def open_account(tab, token):
         navigate(tab, "Accounts")
-        tab.get_by_role("button", name="Open AED account", exact=True).click()
+        with tab.expect_response(lambda response: response.url == PUBLIC + "/v1/wallets"
+                                 and response.request.method == "POST") as opened:
+            tab.get_by_role("button", name="Open AED account", exact=True).click()
+        require(opened.value.status in (200, 202), "Wallet creation must be accepted")
         expect(tab.get_by_role("button", name="Refresh", exact=True)).to_be_enabled()
         wallets = status(200, request("GET", "/v1/wallets", token=token))["wallets"]
         require(len(wallets) == 1, "Fresh synthetic owner should have one wallet")
@@ -142,7 +145,10 @@ with sync_playwright() as playwright:
 
     navigate(page, "Profile")
     page.get_by_label("Display name", exact=True).fill("Web acceptance owner")
-    page.get_by_role("button", name="Save name", exact=True).click()
+    with page.expect_response(lambda response: response.url == PUBLIC + "/v1/users/me"
+                              and response.request.method == "PUT") as saved:
+        page.get_by_role("button", name="Save name", exact=True).click()
+    require(saved.value.status == 200, "Profile update must succeed")
     expect(page.get_by_role("button", name="Refresh", exact=True)).to_be_enabled()
     require(status(200, request("GET", "/v1/users/me", token=token_a))["display_name"] == "Web acceptance owner", "Profile update must persist")
     expect(page.get_by_text(users[0][0], exact=True)).to_be_visible()
