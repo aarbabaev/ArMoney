@@ -588,6 +588,10 @@ distinguishes registered workers, confirmed activity and stale/unknown sources;
 it cannot control workers or observe native agents continuously. See
 [ADR 0028](docs/adr/0028-local-agent-dashboard.md).
 
+Explicit operator archive annotations separate superseded attempts from current
+counts while retaining their original queue states and history. They do not
+resolve issues, mutate SQLite or approve work; invalid annotations hide nothing.
+
 ```mermaid
 flowchart LR
     O["Owner-approved local manifest"] --> D["Local one-shot dispatcher"]

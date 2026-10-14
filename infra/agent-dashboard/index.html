@@ -12,7 +12,8 @@
 <section class="stats" aria-label="Agent counts"><div class="stat"><div class="eyebrow">Total registered</div><strong id="total">—</strong><small>Across both sources</small></div><div class="stat active"><div class="eyebrow">Active confirmed</div><strong id="active">—</strong><small>Fresh observations only</small></div><div class="stat"><div class="eyebrow">Queued</div><strong id="queued">—</strong><small>Waiting to start</small></div><div class="stat"><div class="eyebrow">Blocked</div><strong id="blocked">—</strong><small>Needs attention</small></div></section>
 <div id="warnings" class="warnings" role="status" aria-live="polite"></div>
 <section class="sources" aria-label="Agent status sources"><section class="source"><div class="source-head"><div class="source-title"><h2>Native chat</h2><span id="native-health" class="badge warn">Unknown</span></div><p id="native-time">Awaiting an observation</p></div><div id="native-agents" class="cards"></div></section><section class="source"><div class="source-head"><div class="source-title"><h2>Dispatcher CLI</h2><span id="dispatcher-health" class="badge warn">Unknown</span></div><p id="dispatcher-time">Awaiting process status</p></div><div id="dispatcher-agents" class="cards"></div></section></section>
-<footer class="footer"><span>Local status · 127.0.0.1:8765 · refreshes every 3 seconds</span><span>Native observations expire after 90 seconds. Stale activity is unknown.</span></footer>
+<details class="source" style="margin-top:22px"><summary class="source-head" style="cursor:pointer">Historical attempts <span id="history-count" class="badge">0</span><p>Explicit operator annotations · original states preserved · excluded from current counts</p></summary><div id="history-agents" class="cards"></div></details>
+<footer class="footer"><span>Total registered includes current and historical identities · local refresh every 3 seconds</span><span>Native observations expire after 90 seconds. Stale activity is unknown.</span></footer>
 </main><script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -33,14 +34,15 @@ function cards(target, agents, source, known) {
   const card = node('article','agent'), top = node('div','agent-top'), identity = node('div','');
   identity.append(node('div','role',text(agent.role,'Unassigned role')),node('div','agent-id',text(agent.id,'No identifier')));
   const persistedStates = new Set(['completed','succeeded','queued','blocked','interrupted','failed','cancelled','canceled','idle','done']);
-  const stateKnown = known || (source === 'dispatcher' && !offline && persistedStates.has(state(agent.state)));
+  const stateKnown = source === 'history' || known || (source === 'dispatcher' && !offline && persistedStates.has(state(agent.state)));
   const status = node('span','badge'); const statusText = stateKnown ? text(agent.state) : 'Unknown · stale';
-  badge(status,statusText,!stateKnown ? 'warn' : activeStates.has(state(agent.state)) ? 'good' : state(agent.state)==='blocked' ? 'bad' : '');
+  badge(status,statusText,!stateKnown ? 'warn' : source !== 'history' && activeStates.has(state(agent.state)) ? 'good' : state(agent.state)==='blocked' ? 'bad' : '');
   top.append(identity,status);card.append(top);
   card.append(node('p','task',text(agent.task,source==='native' ? 'No task reported' : 'Local dispatcher assignment')));
   const details = node('div','details');
-  if(source==='dispatcher') details.append(node('span','', 'Issue ' + (typeof agent.issue==='number' || typeof agent.issue==='string' ? String(agent.issue).slice(0,100) : '—')),node('span','', 'Stage: ' + text(agent.stage,'Not reported')));
+  if(source==='dispatcher' || source==='history') details.append(node('span','', 'Issue ' + (typeof agent.issue==='number' || typeof agent.issue==='string' ? String(agent.issue).slice(0,100) : '—')),node('span','', 'Stage: ' + text(agent.stage,'Not reported')));
   else details.append(node('span','','Source: native chat'),node('span','',known ? 'Observation fresh' : 'Activity not confirmed'));
+  if(source==='history') { details.append(node('span','','Archived: '+timestamp(agent.archived_at)),node('span','','Task: '+text(agent.task_id)));card.append(node('p','task','Archive reason: '+text(agent.reason)),node('p','task','Historical state; archiving does not mean resolved.')); }
   card.append(details);target.append(card);
  }
 }
@@ -57,6 +59,7 @@ function render() {
  $('native-time').textContent = 'Observed ' + timestamp(native.observed_at) + (nativeFresh ? ' · activity confirmed' : ' · active count excluded');
  $('dispatcher-time').textContent = dispatcherFresh ? 'Local process status confirmed' : 'Process activity cannot be confirmed';
  cards($('native-agents'),nativeAgents,'native',nativeFresh);cards($('dispatcher-agents'),dispatcherAgents,'dispatcher',dispatcherFresh);
+ const history = array(dispatcher.history);$('history-count').textContent=String(history.length);cards($('history-agents'),history,'history',true);
  const warnings = array(current.warnings).filter(w=>typeof w==='string');
  if(!nativeFresh) warnings.push('Native chat observations are stale or unavailable. Their activity is unknown and excluded from Active confirmed.');
  if(typeof dispatcher.error==='string' && dispatcher.error) warnings.push(dispatcher.error);
