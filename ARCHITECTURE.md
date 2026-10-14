@@ -567,8 +567,14 @@ separate `codex exec` processes. SQLite persists claims, dependency stages,
 attempts and reporting failures. Completion immediately schedules eligible work;
 an empty or dependency-blocked queue exits without periodic GitHub polling.
 Implementation, QA and review are independent assignments bound to the same Git
-revision and source fingerprint. Completed failures can route back to the
-original owner within the manifest's retry budget. Interrupted work retains its
+revision and source fingerprint. Only requests for changes with nonblank evidence
+route back to the original owner within the manifest's retry budget. Dependency
+and infrastructure blockers require operator action and preserve successful
+implementations. Repository, role and usable-HEAD preflight rejects unsupported
+assignments before consuming an attempt. Interrupted work retains its
+leases. Optional pipeline identifiers isolate generations on the same issue;
+prerequisites, evidence fences and remediation stay within that pipeline. Stale
+change findings cannot invalidate a successful implementation. Interrupted work retains its
 leases until an operator proves orphan processes stopped. Agent results never
 establish merge, deployment or Done; those remain externally verified gates.
 The runner filters credential environment variables and connector settings;
