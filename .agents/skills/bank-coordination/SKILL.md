@@ -13,8 +13,8 @@ docs/agents/skills.md; include their exact paths in the task assignment.
 Use fresh-context dispatch by default (fork_turns="none" where available), with the exact task contract and file/build lease. Read docs/agents/context-efficiency.md for bounded reads, waits and handoffs. Do not include the full conversation when local source pointers and an explicit contract suffice.
 
 Keep an explicit mapping of task ID to runtime agent ID, role, directory, revision,
-writable files, skill paths, dependencies and state in the chat. Reserve one of
-the three worker slots for QA/security when implementation risk warrants it.
+writable files, skill paths, dependencies and state in the chat. Reserve capacity among
+the six configured subagent slots for independent QA/security and review. Prefer four implementation agents plus QA and a reviewer when work is independent; obey a lower active-session limit until reload is verified.
 Independent review must be assigned to an agent other than the implementing
 worker; do not relabel the developer as reviewer of their own patch.
 
