@@ -1,0 +1,5 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ArMoney local SMS inbox</title><link rel="stylesheet" href="/inbox.css"><script src="/inbox.js" defer></script></head>
+<body><main><h1>ArMoney local SMS inbox</h1><p>Local test messages only. No SMS is sent to a mobile network.</p>
+<label>Reader token <input id="token" type="password" autocomplete="off" maxlength="128"></label><button id="unlock">Unlock inbox</button><button id="lock">Lock</button>
+<section id="inbox" hidden><label>Search <input id="query" maxlength="128" placeholder="Destination, message or purpose"></label><label>Purpose <input id="purpose" maxlength="64" placeholder="Exact purpose"></label><button id="refresh">Refresh</button><button id="clear">Clear inbox</button><p>Clear removes message contents and retains retry protection for 24 hours after submission.</p><div id="messages"></div></section><p id="status" role="status"></p></main></body></html>

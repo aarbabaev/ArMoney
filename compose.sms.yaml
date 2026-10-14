@@ -1,0 +1,32 @@
+services:
+  sms-sandbox:
+    build:
+      context: .
+      dockerfile: sms-sandbox/Dockerfile
+    environment:
+      SMS_SANDBOX_SEND_TOKEN: ${SMS_SANDBOX_SEND_TOKEN:?Set an independent local sandbox sender token}
+      SMS_SANDBOX_READ_TOKEN: ${SMS_SANDBOX_READ_TOKEN:?Set an independent local sandbox reader token}
+      SMS_SANDBOX_DATA_DIR: /data
+      PORT: "8080"
+    ports:
+      - "127.0.0.1:${SMS_SANDBOX_PORT:-8026}:8080"
+    volumes:
+      - sms-sandbox-data:/data
+    networks: [sms-sandbox]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/opt/service/bin/sms-sandbox", "health"]
+      interval: 5s
+      timeout: 4s
+      retries: 12
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    logging:
+      options:
+        max-size: "5m"
+        max-file: "2"
+networks:
+  sms-sandbox:
+    driver: bridge
+volumes:
+  sms-sandbox-data:

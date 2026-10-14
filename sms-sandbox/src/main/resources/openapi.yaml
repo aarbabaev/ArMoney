@@ -1,0 +1,97 @@
+openapi: 3.0.3
+info:
+  title: ArMoney local SMS sandbox
+  version: 0.1.0
+  description: Local synthetic-message storage only. No outbound SMS delivery. Sender and reader are distinct credentials.
+paths:
+  /api/messages:
+    post:
+      summary: Store a message using the sender credential
+      security: [{ sender: [] }]
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9._:-]+$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [destination, text, purpose]
+              properties:
+                destination: { type: string, pattern: '^\+9715[024568][0-9]{7}$' }
+                text: { type: string, minLength: 1, maxLength: 2048 }
+                purpose: { type: string, pattern: '^[a-zA-Z0-9_-]{1,64}$' }
+      responses:
+        '201': { description: Stored; metadata contains id (UUID), createdAt (epoch milliseconds), replay (false) }
+        '200': { description: Exact replay; same metadata and replay true }
+        '400': { description: Invalid JSON or field }
+        '401': { description: Missing or invalid sender credential }
+        '409': { description: Key belongs to a different payload }
+        '410': { description: Original message cleared; key remains reserved until 24-hour expiry }
+        '413': { description: Body exceeds 8 KiB }
+        '429': { description: Shared 120 per minute API rate budget exhausted }
+        '503': { description: Storage unavailable }
+        '507': { description: Capacity of 1000 messages and tombstones reached }
+    get:
+      summary: Read inbox using the reader credential
+      security: [{ reader: [] }]
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string, maxLength: 128 }
+          description: Case-insensitive destination, text or purpose substring
+        - in: query
+          name: purpose
+          schema: { type: string, maxLength: 64 }
+          description: Exact purpose; empty means all
+      responses:
+        '200':
+          description: Newest-first messages, at most 1000
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 1000
+                items:
+                  type: object
+                  properties:
+                    id: { type: string, format: uuid }
+                    destination: { type: string }
+                    text: { type: string }
+                    purpose: { type: string }
+                    createdAt: { type: integer, format: int64 }
+        '400': { description: Filter too long }
+        '401': { description: Missing or invalid reader credential }
+        '429': { description: Shared API rate budget exhausted }
+        '503': { description: Storage unavailable }
+    delete:
+      summary: Clear every message while retaining 24-hour idempotency tombstones
+      security: [{ reader: [] }]
+      parameters:
+        - in: header
+          name: X-Confirm-Clear
+          required: true
+          schema: { type: string, enum: ['true'] }
+      responses:
+        '204': { description: Message contents durably cleared }
+        '400': { description: Confirmation absent }
+        '401': { description: Missing or invalid reader credential }
+        '429': { description: Shared API rate budget exhausted }
+        '503': { description: Storage unavailable }
+  /health/live:
+    get:
+      responses:
+        '200': { description: Server running }
+  /health/ready:
+    get:
+      responses:
+        '200': { description: No detected storage failure }
+        '503': { description: Storage failure detected; restart after repair }
+components:
+  securitySchemes:
+    sender: { type: http, scheme: bearer, description: Dedicated local sender token }
+    reader: { type: http, scheme: bearer, description: Dedicated local inbox reader token }
