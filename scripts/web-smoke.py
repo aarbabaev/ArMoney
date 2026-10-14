@@ -106,6 +106,7 @@ with sync_playwright() as playwright:
         with tab.expect_response(lambda response: response.url == PUBLIC + "/v1/users/me"
                                  and response.request.method == "GET") as refreshed:
             tab.locator("#kc-login").click()
+        require(refreshed.value.status in (200, 404), "Sign-in profile refresh must succeed or confirm no profile")
         require(refreshed.value.finished() is None, "Sign-in refresh response must finish")
         expect(tab.get_by_role("navigation", name="Main navigation")).to_be_visible()
         expect(tab.get_by_role("button", name="Refresh", exact=True)).to_be_enabled()
@@ -126,6 +127,7 @@ with sync_playwright() as playwright:
                                      and response.request.method == "POST") as opened:
                 tab.get_by_role("button", name="Open AED account", exact=True).click()
         require(opened.value.status in (200, 202), "Wallet creation must be accepted")
+        require(refreshed.value.status in (200, 404), "Account profile refresh must succeed or confirm no profile")
         require(refreshed.value.finished() is None, "Account refresh response must finish")
         expect(tab.get_by_role("button", name="Refresh", exact=True)).to_be_enabled()
         wallets = status(200, request("GET", "/v1/wallets", token=token))["wallets"]
@@ -137,6 +139,7 @@ with sync_playwright() as playwright:
             with tab.expect_response(lambda response: response.url == PUBLIC + "/v1/users/me"
                                      and response.request.method == "GET") as refreshed:
                 tab.get_by_role("button", name="Refresh", exact=True).click()
+            require(refreshed.value.status in (200, 404), "Wallet polling profile refresh must succeed or confirm no profile")
             require(refreshed.value.finished() is None, "Wallet polling refresh response must finish")
             expect(tab.get_by_role("button", name="Refresh", exact=True)).to_be_enabled()
             wallet = status(200, request("GET", "/v1/wallets", token=token))["wallets"][0]
