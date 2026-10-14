@@ -1,9 +1,14 @@
 # Bank agent team
 
-This repository uses on-demand Codex subagents. It does not run a daemon, poll
-GitHub, or start work when the chat is closed. Roles inherit the user's model,
-tools and permissions; instructions are coordination rules, not access controls.
-Three workers may run concurrently; other roles wait for the next wave.
+Native Codex subagents run while their parent chat is active. Role files do not
+start a daemon or poll GitHub. The optional [local dispatcher](dispatcher.md)
+runs an explicitly authorized finite manifest independently of the chat, refills
+slots on completion and exits when no eligible work remains. It does not poll
+for new tasks while idle. CLI jobs are separate from the native subagent panel.
+Native roles inherit their parent settings; dispatcher jobs use the existing
+CLI login and exclude connector configuration. Instructions are coordination
+rules, not filesystem access controls.
+Up to six subagents may run concurrently, excluding the primary orchestrator, subject to the active session limit. Prefer four implementation agents, one QA/security agent and one independent reviewer when actionable work supports this split. A configuration edit does not prove that an already-running session has reloaded its limit.
 
 Independent feature implementation may continue in separate worktrees while the
 orchestrator validates or deploys an earlier integration. Do not idle all owners
@@ -78,7 +83,7 @@ Before writing, the orchestrator records an assignment board in the chat with:
 * State: queued, running, review, blocked or done; handoff evidence.
 
 Freeze cross-service contracts before dependent implementation. Dispatch at most
-three workers in a wave and retain their IDs for follow-ups. Only the primary
+six subagents in a wave and retain their IDs for follow-ups. Only the primary
 orchestrator delegates unless explicitly assigning a coordination subtask.
 Worker handoffs include changed paths, actual commands and outcomes, assumptions,
 unresolved risks and requests to other owners. No result means no completed task. A worker may hand off "implementation ready
@@ -97,6 +102,8 @@ Never overwrite the user's uncommitted edits. Inspect every worker diff before
 integrating it. Only the orchestrator publishes a combined PR.
 
 ## Testing and Docker
+
+Across the host, run at most two heavy build/test jobs concurrently, including manual builds and CI. Use the two isolated CI slots; do not add a third heavy job alongside them. Refill available agent slots from authorized independent work after each handoff; when no actionable work remains, stop without polling and report genuine blockers or idle state.
 
 Only one agent holds the build lease for a shared directory: Gradle workers can
 write common outputs even when checking different modules. Do not run concurrent
