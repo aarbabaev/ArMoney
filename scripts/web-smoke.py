@@ -255,8 +255,12 @@ with sync_playwright() as playwright:
     require(notice["payment_id"] == outcome["id"] and notice["read_at"] is not None, "Notification read must persist against real payment")
 
     navigate(page, "Assistant")
-    expect(page.get_by_role("heading", name="The assistant is not available yet", exact=True)).to_be_visible()
-    expect(page.get_by_role("button", name="Send message", exact=True)).to_be_disabled()
+    page.get_by_label("Your question", exact=True).fill("What is my balance?")
+    with page.expect_response(lambda response: response.url == PUBLIC + "/v1/assistant/messages" and response.request.method == "POST") as assistant_response:
+        page.get_by_role("button", name="Send question", exact=True).click()
+    require(assistant_response.value.status == 503, "Disabled real assistant gateway must return unavailable")
+    expect(page.get_by_role("alert")).to_contain_text("Assistant unavailable. No answer or live data could be confirmed.")
+    expect(page.get_by_role("region", name="Assistant answer", exact=True)).to_have_count(0)
     durable = page.evaluate("({local:Object.values(localStorage),session:Object.values(sessionStorage)})")
     all_durable = json.dumps(durable) + json.dumps(records(page))
     require(not any(token in all_durable for token in sessions), "Bank credentials must not persist in browser storage")
@@ -269,4 +273,4 @@ with sync_playwright() as playwright:
     context.close()
     browser.close()
 
-print("Real Angular SSO, wallet/profile/account/demo/inbox flows, rejected transfer lost-response recovery, cross-owner isolation, multi-tab same-key replay, unchanged balances and logout passed; assistant integration remains unavailable")
+print("Real Angular SSO, wallet/profile/account/demo/inbox flows, rejected transfer lost-response recovery, cross-owner isolation, multi-tab same-key replay, unchanged balances and logout passed; protected assistant unavailable response verified without fabricated answers")

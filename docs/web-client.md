@@ -3,7 +3,7 @@
 Tracking: [issue #44](https://github.com/aarbabaev/ArMoney/issues/44).
 Source implementation is ready for independent review. Deployment and real backend
 browser acceptance are pending; this document is not a readiness certificate.
-AI integration depends on the protected contract from separate issue #43.
+Assistant integration uses the protected stateless contract delivered by issue #43.
 
 ## Source baseline and parity audit
 
@@ -28,7 +28,7 @@ over the older Android guide's newest-100 description.
 | Inbox / load more / mark read | MainActivity.kt, CursorPage.kt | GET /v1/notifications/page; POST /v1/notifications/{id}/read | Owner-scoped in-app records; preserve immutable fields/read timestamp; no background push |
 | Profile name / phone / status | MainActivity.kt, BankModel.kt | GET/PUT /v1/users/me | Name edit and server phone/verification display; no invented verification action |
 | Demo card creation / freeze / close | Snapshot DemoCards.kt, DemoCardScreen.kt | Browser-local origin/verified-owner storage | Virtual/physical demos, ACTIVE/FROZEN/CLOSED, terminal closure confirmation, one nonclosed per wallet/type; no issuing/delivery/sync |
-| Assistant chat | Separate AI issue #43; absent in baseline | No frozen assistant route at baseline | Unavailable state until actual versioned protected contract; no fabricated policy citations or transaction answers |
+| Assistant chat | Merged issue #43 | POST /v1/assistant/messages | Current-session bearer, one volatile turn, verified integer facts, demonstration citations and source/time/scope; explicit unavailable/busy/empty/evidence outcomes |
 
 ## Browser trust and exact money
 
@@ -89,8 +89,7 @@ regressions and mandatory exact-head CI remain required for this runtime change.
 SEC-WEB-001 (logout during pending work and stale card responses), session-generation
 races and QA pagination, immutable-notification and card-capacity findings have developer
 fixes. Independent exact-revision retest remains required. Final PR records exact revision,
-executed commands, outcomes, blocked checks and deployment status. No completed
-AI integration, device acceptance or persistent deployment is implied by a build.
+executed commands, outcomes, blocked checks and deployment status. No device acceptance or persistent deployment is implied by a build.
 
 ### Local backend evidence (2026-10-13)
 
@@ -115,3 +114,29 @@ These fixtures use a separate HTTP loopback test entry and synthetic sessions;
 production builds exclude that entry. No TLS certificate bypass is configured.
 Independent execution, exact-head CI and real disposable smoke are tracked in
 [PR #49](https://github.com/aarbabaev/ArMoney/pull/49); pending checks are not success.
+
+
+### Assistant browser integration (2026-10-14)
+
+The browser sends only the current question to the same-origin protected gateway.
+It never calls the provider or private delegation routes. Request limits are 2,000
+Unicode code points and 4,096 encoded bytes; response limits and typed facts are
+validated before display. The client allows 40 seconds for the gateway's 35-second
+deadline, sends no automatic retries, and renders all returned text as escaped text.
+One current answer lives in memory; logout/expiry clears it and session generations
+discard late responses. Turns do not supply conversational history. Financial facts
+remain separate from demonstration citations, with source, Asia/Dubai time and scope.
+No answer is financial command acceptance. The UI discloses limited history and
+provider retention; configured assistant outages remain explicit unavailable states.
+
+Developer Vitest coverage now includes authenticated request shape, exact Int64
+facts, input/response bounds, malformed facts/provenance, concurrent-turn rejection,
+logout/new-owner races, 401 expiry and 400/413/429/503 handling. Browser transport
+fixtures cover escaped citations, exact amounts, accessibility and stale-answer
+removal after outage; these are client evidence, not actual-provider acceptance.
+
+The static image removes Caddy's unneeded low-port file capability before running
+on port 8080. This retains the overlay's read-only filesystem, cap_drop ALL and
+no-new-privileges. The orchestrator reproduced the original execution denial and
+verified the rebuilt image runs and serves index.html with those exact restrictions
+in an isolated network-none container. Persistent rollout remains a separate gate.

@@ -23,6 +23,7 @@ import {
 } from "./contracts";
 import { Store, DemoCard } from "./storage";
 import { issuer } from "../../environment";
+import { AssistantAnswer, assistantAnswer, assistantMessage } from "./assistant";
 export class HttpFailure extends Error {
   constructor(
     readonly status: number,
@@ -37,6 +38,7 @@ export class HttpFailure extends Error {
 }
 @Injectable({ providedIn: "root" })
 export class Bank {
+  readonly assistant = signal<{ loading: boolean; question: string; answer: AssistantAnswer | null; error: string }>({ loading: false, question: "", answer: null, error: "" });
   readonly owner = signal<string | null>(null);
   readonly busy = signal(false);
   readonly message = signal("");
@@ -97,6 +99,7 @@ export class Bank {
     }
   }
   private clear() {
+    this.assistant.set({ loading: false, question: "", answer: null, error: "" });
     this.generation++;
     this.operation++;
     this.busy.set(false);
@@ -149,12 +152,13 @@ export class Bank {
         ...(key ? { "Idempotency-Key": key } : {}),
       },
       body: body === undefined ? undefined : encode(body),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(path === "/v1/assistant/messages" ? 40000 : 15000),
     });
     const text = await response.text();
     if (token && epoch !== this.generation)
       throw Error("Session changed; saved transfer is preserved.");
     if (text.length > 1048576) throw Error("Response too large");
+    if (path === "/v1/assistant/messages" && new TextEncoder().encode(text).length > 32768) throw Error("Assistant response too large");
     if (!response.ok) {
       if (response.status === 401 && epoch === this.generation) this.clear();
       const exact =
@@ -169,6 +173,31 @@ export class Bank {
     if (!response.headers.get("content-type")?.startsWith("application/json"))
       throw Error("Unexpected server response");
     return decode(text);
+  }
+  async askAssistant(question: string) {
+    if (this.assistant().loading || !this.owner()) return;
+    const epoch = this.generation;
+    this.assistant.set({ loading: true, question, answer: null, error: "" });
+    try {
+      const body = assistantMessage(question);
+      const answer = assistantAnswer(await this.request("/v1/assistant/messages", "POST", body));
+      if (epoch !== this.generation) return;
+      if (Date.now() >= this.expires) {
+        this.clear();
+        this.message.set("Session expired. Sign in again.");
+        return;
+      }
+      this.assistant.set({ loading: false, question, answer, error: "" });
+    } catch (e) {
+      if (epoch !== this.generation) return;
+      const error = e instanceof HttpFailure
+        ? e.status === 429 ? "Assistant is busy. Please wait before submitting again."
+          : e.status === 400 || e.status === 413 ? "Question could not be accepted. Shorten or edit it and submit again."
+          : "Assistant unavailable. No answer or live data could be confirmed."
+        : e instanceof Error && (e.message.startsWith("Enter a question") || e.message.startsWith("Question is too large")) ? e.message
+          : "Assistant unavailable. No answer or live data could be confirmed. Submit again when ready.";
+      this.assistant.set({ loading: false, question, answer: null, error });
+    }
   }
   signIn() {
     return this.task(async () => {

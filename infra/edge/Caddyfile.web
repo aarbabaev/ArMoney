@@ -15,6 +15,10 @@ https://{$ARMONEY_HOST}:443 {
             header_up X-Forwarded-Port 8443
         }
     }
+    @blockedSso path /sso /sso/*
+    handle @blockedSso {
+        respond 404
+    }
     @api path /v1/* /health/live /health/ready /openapi.yaml
     handle @api {
         reverse_proxy app-gateway:8080

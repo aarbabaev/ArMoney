@@ -197,12 +197,11 @@ test("assistant cannot fabricate answers and balance outages remain unavailable"
     page.getByText("Balance unavailable", { exact: true }),
   ).toBeVisible();
   await page.getByRole("link", { name: "Assistant", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "The assistant is not available yet" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Send message" }),
-  ).toBeDisabled();
+  await page.route("**/v1/assistant/messages", route => route.fulfill({status:503,contentType:"application/json",body:'{"error":"service_unavailable"}'}));
+  await page.getByLabel("Your question").fill("What is my balance?");
+  await page.getByRole("button", { name: "Send question" }).click();
+  await expect(page.getByRole("alert")).toContainText("Assistant unavailable");
+  await expect(page.getByRole("region", { name: "Assistant answer" })).toHaveCount(0);
 });
 test("two tabs serialize owner commands and persist no session credentials", async ({
   page,
@@ -286,4 +285,29 @@ test("corrupted recovery storage disables payments and preserves the record", as
   await expect(
     page.getByRole("button", { name: "Find recipient" }),
   ).toBeDisabled();
+});
+
+test("assistant renders escaped citations and exact facts, then exposes unavailable without stale answer", async ({ page }) => {
+  await mock(page); await signIn(page);
+  let unavailable = false;
+  await page.route("**/v1/assistant/messages", async route => {
+    expect(route.request().postDataJSON()).toEqual({message:"What is my balance?"});
+    expect(route.request().headers()["authorization"]).toMatch(/^Bearer /);
+    if (unavailable) return route.fulfill({status:503,contentType:"application/json",body:'{"error":"service_unavailable"}'});
+    await route.fulfill({contentType:"application/json",body:JSON.stringify({reply:"<img src=x onerror=alert(1)>",outcome:"answered",citations:[{document_id:"demo",version:"1",section:"AED rules",excerpt:"<script>alert(1)</script>"}],facts:{wallets:[{wallet_id:wallet,currency:"AED",balance_minor:"BIG_AMOUNT"}],last_transaction:null},provenance:[{source:"wallet-service",fetched_at:"2026-10-14T00:00:00Z",scope:"owned active wallets"},{source:"policy-index",fetched_at:"2026-10-14T00:00:00Z",scope:"demonstration rules"}]}).replace('"BIG_AMOUNT"','9223372036854775807')});
+  });
+  await page.getByRole("link",{name:"Assistant"}).click();
+  await page.getByLabel("Your question").fill("What is my balance?");
+  await page.getByRole("button",{name:"Send question"}).click();
+  const answer = page.getByRole("region",{name:"Assistant answer"});
+  await expect(answer.getByText("<img src=x onerror=alert(1)>",{exact:true})).toBeVisible();
+  await expect(answer.getByText(/AED 92233720368547758.07/)).toBeVisible();
+  await answer.locator("summary").click();
+  await expect(answer.getByText("<script>alert(1)</script>",{exact:true})).toBeVisible();
+  expect(await answer.locator("img,script").count()).toBe(0);
+  expect((await new AxeBuilder({page}).analyze()).violations).toEqual([]);
+  unavailable = true;
+  await page.getByRole("button",{name:"Send question"}).click();
+  await expect(page.getByRole("alert")).toContainText("Assistant unavailable");
+  await expect(answer).toHaveCount(0);
 });

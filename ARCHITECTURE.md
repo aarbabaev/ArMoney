@@ -229,8 +229,17 @@ flowchart LR
     SPA --> D[("Origin / verified owner local data")]
     D --> P["Immutable unresolved command and original key"]
     D --> C["Demo cards only: no payment credentials"]
-    SPA -.-> AI["Assistant integration pending actual protected contract"]
+    G -->|"Protected stateless message"| AI["Read-only banking assistant"]
 ```
+
+Browser assistant turns use the protected POST /v1/assistant/messages contract with
+current session authorization, a 40-second timeout and no automatic retry. Questions
+and answers remain in memory; logout/expiry clears them and late responses cannot
+cross sessions. Exact financial facts, citations and provenance are validated before
+display. Successful response fixtures establish client behavior; real unavailable-service
+acceptance is exercised in disposable SSO CI. This does not claim a browser turn
+against the deployed model. Web hosting removes Caddy's unneeded low-port file
+capability while retaining a read-only root filesystem and dropped capabilities.
 
 Balances and payment amounts use lossless int64 JSON with integer fils in the
 browser; JavaScript floating-point numbers cannot preserve the full wire range.

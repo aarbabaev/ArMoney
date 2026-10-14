@@ -88,7 +88,7 @@ used for gateway responses or stored financial commands.
 | Registered phone                  | Server phone and ownership-attestation status; no public phone-verification API exists                                                    |
 | Inbox / read                      | `GET /v1/notifications/page`, `POST /v1/notifications/{id}/read`, immutable notification checks                                           |
 | Demonstration cards               | Owner-local VIRTUAL/PHYSICAL, one nonclosed card per wallet/type, ACTIVE/FROZEN/CLOSED; confirmed terminal closure, no HTTP/money/PAN/CVV |
-| Assistant                         | Coherent unavailable screen and disabled adapter; no invented endpoint, responses or bank advice                                          |
+| Assistant                         | Protected stateless gateway turns; escaped citations, exact facts, source/time/scope and explicit unavailable states                                          |
 | Sign-out                          | `/v1/auth/logout`, local clear regardless of busy/error, provider end-session callback                                                    |
 
 The semantic palette matches `docs/android-design.md`: Shark, White and
