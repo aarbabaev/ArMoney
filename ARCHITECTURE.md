@@ -712,18 +712,26 @@ flowchart LR
 
 ### Local build infrastructure
 
-GitHub Actions schedules backend and Android work on a disposable Linux Docker runner
-labelled `armoney-local`. A Windows controller registers one job at a time, then removes
-that job's runner, workspace and dedicated Docker daemon storage. Artifacts persist in
+GitHub Actions schedules backend and Android work on disposable Linux Docker runners
+labelled `armoney-local`. Up to two allowlisted slots run in separate Windows controller
+processes. Each slot registers one job at a time, then removes that job's runner,
+workspace and dedicated Docker daemon storage. Slot 1 preserves the original project
+and mutex names; slot 2 has its own project, mutex, network and disposable volumes.
+Same-slot contention and dirty-state checks fail before registration; cleanup targets
+only the selected slot and exact runner registration. Artifacts persist in the shared
 `armoney-ci-artifacts`. The application's running Docker stack is separate. PostgreSQL readiness probes use
 TCP loopback to avoid accepting the temporary initialization server as ready.
 
 ```mermaid
 flowchart LR
-    GH["GitHub Actions: checks and scheduling"] --> R["Ephemeral Linux runner: Java and Android"]
-    H["Windows controller: registration and cleanup"] --> R
-    R --> D["Dedicated inner Docker daemon: disposable databases and smoke tests"]
-    R --> A["Local artifact volume: reports and APK"]
+    GH["GitHub Actions: checks and scheduling"] --> R1["Slot 1: ephemeral Linux runner"]
+    GH --> R2["Slot 2: ephemeral Linux runner"]
+    H1["Windows controller 1: legacy mutex and project"] --> R1
+    H2["Windows controller 2: separate mutex and project"] --> R2
+    R1 --> D1["Slot 1 inner Docker daemon and workspace"]
+    R2 --> D2["Slot 2 inner Docker daemon and workspace"]
+    R1 --> A["Shared local artifact volume: reports and APK"]
+    R2 --> A
     M["iOS development and CI paused by owner"]
     P["Persistent banking stack: not mounted in CI"]
 ```
@@ -733,13 +741,18 @@ registration. Approving untrusted workflow code is unsafe: privileged DinD is no
 hostile-code sandbox. Labels and workflow conditions are only additional checks.
 The host administration token never enters the job; registration credentials are removed
 before the runner accepts work. Failed isolation checks also prevent Docker cleanup.
+Both slots repeat the trust audit before every registration. Shared host resources and
+the writable artifact volume do not isolate mutually untrusted jobs. Current backend
+and Android archive names are distinct within each run/attempt; future same-kind matrix
+jobs require unique archive paths. Concurrency does not guarantee faster completion.
 
 Android emulator instrumentation is excluded from routine CI and runs only on an explicit
 owner request. The retained script uses software emulation on Docker Desktop without KVM. iOS
 development and CI are paused by explicit owner instruction on 2026-10-12. Existing
 source and test scripts remain; resumption requires Mac/Xcode. No iOS pass is claimed.
 Operational steps and limitations: [local CI](infra/local-ci/README.md),
-[ADR 0016](docs/adr/0016-local-ci-runners.md). Deployment remains an explicit owner action.
+[ADR 0016](docs/adr/0016-local-ci-runners.md),
+[ADR 0021](docs/adr/0021-local-ci-slots.md). Deployment remains an explicit owner action.
 
 On Windows, use `.\gradlew.bat`. CI: [.github/workflows/ci.yml](.github/workflows/ci.yml).
 Fixture funding and `down --volumes` are only for disposable CI environments, never user
