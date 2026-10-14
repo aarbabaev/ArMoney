@@ -122,12 +122,28 @@ def topic_state(text, expected_isr):
         require(partitions == {0, 1, 2}, 'Partition identity mismatch')
 
 
-def rejected(result, reason):
+def rejected(result, reason, probe='producer rejection'):
     # The frozen producer wrapper uses --sync: an exception must fail the process.
     # A generic timeout, missing tool or lost connection is never sufficient.
     output = result.stdout + result.stderr
-    require(result.returncode != 0 and reason in output,
-            'Expected failed process and explicit broker rejection were not observed')
+    explicit = reason in output
+    if reason == 'NotEnoughReplicas':
+        # Retried broker responses use enum names; the final exception can be
+        # TimeoutException after delivery.timeout.ms. The enum is required
+        # evidence of a broker response, never a timeout-only substitute.
+        explicit = re.search(r'\b(?:NotEnoughReplicas(?:AfterAppend)?Exception|'
+                             r'NOT_ENOUGH_REPLICAS(?:_AFTER_APPEND)?)\b', output) is not None
+    require(result.returncode != 0 and explicit,
+            f'{probe}: nonzero exit and explicit {reason} rejection required (exit={result.returncode})')
+
+
+def denied_consumer(result, probe='consumer authorization denial'):
+    # Kafka 4.3.1 ConsoleConsumer.process logs receive failures and returns,
+    # which can exit zero. Require an actual authorization exception on stderr
+    # and no stdout records; successful consumption can never count as denial.
+    explicit = re.search(r'\b(?:Topic|Group|Cluster)?AuthorizationException\b', result.stderr) is not None
+    require(not result.stdout.strip() and explicit,
+            f'{probe}: explicit authorization denial and zero records required (exit={result.returncode})')
 
 
 def require_tls_rejection(result):
@@ -416,7 +432,7 @@ exec /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-broker
         self.quorum(cluster)
         refused = str(uuid.uuid4()) + ':{"synthetic":"insufficient-isr"}'
         rejected(self.probe('payment', 'produce', TOPICS[0], input=refused + '\n', check=False),
-                 'NotEnoughReplicas')
+                 'NotEnoughReplicas', 'minimum-ISR produce')
         self.change('start', 'kafka-broker-1', 'kafka-broker-2')
         self.wait_isr({'101', '102', '103'})
         self.quorum(cluster)
@@ -443,11 +459,11 @@ exec /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-broker
             self.consume(reader, topic, group, [record])
         for principal, topic in (('denied', TOPICS[0]), ('ledger', TOPICS[0]), ('payment', TOPICS[1])):
             rejected(self.probe(principal, 'produce', topic, input='synthetic:{"denied":true}\n', check=False),
-                     'AuthorizationException')
-        rejected(self.probe('denied', 'consume', TOPICS[0], 'denied-group', '1', '5000', check=False),
-                 'AuthorizationException')
-        rejected(self.probe('payment', 'consume', TOPICS[0], 'payment-ledger-result-v1', '1', '5000', check=False),
-                 'AuthorizationException')
+                     'AuthorizationException', principal + ' unauthorized produce')
+        denied_consumer(self.probe('denied', 'consume', TOPICS[0], 'denied-group', '1', '5000', check=False),
+                        'denied-principal consume')
+        denied_consumer(self.probe('payment', 'consume', TOPICS[0], 'payment-ledger-result-v1', '1', '5000', check=False),
+                        'payment cross-topic consume')
         self.consume('ledger', TOPICS[0], 'ledger-transfer-v1', commands, recovered_uncertain)
         self.cold_restore(cluster, commands, recovered_uncertain)
         print('Kafka transport assertions passed; disposable cleanup pending')

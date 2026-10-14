@@ -225,6 +225,41 @@ class Guards(unittest.TestCase):
             kafka.rejected(subprocess.CompletedProcess([], 0, '', 'NotEnoughReplicasException'), 'NotEnoughReplicas')
         kafka.rejected(subprocess.CompletedProcess([], 1, '', 'NotEnoughReplicasException'), 'NotEnoughReplicas')
 
+    def test_minimum_isr_enum_requires_failed_send_and_explicit_broker_response(self):
+        for enum in ('NOT_ENOUGH_REPLICAS', 'NOT_ENOUGH_REPLICAS_AFTER_APPEND'):
+            output = 'WARN Error: ' + enum + '\nTimeoutException: delivery expired'
+            kafka.rejected(subprocess.CompletedProcess([], 1, '', output), 'NotEnoughReplicas')
+            with self.subTest(enum=enum), self.assertRaises(kafka.Failed):
+                kafka.rejected(subprocess.CompletedProcess([], 0, '', output), 'NotEnoughReplicas')
+        for output in ('TimeoutException', 'NOT_ENOUGH_REPLICAS_UNKNOWN', 'XNOT_ENOUGH_REPLICAS', ''):
+            with self.subTest(output=output), self.assertRaises(kafka.Failed):
+                kafka.rejected(subprocess.CompletedProcess([], 1, '', output), 'NotEnoughReplicas')
+
+    def test_denied_consumer_accepts_zero_exit_only_with_explicit_denial_and_no_records(self):
+        for code in (0, 1):
+            for error in ('TopicAuthorizationException', 'GroupAuthorizationException'):
+                kafka.denied_consumer(subprocess.CompletedProcess([], code, '', error))
+        for code, stdout, stderr in (
+                (0, 'payment-id:synthetic-record\n', 'TopicAuthorizationException'),
+                (1, 'payment-id:synthetic-record\n', 'GroupAuthorizationException'),
+                (0, '', 'TimeoutException'), (1, '', 'TimeoutException'),
+                (0, '', ''), (1, '', 'Connection refused'),
+                (0, 'TopicAuthorizationException', ''),
+                (0, '', 'TopicAuthorizationExceptionUnexpected')):
+            with self.subTest(code=code, stdout=stdout, stderr=stderr), self.assertRaises(kafka.Failed):
+                kafka.denied_consumer(subprocess.CompletedProcess([], code, stdout, stderr))
+
+    def test_rejection_diagnostics_identify_probe_without_exposing_output(self):
+        result = subprocess.CompletedProcess([], 1, 'synthetic-sensitive-payload', 'synthetic-sensitive-error')
+        with self.assertRaises(kafka.Failed) as failed:
+            kafka.rejected(result, 'NotEnoughReplicas', 'minimum-ISR produce')
+        self.assertIn('minimum-ISR produce', str(failed.exception))
+        self.assertNotIn('synthetic-sensitive', str(failed.exception))
+        with self.assertRaises(kafka.Failed) as failed:
+            kafka.denied_consumer(result, 'payment cross-topic consume')
+        self.assertIn('payment cross-topic consume', str(failed.exception))
+        self.assertNotIn('synthetic-sensitive', str(failed.exception))
+
     def test_partition_states_require_exact_isr_and_topic_settings(self):
         for isr in ('101,102,103', '102,103', '103'):
             kafka.topic_state(topics(isr), set(isr.split(',')))
