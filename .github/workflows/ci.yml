@@ -13,6 +13,20 @@ concurrency:
 env:
   INTERNAL_AUTH_KEY: ci-only-service-key-at-least-32-characters
 jobs:
+  dispatcher:
+    if: github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64, armoney-local]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Verify local toolchain and isolated daemon
+        run: |
+          python3 scripts/test-local-ci-guards.py
+          bash scripts/check-local-ci.sh
+      - name: Test durable queue, process lifecycle and reporting boundaries
+        run: python3 -B -m unittest infra.dispatcher.test_scheduler infra.dispatcher.test_runner infra.dispatcher.test_cli infra.dispatcher.test_github infra.dispatcher.test_intake infra.dispatcher.test_transport -v
   build:
     env:
       JAVA_TOOL_OPTIONS: -Dapi.version=1.44

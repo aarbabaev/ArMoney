@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary", "evidence", "head_sha"],
+  "properties": {
+    "status": {"type": "string", "enum": ["ready", "blocked", "request_changes", "approve"]},
+    "summary": {"type": "string"},
+    "evidence": {"type": "array", "items": {"type": "string"}},
+    "head_sha": {"type": "string"}
+  }
+}
