@@ -13,6 +13,7 @@ discovery is unavailable, the worker reads those files explicitly. See the
 | Role | Relevant skills |
 | --- | --- |
 | bank_orchestrator | bank-coordination; bank-api for contracts; bank-java/bank-postgres for shared implementation; bank-testing for validation |
+| ai_assistant_owner | bank-api, bank-security, bank-testing for project contracts/evidence; current official .NET/OpenAI C# documentation for language/provider APIs; Java/jOOQ commands are not C# implementations |
 | gateway_owner | bank-java, bank-api, bank-testing; bank-security for trust-boundary changes |
 | auth_owner | bank-java, bank-postgres, bank-api, bank-testing, bank-security |
 | android_owner | bank-android; bank-api for gateway contracts; bank-sso for login |
@@ -60,3 +61,7 @@ Exact paths are .agents/skills/<name>/SKILL.md. These are local project instruct
 not installed runtimes or permission grants. Load on demand rather than all skills
 for every agent. SMS identity work uses bank-sso, bank-security and bank-testing;
 sandbox backend work uses bank-java, bank-api and bank-postgres when persistence applies.
+## Assistant routing
+
+The ai_assistant_owner reads `.codex/agents/ai_assistant_owner.toml` and `docs/agents/missions/ai-assistant.md`. Assignment skills use exact paths `.agents/skills/bank-api/SKILL.md`, `.agents/skills/bank-security/SKILL.md` and `.agents/skills/bank-testing/SKILL.md`. Those project skills supply trust/evidence/isolation rules; they do not establish .NET SDK compatibility. Verify current vendor documentation and actual C# dependency/build evidence. Shared Compose/CI and architecture updates remain bank_orchestrator-owned. No assistant-specific skill or automatic role discovery has been tested by writing this routing entry.
+

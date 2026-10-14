@@ -7,6 +7,8 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -22,6 +24,17 @@ class BankModel(application: Application) : AndroidViewModel(application) {
     private val recovery = PaymentRecovery(config.origin, store)
     private val http = BankHttp(config)
     var session by mutableStateOf<SavedSession?>(null); private set
+    var assistant by mutableStateOf(AssistantState()); private set
+    private val assistantTurns = AssistantTurns { assistant = it }
+    private var assistantExpiry: Job? = null
+    private fun resetAssistant(saved: SavedSession?) {
+        assistantExpiry?.cancel(); assistantTurns.reset(saved)
+        if (saved != null) assistantExpiry = viewModelScope.launch {
+            val remaining = java.time.Duration.between(Instant.now(), Instant.parse(saved.session.expires_at)).toMillis()
+            if (remaining > 0) delay(remaining)
+            if (session == saved) assistantTurns.expire()
+        }
+    }
     var busy by mutableStateOf(false); private set
     var message by mutableStateOf<String?>(null); private set
     var storageBlocked by mutableStateOf(false); private set
@@ -46,6 +59,7 @@ class BankModel(application: Application) : AndroidViewModel(application) {
             if (saved != null) {
                 require(saved.origin == config.origin); uuid(saved.identity.id)
                 session = saved
+                resetAssistant(saved)
             }
         } catch (_: Exception) { storageBlocked = true; message = "Secure storage is unreadable. Payments are disabled; do not send a replacement for an uncertain transfer." }
         if (session != null) refresh()
@@ -78,6 +92,7 @@ class BankModel(application: Application) : AndroidViewModel(application) {
         val identity = wire.decodeFromString<Identity>(http.send("/v1/auth/me", token = bank.access_token)); uuid(identity.id)
         val saved = SavedSession(config.origin, bank, identity)
         store.write(sessionScope, wire.encodeToString(saved)); generation++; session = saved
+        resetAssistant(saved)
         load(saved)
     }
     fun refresh() = task { session?.let { load(it) } }
@@ -183,6 +198,19 @@ class BankModel(application: Application) : AndroidViewModel(application) {
         if (generation == epoch) detail = p
     }
     fun closeDetails() { detail = null }
+    fun askAssistant(question: String) {
+        val s = session ?: return
+        val body = runCatching { assistantRequest(question) }.getOrElse { return }
+        val ticket = assistantTurns.begin(s, question) ?: return
+        viewModelScope.launch {
+            try {
+                val answer = assistantAnswer(http.send("/v1/assistant/messages", "POST", body, s.session.access_token))
+                if (session == s) assistantTurns.complete(ticket, s, answer)
+            } catch (failure: Exception) {
+                if (session == s) assistantTurns.fail(ticket, s, failure)
+            }
+        }
+    }
     fun readNotice(id: String) = authenticated { s, epoch ->
         val previous = notices.firstOrNull { it.id == id } ?: error("Notification is no longer loaded")
         val updated = wire.decodeFromString<Notice>(http.send("/v1/notifications/${uuid(id)}/read", "POST", token = s.session.access_token))
@@ -194,7 +222,9 @@ class BankModel(application: Application) : AndroidViewModel(application) {
         val s = session ?: return@task
         store.remove(sessionScope); store.remove(Login.scope(config.origin))
         generation++; session = null; pending = null; profile = null; recipient = null; wallets = emptyList(); balances = emptyMap(); paymentPages.reset(); noticePages.reset(); detail = null
+        resetAssistant(null)
         try { http.send("/v1/auth/logout", "POST", token = s.session.access_token) }
         catch (_: Exception) { message = "Signed out on this device. Server revocation could not be confirmed; the session expires automatically." }
     }
 }
+

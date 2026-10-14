@@ -35,6 +35,7 @@ Format reference: [official OpenAI documentation](https://learn.chatgpt.com/docs
 | Role | Default write scope | Responsibility |
 | --- | --- | --- |
 | bank_orchestrator | Shared files outside service modules | Contracts, integration, platform-runtime, build, CI, Compose, docs, PR |
+| ai_assistant_owner | ai-assistant-service/**, including its tests | C# banking assistant, local policies/index and read-only tools; planned service |
 | gateway_owner | app-gateway/ | Public API, routing and identity checks |
 | auth_owner | auth-service/ | Credentials, sessions and revocation |
 | sso_owner | sso-service/; explicitly leased auth adapter files | Keycloak/OIDC and identity mapping |
@@ -160,3 +161,7 @@ At every meaningful handoff, the responsible actor updates the issue and Project
 When work stops without completion, record the idle/waiting state and reason; In Progress must not imply an agent is running when none is.
 Record deploy start, deployed commit, result and readiness/acceptance evidence. A failed deploy cannot be Done. Preserve existing deployment authorization boundaries; when authorization is missing, make that waiting reason explicit.
 This is an on-demand agent workflow, not an always-running service. Do not claim continuous execution after all agents stop. Do not report completion or actual status changes before tool verification.
+## Banking assistant planning
+
+Use [assistant mission](missions/ai-assistant.md) and [proposed ADR](../adr/0020-banking-ai-assistant-proposal.md) before assistant work. ai_assistant_owner is a Codex development role with service/test ownership only, not a deployed assistant or a background process. The orchestrator owns shared runtime/CI/Compose/docs and freezes delegation and message contracts before gateway/Android/service implementation. C# is a proposed service-local stack exception, not a rewrite of Java services. Dispatch independent security design review and later integrated QA/security/reviewer validation. Until evidence exists, record proposed behavior and waiting dependencies honestly.
+

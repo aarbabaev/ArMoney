@@ -104,11 +104,12 @@ class LocalCiGuards(unittest.TestCase):
 
     def finalizers(self):
         steps = [step for step in workflow_steps() if "docker compose" in step[2]
-                 and ("logs " in step[2] or "down " in step[2])]
+                 and ("logs " in step[2] or re.search(r"\bdown(?:\s|$)", step[2]))]
         self.assertEqual(
             {name for name, _, _ in steps},
             {"Container diagnostics", "Sharding diagnostics and cleanup",
-             "SSO diagnostics and cleanup", "Stop containers"},
+             "SSO diagnostics and cleanup", "Stop containers",
+             "Assistant Compose cleanup", "Assistant disposable database cleanup"},
             "Workflow finalizers changed; update coverage explicitly",
         )
         return steps
@@ -152,7 +153,10 @@ class LocalCiGuards(unittest.TestCase):
         self.assertNotEqual(self.run_shell("exit 42").returncode, 0)
         self.run_finalizers("success", True)
         calls = self.docker_calls()
-        self.assertEqual(sum("down --volumes" in call for call in calls), 3, calls)
+        self.assertEqual(sum("down --volumes" in call for call in calls), 4, calls)
+        self.assertEqual(sum(call.endswith(" down") for call in calls), 1, calls)
+        self.assertTrue(any("-p assistant-qa-ci " in call and "down --volumes" in call for call in calls), calls)
+        self.assertTrue(any("-p armoney-assistant-check " in call and call.endswith(" down") for call in calls), calls)
         self.assertTrue(any("logs --no-color" in call for call in calls), calls)
 
     def prepare_entrypoint(self):
@@ -251,3 +255,4 @@ if __name__ == "__main__":
     if os.name != "posix" or BASH is None:
         raise SystemExit("BLOCKED: run in the approved disposable Linux image with Bash; no tests skipped.")
     unittest.main(verbosity=2)
+

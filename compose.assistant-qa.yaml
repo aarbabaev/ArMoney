@@ -1,0 +1,4 @@
+# Use only on the separate validation daemon, with an explicit assistant-qa project.
+services:
+  app-gateway:
+    ports: !override ["127.0.0.1:18083:8080"]
