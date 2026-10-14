@@ -287,9 +287,36 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_unrelated_repository_rejected_before_cli_launch(self):
         unrelated = self.root / 'unrelated'
         self.init_repo(unrelated)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(runner.PreflightError) as error:
             await self.instance()(self.task(cwd=str(unrelated)))
+        self.assertEqual('REPOSITORY_MISMATCH', error.exception.code)
+        self.assertNotIn(str(unrelated), error.exception.result()['summary'])
         self.assertEqual(self.launches, [])
+
+    def test_missing_cwd_preflight_has_safe_code_and_no_launch(self):
+        with self.assertRaises(runner.PreflightError) as error:
+            self.instance().preflight(self.task(cwd=str(self.root / 'SENSITIVE-unavailable-path')))
+        self.assertEqual('ASSIGNMENT_CWD_UNAVAILABLE', error.exception.code)
+        self.assertNotIn('SENSITIVE', json.dumps(error.exception.result()))
+        self.assertEqual(self.launches, [])
+
+    async def test_unborn_git_repository_is_blocked_before_claim_or_launch(self):
+        from .store import Store
+        from .scheduler import Scheduler
+        unborn = self.root / 'unborn'
+        unborn.mkdir()
+        self.git(unborn, '-c', 'init.templateDir=', 'init', '-q')
+        role = unborn / '.codex/agents/ledger_owner.toml'
+        role.parent.mkdir(parents=True)
+        role.write_text('name = "ledger_owner"\n')
+        store = Store(self.root / 'unborn-queue.sqlite')
+        store.enqueue(self.task(cwd=str(unborn), authorized=True, issue='unborn-proof', agent_id='unborn-owner'))
+        instance = runner.CodexRunner(self.fixture, unborn)
+        row = (await Scheduler(store, instance).run())[0]
+        self.assertEqual(('blocked', 0), (row['state'], row['attempt']))
+        self.assertEqual('REPOSITORY_UNAVAILABLE', row['result']['error_code'])
+        self.assertEqual(self.launches, [])
+        self.assertFalse((self.root / 'capture.json').exists())
 
     async def test_invalid_or_missing_role_rejected_before_cli_launch(self):
         for role in ('../ledger_owner', 'Unknown', 'missing_owner'):

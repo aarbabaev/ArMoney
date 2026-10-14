@@ -1,4 +1,5 @@
 import asyncio
+import json
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -125,7 +126,8 @@ class QueueTests(unittest.TestCase):
         self.store.enqueue(self.spec('qa', stage='qa', role='qa_integration', paths=[], read_only=True))
         qa = self.store.claim_available()[0]
         self.store.complete('qa', qa['attempt'], {'status': 'ready', 'head_sha': 'stale', 'evidence': ['passed']})
-        self.assertTrue(all(t['state'] == 'blocked' for t in self.store.snapshot()))
+        states = {t['task_id']: t['state'] for t in self.store.snapshot()}
+        self.assertEqual({'owner': 'succeeded', 'qa': 'blocked'}, states)
 
     def test_nested_cwd_glob_and_negative_limits(self):
         a = self.spec('a')
@@ -196,18 +198,18 @@ class QueueTests(unittest.TestCase):
         self.assertEqual([('implement', 1), ('qa', 1), ('review', 1), ('implement', 2), ('qa', 2), ('review', 2)], calls)
         self.assertTrue(all(t['state'] == 'succeeded' for t in result))
 
-    def test_completed_failure_retries_are_bounded_and_orphans_not_replayed(self):
+    def test_actionable_failure_retries_are_bounded_and_orphans_not_replayed(self):
         self.store.enqueue(self.spec('owner', max_attempts=2))
         calls = []
         async def runner(task):
             calls.append(task['attempt'])
-            return {'status': 'blocked', 'summary': 'local execution unavailable'}
+            return {'status': 'request_changes', 'summary': 'reproduced source defect', 'evidence': ['regression reproduced']}
         result = asyncio.run(Scheduler(self.store, runner).run())
         self.assertEqual([1, 2], calls)
         self.assertEqual('blocked', result[0]['state'])
         self.store.enqueue(self.spec('orphan'))
         orphan = self.store.claim_available()[0]
-        self.store.complete('orphan', orphan['attempt'], {'status': 'blocked'})
+        self.store.complete('orphan', orphan['attempt'], {'status': 'request_changes', 'evidence': ['regression reproduced']})
         self.store.route_remediation()
         self.store.claim_available()
         self.store.recover()
@@ -216,6 +218,75 @@ class QueueTests(unittest.TestCase):
         self.store.reconcile('orphan', orphan_stopped=True)
         self.store.route_remediation()
         self.assertEqual('blocked', next(t for t in self.store.snapshot() if t['task_id'] == 'orphan')['state'])
+
+    def test_blocked_qa_does_not_invalidate_or_retry_implementation(self):
+        self.store.enqueue(self.spec('owner'))
+        self.finish(self.store.claim_available()[0])
+        self.store.enqueue(self.spec('qa', stage='qa', role='qa_integration', paths=[], read_only=True))
+        calls = []
+        async def runner(task):
+            calls.append(task['task_id'])
+            return {'status': 'blocked', 'summary': 'Sandbox denies TEMP; external CI unavailable'}
+        rows = {t['task_id']: t for t in asyncio.run(Scheduler(self.store, runner).run())}
+        self.assertEqual(['qa'], calls)
+        self.assertEqual('succeeded', rows['owner']['state'])
+        self.assertEqual(1, rows['owner']['attempt'])
+        self.assertFalse(rows['qa']['result']['auto_remediation'])
+        self.assertEqual('operator', rows['qa']['result']['route_to'])
+
+    def test_preflight_quarantines_before_claim_without_attempt_or_launch(self):
+        from .runner import PreflightError
+        self.store.enqueue(self.spec('invalid'))
+        class Runner:
+            def preflight(self, task):
+                raise PreflightError('REPOSITORY_MISMATCH')
+            async def __call__(self, task):
+                raise AssertionError('must not launch')
+        row = asyncio.run(Scheduler(self.store, Runner()).run())[0]
+        self.assertEqual(('blocked', 0), (row['state'], row['attempt']))
+        self.assertEqual('REPOSITORY_MISMATCH', row['result']['error_code'])
+
+    def test_unevidenced_request_changes_cannot_trigger_owner_retry(self):
+        self.store.enqueue(self.spec('owner'))
+        calls = []
+        async def runner(task):
+            calls.append(task['attempt'])
+            return {'status': 'request_changes', 'summary': 'No reproducible finding provided'}
+        row = asyncio.run(Scheduler(self.store, runner).run())[0]
+        self.assertEqual([1], calls)
+        self.assertEqual('FINDING_EVIDENCE_MISSING', row['result']['error_code'])
+        self.assertFalse(row['result']['auto_remediation'])
+
+    def test_legacy_owner_route_from_blocked_qa_is_not_replayed(self):
+        self.store.enqueue(self.spec('owner'))
+        # Synthetic persisted result created by the previous dispatcher version.
+        legacy = {'status': 'request_changes', 'auto_remediation': True, 'finding': {'status': 'blocked'}}
+        with self.store._connect() as db:
+            db.execute("UPDATE tasks SET state='blocked',result=? WHERE id='owner'", (json.dumps(legacy),))
+        self.store.route_remediation()
+        self.assertEqual('blocked', self.store.snapshot()[0]['state'])
+
+    def test_blank_null_or_malformed_findings_preserve_successful_owner(self):
+        self.store.enqueue(self.spec('owner'))
+        self.finish(self.store.claim_available()[0])
+        for index, evidence in enumerate((None, [], [None], [''], [' \t\n'], ['valid reproduction', None], ['valid reproduction', ' '], 'not-a-list')):
+            with self.subTest(evidence=evidence):
+                task_id = 'qa-' + str(index)
+                self.store.enqueue(self.spec(task_id, stage='qa', role='qa_integration', paths=[], read_only=True))
+                qa = self.store.claim_available()[0]
+                self.store.complete(task_id, qa['attempt'], {'status': 'request_changes', 'evidence': evidence})
+                self.store.route_remediation()
+                rows = {t['task_id']: t for t in self.store.snapshot()}
+                self.assertEqual(('succeeded', 1), (rows['owner']['state'], rows['owner']['attempt']))
+                self.assertEqual('FINDING_EVIDENCE_MISSING', rows[task_id]['result']['error_code'])
+                self.assertFalse(rows[task_id]['result']['auto_remediation'])
+                self.assertEqual([], self.store.claim_available())
+
+    def test_whitespace_success_evidence_cannot_approve_implementation(self):
+        self.store.enqueue(self.spec('owner'))
+        owner = self.store.claim_available()[0]
+        self.store.complete('owner', owner['attempt'], {'status': 'ready', 'evidence': [' \n\t']})
+        self.assertEqual('blocked', self.store.snapshot()[0]['state'])
 
 
 if __name__ == '__main__':

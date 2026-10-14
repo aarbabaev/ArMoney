@@ -9,6 +9,10 @@ STAGES = {'implement', 'qa', 'review', 'awaiting_merge', 'awaiting_deployment', 
 SUCCESS = {'implement': 'ready', 'qa': 'ready', 'review': 'approve'}
 
 
+def usable_evidence(value):
+    return isinstance(value, list) and bool(value) and all(isinstance(item, str) and bool(item.strip()) for item in value)
+
+
 class Store:
     def __init__(self, db_path):
         self.db_path = str(db_path)
@@ -189,7 +193,8 @@ class Store:
             status = result.get('status')
             if status not in ('ready', 'blocked', 'request_changes', 'approve'):
                 raise ValueError('invalid result status')
-            success = status == SUCCESS[task['stage']] and bool(result.get('evidence'))
+            evidenced = usable_evidence(result.get('evidence'))
+            success = status == SUCCESS[task['stage']] and evidenced
             if success and task['stage'] in ('qa', 'review'):
                 prior_tasks = [self._row(r) for r in db.execute('SELECT * FROM tasks')]
                 required_stages = ('implement',) if task['stage'] == 'qa' else ('implement', 'qa')
@@ -203,13 +208,16 @@ class Store:
             if not success and status in ('ready', 'approve'):
                 result['reported_status'] = status
                 result['status'] = 'blocked'
-            result['next_stage'] = {'implement': 'qa', 'qa': 'review', 'review': 'awaiting_merge'}[task['stage']] if success else 'implement'
+            if status == 'request_changes' and not evidenced:
+                result.update(status='blocked', reported_status=status, error_code='FINDING_EVIDENCE_MISSING')
+            actionable = not success and status == 'request_changes' and 'reported_status' not in result
+            result['next_stage'] = {'implement': 'qa', 'qa': 'review', 'review': 'awaiting_merge'}[task['stage']] if success else ('implement' if actionable else task['stage'])
             if not success:
-                result['route_to'] = 'implementation_owner'
+                result['route_to'] = 'implementation_owner' if actionable else 'operator'
                 # Only returned failures may be retried. Rejected success claims
                 # (revision/evidence fencing) remain blocked for inspection.
-                result['auto_remediation'] = 'reported_status' not in result
-                if task['stage'] in ('qa', 'review'):
+                result['auto_remediation'] = actionable
+                if actionable and task['stage'] in ('qa', 'review'):
                     for candidate in db.execute('SELECT * FROM tasks').fetchall():
                         prior = self._row(candidate)
                         if prior['issue'] == task['issue'] and prior['stage'] == 'implement' and prior['state'] == 'succeeded':
@@ -218,9 +226,15 @@ class Store:
                 for candidate in db.execute('SELECT * FROM tasks').fetchall():
                     prior = self._row(candidate)
                     if prior['issue'] == task['issue'] and prior['stage'] in ('qa', 'review') and prior['state'] == 'succeeded':
-                        db.execute("UPDATE tasks SET state='blocked',result=? WHERE id=?", (json.dumps({'status': 'blocked', 'auto_remediation': True, 'reason': 'implementation retried; independent verification must be resumed'}), prior['task_id']))
+                        db.execute("UPDATE tasks SET state='blocked',result=? WHERE id=?", (json.dumps({'status': 'blocked', 'auto_remediation': True, 'verification_invalidated': True, 'reason': 'implementation retried; independent verification must be resumed'}), prior['task_id']))
             db.execute('UPDATE tasks SET state=?,result=? WHERE id=?', (state, json.dumps(result), task_id))
         return True
+
+    def block_preflight(self, task_id, result):
+        """Quarantine an unsupported queued assignment without consuming an attempt."""
+        with self._connect() as db:
+            return db.execute("UPDATE tasks SET state='blocked',result=? WHERE id=? AND state='queued'",
+                              (json.dumps(dict(result, auto_remediation=False, route_to='operator')), task_id)).rowcount
 
     def route_remediation(self):
         """Requeue only completed failures within the authorized attempt budget.
@@ -234,9 +248,15 @@ class Store:
             for task in tasks:
                 if (task['state'] != 'blocked' or not task['result']
                         or task['result'].get('auto_remediation') is not True
+                        or (task['result'].get('status') != 'request_changes' and task['result'].get('verification_invalidated') is not True)
+                        or (task['stage'] == 'implement' and 'finding' in task['result'] and task['result']['finding'].get('status') != 'request_changes')
                         or task['attempt'] >= task['max_attempts']):
                     continue
                 owners = [p for p in tasks if p['issue'] == task['issue'] and p['stage'] == 'implement']
+                if task['result'].get('status') == 'request_changes':
+                    finding = task['result'].get('finding', task['result'])
+                    if not isinstance(finding, dict) or not usable_evidence(finding.get('evidence')):
+                        continue
                 if any(p['state'] == 'interrupted' for p in tasks if p['issue'] == task['issue']):
                     continue
                 if task['stage'] != 'implement' and (not owners or any(p['state'] != 'succeeded' for p in owners)):

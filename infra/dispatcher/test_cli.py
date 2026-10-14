@@ -150,6 +150,22 @@ class CliTests(unittest.TestCase):
         states = {t['task_id']: t['state'] for t in store.snapshot()}
         self.assertEqual({'owner': 'interrupted', 'next': 'queued'}, states)
 
+    def test_preflight_reports_safe_codes_without_claims_or_child_calls(self):
+        from .runner import PreflightError
+        from unittest.mock import Mock
+        self.state.mkdir()
+        store = Store(self.state / 'queue.sqlite')
+        store.enqueue(self.spec())
+        runner = Mock()
+        runner.preflight.side_effect = PreflightError('REPOSITORY_MISMATCH')
+        with patch.object(cli, 'CodexRunner', return_value=runner):
+            code, output = self.invoke('preflight', '--repository', str(self.repo), '--codex', 'mocked')
+        self.assertEqual(0, code)
+        self.assertEqual('not_started', json.loads(output)['execution'])
+        self.assertEqual('REPOSITORY_MISMATCH', json.loads(output)['assignments'][0]['error_code'])
+        self.assertEqual(('queued', 0), (store.snapshot()[0]['state'], store.snapshot()[0]['attempt']))
+        runner.assert_not_called()
+
     def test_idle_run_flushes_reporting_outbox_and_records_failure(self):
         self.write([])
         from unittest.mock import Mock

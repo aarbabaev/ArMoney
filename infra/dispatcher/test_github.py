@@ -80,6 +80,12 @@ class GitHubTests(unittest.TestCase):
         asyncio.run(self.sink('completed', self.task(task_id='fix', state='blocked'), {'status': 'request_changes'}))
         self.assertEqual([STATUS['Blocked'], STATUS['In Progress']], self.boards)
 
+    def test_preflight_failure_reports_blocked_without_model_text(self):
+        asyncio.run(self.sink('preflight_blocked', self.task(attempt=0, state='blocked'),
+                            {'error_code': 'REPOSITORY_MISMATCH', 'summary': 'PRIVATE_DIAGNOSTIC'}))
+        self.assertEqual([STATUS['Blocked']], self.boards)
+        self.assertNotIn('PRIVATE_DIAGNOSTIC', self.posts[0])
+
     def test_unknown_comment_outcome_deduplicated(self):
         self.fail_post_after_send = True
         with self.assertRaises(OSError):
