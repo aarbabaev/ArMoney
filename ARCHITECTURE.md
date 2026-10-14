@@ -576,6 +576,12 @@ role file leases are coordination rules within each workspace sandbox.
 See [dispatcher operations](docs/agents/dispatcher.md) and
 [ADR 0023](docs/adr/0023-local-task-dispatcher.md).
 
+The [local agent dashboard](docs/agents/dashboard.md) reads a sanitized queue
+projection and timestamped native-agent observations on loopback only. It
+distinguishes registered workers, confirmed activity and stale/unknown sources;
+it cannot control workers or observe native agents continuously. See
+[ADR 0028](docs/adr/0028-local-agent-dashboard.md).
+
 ```mermaid
 flowchart LR
     O["Owner-approved local manifest"] --> D["Local one-shot dispatcher"]
