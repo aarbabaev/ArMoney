@@ -1,28 +1,32 @@
 [CmdletBinding(DefaultParameterSetName = 'Bounded')]
 param(
     [Parameter(ParameterSetName = 'Bounded')][ValidateRange(1, 10)][int]$Jobs = 1,
-    [Parameter(Mandatory, ParameterSetName = 'Continuous')][switch]$Continuous
+    [Parameter(Mandatory, ParameterSetName = 'Continuous')][switch]$Continuous,
+    [ValidateSet(1, 2)][int]$Slot = 1
 )
 $ErrorActionPreference = 'Stop'
 
 if ($Continuous) {
     Write-Host 'Continuous foreground mode: Ctrl+C stops and cleans the current disposable runner.'
     while ($true) {
-        & $PSCommandPath
+        & $PSCommandPath -Slot $Slot
         Start-Sleep -Seconds 2
     }
 }
 if ($Jobs -gt 1) {
     for ($ciJob = 1; $ciJob -le $Jobs; $ciJob++) {
         Write-Host "Starting disposable runner $ciJob of $Jobs."
-        & $PSCommandPath
+        & $PSCommandPath -Slot $Slot
     }
     return
 }
 
 # Run one disposable job. Invoke again for the next queued job.
 # PAT stays in this host process; only a one-hour registration token is mounted.
-$ciProject = 'armoney-ci-buildmachine'
+# Keep slot 1 compatible with an already-running legacy controller.
+# Each slot runs in a separate host process; environment variables are process-wide.
+$ciProject = if ($Slot -eq 1) { 'armoney-ci-buildmachine' } else { 'armoney-ci-buildmachine-slot2' }
+$ciMutexName = if ($Slot -eq 1) { 'ArMoneyLocalCiController' } else { 'ArMoneyLocalCiControllerSlot2' }
 $ciComposeFile = Join-Path $PSScriptRoot 'compose.yaml'
 $ciRunnerName = 'armoney-local-' + [guid]::NewGuid().ToString('N')
 $ciTempDirectory = Join-Path ([IO.Path]::GetTempPath()) $ciRunnerName
@@ -35,7 +39,7 @@ $ciOldTokenFile = $env:RUNNER_TOKEN_FILE
 $ciOldRunnerName = $env:RUNNER_NAME
 $ciStarted = $false
 $ciExitCode = 1
-$ciMutex = [Threading.Mutex]::new($false, 'ArMoneyLocalCiController')
+$ciMutex = [Threading.Mutex]::new($false, $ciMutexName)
 $ciLocked = $false
 $ciCleanupFailed = $false
 $ciRegistrationToken = $null
@@ -51,8 +55,8 @@ function Invoke-CiCompose {
 try {
     try { $ciLocked = $ciMutex.WaitOne(0) }
     catch [Threading.AbandonedMutexException] { $ciLocked = $true }
-    if (-not $ciLocked) { throw 'Another local CI controller is already running.' }
-    # Concurrent controllers would share daemon/workspace state. Fail before any mutation.
+    if (-not $ciLocked) { throw "Another local CI controller is already running in slot $Slot." }
+    # A competing or dirty session in this slot must fail before any mutation.
     Assert-CiCleanRuntime -Project $ciProject
     . (Join-Path $PSScriptRoot 'Assert-RunnerTrust.ps1')
     Assert-ArMoneyRunnerTrust -Headers $ciHeaders
@@ -92,7 +96,7 @@ try {
         Show-CiRunnerDiagnostics -Container $ciRunnerId -Secrets @($ciPat, $ciRegistrationToken)
         throw 'Runner registration failed or timed out. Check sanitized logs and outbound GitHub Actions TLS connectivity; no job was accepted.'
     }
-    Write-Host "Registered $ciRunnerName for one job. Artifacts remain in volume armoney-ci-artifacts."
+    Write-Host "Registered $ciRunnerName in slot $Slot ($ciProject) for one job. Artifacts remain in volume armoney-ci-artifacts."
     $ciResult = & docker wait $ciRunnerId
     if ($LASTEXITCODE -ne 0) { throw 'Could not wait for the runner.' }
     $ciExitCode = [int]$ciResult
