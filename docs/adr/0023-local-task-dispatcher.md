@@ -19,8 +19,11 @@ processes automatically.
 
 Subprocess completion refills eligible slots. Implementation, independent QA
 and review require matching host-observed Git revisions and source fingerprints.
-Completed failures route only to the original authorized owner within its retry
-budget. Rejected success evidence stays blocked. Crash recovery quarantines
+Only requests for changes with nonblank evidence route to the original authorized
+owner within its retry budget. Dependency and infrastructure blockers route to
+the operator and preserve successful implementations. Repository, role and usable
+Git HEAD checks reject unsupported assignments before consuming an attempt.
+Rejected success evidence stays blocked. Crash recovery quarantines
 leases until explicit orphan-stop reconciliation; it never blindly replays.
 
 GitHub transitions and queue observations use a separate parent-owned durable
