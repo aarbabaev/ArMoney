@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark"><title>ArMoney · Agent operations</title>
+<style>
+:root{color-scheme:dark;--bg:#0c1117;--panel:#141c25;--line:#273341;--text:#e8edf4;--muted:#94a4b7;--mint:#7ce1bf;--amber:#f3c877;--red:#fa9f9f;font:15px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 80% 0%,#1a303430,transparent 45%),var(--bg);color:var(--text)}main{max-width:1280px;margin:auto;padding:40px 36px 24px}header{display:flex;justify-content:space-between;gap:24px;align-items:center;margin-bottom:36px}.brand{font-weight:650;letter-spacing:.04em;color:var(--mint);display:flex;align-items:center;gap:12px}.mark{display:grid;place-items:center;border:1px solid #5baf9260;border-radius:12px;width:38px;height:38px;font-size:23px;background:#1c3c3030}.eyebrow{text-transform:uppercase;font-size:11px;font-weight:650;letter-spacing:.13em;color:var(--muted)}h1{font-size:32px;letter-spacing:-.035em;line-height:1.2;margin:13px 0 10px;font-weight:600}p{margin:0;color:var(--muted)}.connection{text-align:right;font-size:12px}.badge{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:99px;padding:4px 10px;font-size:11px;font-weight:650;letter-spacing:.02em;color:var(--muted);background:#ffffff04}.badge.good{color:var(--mint);border-color:#7ce1bf30;background:#7ce1bf09}.badge.warn{color:var(--amber);border-color:#f3c87735;background:#f3c87709}.badge.bad{color:var(--red);border-color:#fa9f9f35}.dot{height:6px;width:6px;border-radius:50%;background:currentColor}.connection p{margin-top:8px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:30px}.stat{border:1px solid var(--line);border-radius:14px;padding:20px 22px;background:linear-gradient(125deg,#19222c,var(--panel));position:relative}.stat strong{display:block;font-size:37px;line-height:1.2;letter-spacing:-.04em;font-weight:550;margin:12px 0 6px}.stat.active strong{color:var(--mint)}.stat small{font-size:11px;color:var(--muted)}.stat.active{border-color:#7ce1bf40}.sources{display:grid;grid-template-columns:1fr 1fr;gap:22px}.source{border:1px solid var(--line);border-radius:16px;background:#141c2580;overflow:hidden}.source-head{padding:21px 22px;border-bottom:1px solid var(--line)}.source-title{display:flex;justify-content:space-between;align-items:center;gap:14px}h2{font-size:17px;margin:0;font-weight:600;letter-spacing:-.02em}.source-head p{font-size:12px;margin-top:8px}.cards{padding:16px;display:grid;gap:10px}.agent{border:1px solid var(--line);background:#18212c;border-radius:12px;padding:16px}.agent-top{display:flex;align-items:start;justify-content:space-between;gap:10px}.role{font-weight:600;font-size:14px;overflow-wrap:anywhere}.agent-id{font:11px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}.task{margin-top:14px;font-size:13px;overflow-wrap:anywhere;color:#bdc9d8}.details{display:flex;gap:16px;margin-top:13px;padding-top:11px;border-top:1px solid #ffffff08;font-size:11px;color:var(--muted);flex-wrap:wrap}.empty{padding:34px 18px;text-align:center;color:var(--muted);font-size:13px}.empty strong{display:block;color:#bdc9d8;margin-bottom:5px;font-weight:500}.warnings{display:grid;gap:8px;margin:0 0 22px}.warning{padding:12px 16px;border:1px solid #f3c87730;border-radius:10px;background:#f3c87708;color:var(--amber);font-size:12px;overflow-wrap:anywhere}.footer{display:flex;justify-content:space-between;gap:16px;margin-top:24px;font-size:11px;color:var(--muted);padding-top:18px;border-top:1px solid var(--line)}button{background:#1d2b35;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 12px;font:inherit;font-size:12px;cursor:pointer;margin-top:10px}button:hover{border-color:var(--mint)}button:focus-visible{outline:2px solid var(--mint);outline-offset:3px}a{color:var(--mint)}@media(max-width:850px){main{padding:26px 20px}.sources{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}h1{font-size:28px}}@media(max-width:480px){header{align-items:start;gap:12px}.connection{max-width:125px}.stat{padding:16px}.stat strong{font-size:30px}.footer{flex-direction:column}.source-title{flex-wrap:wrap}}@media(prefers-reduced-motion:no-preference){.agent{animation:enter .25s ease-out}@keyframes enter{from{opacity:.7;transform:translateY(3px)}to{opacity:1;transform:none}}}
+</style>
+</head>
+<body><main>
+<header><div><div class="brand"><span class="mark" aria-hidden="true">A</span><span>ArMoney <span style="color:var(--muted);font-weight:400">/ Operations</span></span></div><h1>Agent activity</h1><p>One local view of the team’s current work.</p></div><div class="connection"><span id="connection" class="badge warn"><span class="dot"></span>Connecting</span><p id="updated">Waiting for local status</p><button id="refresh" type="button">Refresh now</button></div></header>
+<section class="stats" aria-label="Agent counts"><div class="stat"><div class="eyebrow">Total registered</div><strong id="total">—</strong><small>Across both sources</small></div><div class="stat active"><div class="eyebrow">Active confirmed</div><strong id="active">—</strong><small>Fresh observations only</small></div><div class="stat"><div class="eyebrow">Queued</div><strong id="queued">—</strong><small>Waiting to start</small></div><div class="stat"><div class="eyebrow">Blocked</div><strong id="blocked">—</strong><small>Needs attention</small></div></section>
+<div id="warnings" class="warnings" role="status" aria-live="polite"></div>
+<section class="sources" aria-label="Agent status sources"><section class="source"><div class="source-head"><div class="source-title"><h2>Native chat</h2><span id="native-health" class="badge warn">Unknown</span></div><p id="native-time">Awaiting an observation</p></div><div id="native-agents" class="cards"></div></section><section class="source"><div class="source-head"><div class="source-title"><h2>Dispatcher CLI</h2><span id="dispatcher-health" class="badge warn">Unknown</span></div><p id="dispatcher-time">Awaiting process status</p></div><div id="dispatcher-agents" class="cards"></div></section></section>
+<footer class="footer"><span>Local status · 127.0.0.1:8765 · refreshes every 3 seconds</span><span>Native observations expire after 90 seconds. Stale activity is unknown.</span></footer>
+</main><script>
+'use strict';
+const $ = id => document.getElementById(id);
+const activeStates = new Set(['active','running','working','in_progress','in progress']);
+let current = null, offline = true, loading = false;
+function text(value, fallback = 'Unknown') { return typeof value === 'string' && value.length ? value.slice(0,1000) : fallback; }
+function array(value) { return Array.isArray(value) ? value : []; }
+function count(value) { return Number.isSafeInteger(value) && value >= 0 ? String(value) : '—'; }
+function state(value) { return text(value).toLowerCase(); }
+function badge(element, label, style) { element.className = 'badge ' + style; element.textContent = label; }
+function timestamp(value) { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleString([], { month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit' }) : 'Unknown'; }
+function fresh(native) { const age = Date.now() - Date.parse(native?.observed_at); return !offline && native?.stale === false && Number.isFinite(age) && age >= -5000 && age <= 90000; }
+function node(tag, cls, value) { const element = document.createElement(tag); if (cls) element.className = cls; if (value !== undefined) element.textContent = value; return element; }
+function cards(target, agents, source, known) {
+ target.replaceChildren();
+ if (!agents.length) { const empty = node('div','empty'); empty.append(node('strong','',known ? 'No agents registered' : 'No confirmed observations'), node('span','',known ? 'This source currently has no agent entries.' : 'Waiting for a fresh source update.')); target.append(empty); return; }
+ for (const agent of agents.slice(0,200)) {
+  const card = node('article','agent'), top = node('div','agent-top'), identity = node('div','');
+  identity.append(node('div','role',text(agent.role,'Unassigned role')),node('div','agent-id',text(agent.id,'No identifier')));
+  const persistedStates = new Set(['completed','succeeded','queued','blocked','interrupted','failed','cancelled','canceled','idle','done']);
+  const stateKnown = known || (source === 'dispatcher' && !offline && persistedStates.has(state(agent.state)));
+  const status = node('span','badge'); const statusText = stateKnown ? text(agent.state) : 'Unknown · stale';
+  badge(status,statusText,!stateKnown ? 'warn' : activeStates.has(state(agent.state)) ? 'good' : state(agent.state)==='blocked' ? 'bad' : '');
+  top.append(identity,status);card.append(top);
+  card.append(node('p','task',text(agent.task,source==='native' ? 'No task reported' : 'Local dispatcher assignment')));
+  const details = node('div','details');
+  if(source==='dispatcher') details.append(node('span','', 'Issue ' + (typeof agent.issue==='number' || typeof agent.issue==='string' ? String(agent.issue).slice(0,100) : '—')),node('span','', 'Stage: ' + text(agent.stage,'Not reported')));
+  else details.append(node('span','','Source: native chat'),node('span','',known ? 'Observation fresh' : 'Activity not confirmed'));
+  card.append(details);target.append(card);
+ }
+}
+function render() {
+ if (!current) return;
+ const native = current.native || {}, dispatcher = current.dispatcher || {}, nativeFresh = fresh(native), dispatcherFresh = !offline && dispatcher.alive === true;
+ const nativeAgents = array(native.agents), dispatcherAgents = array(dispatcher.agents);
+ $('total').textContent = count(current.counts?.total);
+ $('queued').textContent = offline ? '—' : count(current.counts?.queued);
+ $('blocked').textContent = offline ? '—' : count(current.counts?.blocked);
+ $('active').textContent = offline ? '—' : count(current.counts?.active);
+ badge($('native-health'),nativeFresh ? 'Fresh' : 'Stale · unknown',nativeFresh ? 'good' : 'warn');
+ badge($('dispatcher-health'),dispatcherFresh ? 'Process alive' : 'Unavailable',dispatcherFresh ? 'good' : 'warn');
+ $('native-time').textContent = 'Observed ' + timestamp(native.observed_at) + (nativeFresh ? ' · activity confirmed' : ' · active count excluded');
+ $('dispatcher-time').textContent = dispatcherFresh ? 'Local process status confirmed' : 'Process activity cannot be confirmed';
+ cards($('native-agents'),nativeAgents,'native',nativeFresh);cards($('dispatcher-agents'),dispatcherAgents,'dispatcher',dispatcherFresh);
+ const warnings = array(current.warnings).filter(w=>typeof w==='string');
+ if(!nativeFresh) warnings.push('Native chat observations are stale or unavailable. Their activity is unknown and excluded from Active confirmed.');
+ if(typeof dispatcher.error==='string' && dispatcher.error) warnings.push(dispatcher.error);
+ if(offline) warnings.push('Local status endpoint unavailable. Displayed entries are the last received observations.');
+ $('warnings').replaceChildren(...warnings.slice(0,20).map(w=>node('div','warning',text(w))));
+}
+async function poll() {
+ if(loading) return;loading = true;
+ try {
+  const response = await fetch('/api/status',{cache:'no-store',signal:AbortSignal.timeout(2500)});
+  if(!response.ok) throw Error('Status unavailable');
+  const data = await response.json(); if(!data || typeof data!=='object' || Array.isArray(data)) throw Error('Invalid status');
+  current=data;offline=false;badge($('connection'),'Local status connected','good');$('updated').textContent='Updated '+timestamp(data.observed_at);
+ } catch (_) { offline=true;badge($('connection'),'Status unavailable','warn');if(!current) $('warnings').replaceChildren(node('div','warning','Waiting for the local status server. No agent activity has been confirmed.')); }
+ finally { loading=false;render(); }
+}
+$('refresh').addEventListener('click',poll);poll();setInterval(poll,3000);setInterval(render,1000);
+</script></body></html>
