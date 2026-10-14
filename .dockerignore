@@ -1,9 +1,15 @@
 .git
 .gradle
 **/build
+**/bin
+**/obj
+**/TestResults
+.assistant-integration
+.assistant-planning
 .env
 .env.*
 .idea
 android/
 local-certs/
 compose.override.yaml
+

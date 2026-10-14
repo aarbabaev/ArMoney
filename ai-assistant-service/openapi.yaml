@@ -1,0 +1,120 @@
+openapi: 3.0.3
+info:
+  title: ArMoney private assistant
+  version: 1.0.0
+  description: Gateway-only request-local assistant. No public ingestion or mutation tools.
+paths:
+  /v1/assistant/messages:
+    post:
+      security:
+        - gatewayKey: []
+          delegation: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [message]
+              properties:
+                message:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+                  description: At most4096 UTF-8 bytes; entire JSON HTTP body at most4096 bytes.
+      responses:
+        '200':
+          description: Exact bounded answer; Cache-Control no-store. Financial facts derive from delegated callbacks.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Answer'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '413': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+  /health/live:
+    get:
+      responses:
+        '200': {description: Process live only}
+  /health/ready:
+    get:
+      responses:
+        '200': {description: Database/effective active index/config ready; actual provider evaluation not verified}
+        '503': {description: Database/index/config unavailable}
+components:
+  securitySchemes:
+    gatewayKey: {type: apiKey, in: header, name: X-Gateway-Assistant-Key}
+    delegation: {type: apiKey, in: header, name: X-Assistant-Delegation}
+  responses:
+    Error:
+      description: Generic exact error object; Cache-Control no-store
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [error]
+            properties:
+              error: {type: string, enum: [invalid_request, invalid_credentials, request_too_large, server_busy, service_unavailable]}
+  schemas:
+    Answer:
+      type: object
+      additionalProperties: false
+      required: [reply, outcome, citations, facts, provenance]
+      properties:
+        reply: {type: string, maxLength: 8000}
+        outcome: {type: string, enum: [answered, insufficient_evidence, empty_history, conflicting_evidence]}
+        citations:
+          type: array
+          maxItems: 6
+          items:
+            type: object
+            additionalProperties: false
+            required: [document_id, version, section, excerpt]
+            properties:
+              document_id: {type: string, maxLength: 128}
+              version: {type: string, maxLength: 64}
+              section: {type: string, maxLength: 256}
+              excerpt: {type: string, maxLength: 1000}
+        facts:
+          type: object
+          additionalProperties: false
+          required: [wallets, last_transaction]
+          properties:
+            wallets:
+              type: array
+              nullable: true
+              maxItems: 10
+              items:
+                type: object
+                additionalProperties: false
+                required: [wallet_id, currency, balance_minor]
+                properties:
+                  wallet_id: {type: string, format: uuid}
+                  currency: {type: string, enum: [AED]}
+                  balance_minor: {type: integer, format: int64, minimum: 0}
+            last_transaction:
+              type: object
+              nullable: true
+              additionalProperties: false
+              required: [id, created_at, currency, amount_minor, direction, status]
+              properties:
+                id: {type: string, format: uuid}
+                created_at: {type: string, format: date-time}
+                currency: {type: string, enum: [AED]}
+                amount_minor: {type: integer, format: int64, minimum: 1}
+                direction: {type: string, enum: [incoming, outgoing]}
+                status: {type: string, enum: [PENDING, COMPLETED, REJECTED]}
+        provenance:
+          type: array
+          maxItems: 3
+          items:
+            type: object
+            additionalProperties: false
+            required: [source, fetched_at, scope]
+            properties:
+              source: {type: string, enum: [wallet-service, payment-service, policy-index]}
+              fetched_at: {type: string, format: date-time}
+              scope: {type: string, maxLength: 128}

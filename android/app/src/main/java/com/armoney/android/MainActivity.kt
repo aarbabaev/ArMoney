@@ -33,10 +33,10 @@ class MainActivity : ComponentActivity() {
 
 @Composable fun BankScreen(model: BankModel, login: () -> Unit) {
     var tab by rememberSaveable { mutableStateOf(0) }
-    val tabs = listOf("Wallets", "Transfers", "Inbox", "Profile")
+    val tabs = listOf("Wallets", "Transfers", "Inbox", "Profile", "Assistant")
     Scaffold(bottomBar = {
         if (model.session != null) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) { tabs.forEachIndexed { index, title ->
-            NavigationBarItem(selected = index == tab, onClick = { tab = index }, icon = { Text(listOf("◉", "↗", "✉", "●")[index], Modifier.clearAndSetSemantics { }) }, label = { Text(title) })
+            NavigationBarItem(selected = index == tab, onClick = { tab = index }, icon = { Text(listOf("◉", "↗", "✉", "●", "?")[index], Modifier.clearAndSetSemantics { }) }, label = { Text(title) })
         } }
     }) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().imePadding().padding(horizontal = BankDesign.Page).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(BankDesign.Space)) {
@@ -53,7 +53,7 @@ class MainActivity : ComponentActivity() {
             } else {
                 Text(tabs[tab], style = MaterialTheme.typography.headlineMedium)
                 SecondaryAction(onClick = model::refresh, enabled = !model.busy) { Text("Refresh") }
-                when (tab) { 0 -> WalletScreen(model); 1 -> TransferScreen(model); 2 -> InboxScreen(model); 3 -> ProfileScreen(model) }
+                when (tab) { 0 -> WalletScreen(model); 1 -> TransferScreen(model); 2 -> InboxScreen(model); 3 -> ProfileScreen(model); 4 -> AssistantScreen(model) }
             }
         }
     }
@@ -169,3 +169,4 @@ class MainActivity : ComponentActivity() {
         Text("Phone changes are unavailable here. No SMS verification is provided. Transfers do not require phone verification.")
     }
 }
+

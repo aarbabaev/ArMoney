@@ -65,4 +65,19 @@ class HttpTest {
         assertNull(strictErrorCode(null, good, good.length))
         assertNull(strictErrorCode("application/json", good, 4097))
     }
+    @Test fun assistantHasSeparateTimeoutAndBoundedOneShotRequest() = runBlocking {
+        val connection = Connection()
+        var calls = 0
+        val http = BankHttp(Configuration("https://bank.example")) { calls++; connection }
+        http.send("/v1/assistant/messages", "POST", assistantRequest("balance"), "a".repeat(43))
+        assertEquals(1, calls); assertEquals(40_000, connection.readTimeout)
+        assertEquals("application/json", connection.getRequestProperty("Content-Type"))
+        assertEquals("""{"message":"balance"}""", connection.sent.toString("UTF-8"))
+        assertTrue(runCatching { BankHttp(Configuration("https://bank.example")) { Connection(200, ByteArray(32769)) }.send("/v1/assistant/messages", "POST", assistantRequest("balance"), "a".repeat(43)) }.isFailure)
+        val busy = Connection(429, """{"error":"server_busy"}""".toByteArray())
+        calls = 0
+        val failure = runCatching { BankHttp(Configuration("https://bank.example")) { calls++; busy }.send("/v1/assistant/messages", "POST", assistantRequest("balance"), "a".repeat(43)) }.exceptionOrNull()
+        assertEquals(429, (failure as HttpFailure).status); assertEquals(1, calls)
+    }
 }
+

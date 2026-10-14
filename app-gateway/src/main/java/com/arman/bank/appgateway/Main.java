@@ -10,16 +10,21 @@ public final class Main {
         var wallets = URI.create(ServiceRuntime.required("WALLET_BASE_URL"));
         var payments = URI.create(ServiceRuntime.required("PAYMENT_BASE_URL"));
         var key = ServiceRuntime.required("INTERNAL_AUTH_KEY");
+        String assistantUrl = System.getenv("ASSISTANT_URL");
+        var assistantProxy = new AssistantProxy(auth, wallets, payments, key,
+            assistantUrl == null || assistantUrl.isBlank() ? null : URI.create(assistantUrl),
+            System.getenv("GATEWAY_ASSISTANT_KEY"), System.getenv("ASSISTANT_GATEWAY_KEY"));
         var proxy = new AuthProxy(auth, key, Clock.systemUTC());
         try {
             var protectedProxy = new ProtectedProxy(auth, users, wallets, payments, key);
             try {
                 var runtime = ServiceRuntime.start("app-gateway", Integer.parseInt(System.getenv().getOrDefault("PORT", "8080")),
-                    null, config -> { proxy.configure(config); protectedProxy.configure(config); });
+                    null, config -> { proxy.configure(config); protectedProxy.configure(config); assistantProxy.configure(config); });
                 Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                    try { runtime.close(); } finally { try { proxy.close(); } finally { protectedProxy.close(); } }
+                    try { runtime.close(); } finally { try { proxy.close(); } finally { try { protectedProxy.close(); } finally { assistantProxy.close(); } } }
                 }, "gateway-shutdown"));
             } catch (Exception e) { protectedProxy.close(); throw e; }
-        } catch (Exception e) { proxy.close(); throw e; }
+        } catch (Exception e) { try { proxy.close(); } finally { assistantProxy.close(); } throw e; }
     }
 }
+

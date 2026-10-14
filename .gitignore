@@ -8,9 +8,17 @@ compose.override.yaml
 .env.*
 !.env.example
 
+# .NET build and package outputs
+**/bin/
+**/obj/
+**/TestResults/
+.assistant-integration/
+.assistant-planning/
+
 # Local Apple signing state and exported development certificates
 **/xcuserdata/
 **/DerivedData/
 local-certs/
 __pycache__/
 *.pyc
+
