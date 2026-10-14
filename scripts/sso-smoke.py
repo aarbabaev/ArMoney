@@ -19,6 +19,7 @@ if os.environ.get("CI") != "true":
     raise SystemExit("SSO acceptance requires disposable CI, never the persistent stack")
 
 from playwright.sync_api import sync_playwright
+from sso_browser_callback import BrowserCallbackCapture
 
 PUBLIC = "https://localhost:8443"
 ADMIN = "http://127.0.0.1:9090/sso"
@@ -170,41 +171,38 @@ def authorize(page, client_id, prompt=None, login=None, registration=None, rejec
     if prompt:
         query["prompt"] = prompt
     server.callback_query = None
-    if client_id == "armoney-web":
-        def browser_callback(route):
-            server.callback_query = urllib.parse.parse_qs(urllib.parse.urlsplit(route.request.url).query)
-            route.fulfill(status=200, content_type="text/plain", body="Authorization received")
-        page.unroute(callback + "?**")
-        page.route(callback + "?**", browser_callback)
-    page.goto(discovery["authorization_endpoint"] + "?" + urllib.parse.urlencode(query))
-    if registration is not None:
-        page.locator("#kc-registration a").click()
-        assert page.get_by_label("UAE mobile number (+971)", exact=False).count() == 1
-        assert page.locator("select[name=country], select[name=countryCode]").count() == 0
-        page.locator("#username").fill(registration)
-        page.locator("#email").fill("ci-" + secrets.token_hex(8) + "@example.test")
-        page.locator("#firstName").fill("Synthetic")
-        page.locator("#lastName").fill("Identity")
-        page.locator("#password").fill(password)
-        page.locator("#password-confirm").fill(password)
-        # Bypass browser required/pattern validation to exercise Keycloak itself.
-        page.locator("#kc-register-form").evaluate("form => form.noValidate = true")
-        page.locator("#kc-register-form input[type=submit], #kc-register-form button[type=submit]").click()
-        if reject_registration:
-            page.locator("#input-error-username").wait_for(state="visible")
-            assert server.callback_query is None, "Invalid registration must not authorize a user"
-            return None
-    elif page.locator("#username").count():
-        assert prompt != "none", "SSO session was not reused"
-        page.locator("#username").fill(login[0] if login else username)
-        page.locator("#password").fill(login[1] if login else password)
-        page.locator("#kc-login").click()
-    if page.locator("#kc-update-profile-form").count():
-        page.locator("#kc-update-profile-form input[type=submit], #kc-update-profile-form button[type=submit]").click()
-    page.wait_for_url(callback + "**", timeout=30000)
-    received = server.callback_query
-    assert received and received.get("state") == [state] and "error" not in received
-    return received["code"][0], verifier
+    with BrowserCallbackCapture(page, callback) as captured:
+        page.goto(discovery["authorization_endpoint"] + "?" + urllib.parse.urlencode(query))
+        if registration is not None:
+            page.locator("#kc-registration a").click()
+            assert page.get_by_label("UAE mobile number (+971)", exact=False).count() == 1
+            assert page.locator("select[name=country], select[name=countryCode]").count() == 0
+            page.locator("#username").fill(registration)
+            page.locator("#email").fill("ci-" + secrets.token_hex(8) + "@example.test")
+            page.locator("#firstName").fill("Synthetic")
+            page.locator("#lastName").fill("Identity")
+            page.locator("#password").fill(password)
+            page.locator("#password-confirm").fill(password)
+            # Bypass browser required/pattern validation to exercise Keycloak itself.
+            page.locator("#kc-register-form").evaluate("form => form.noValidate = true")
+            page.locator("#kc-register-form input[type=submit], #kc-register-form button[type=submit]").click()
+            if reject_registration:
+                page.locator("#input-error-username").wait_for(state="visible")
+                assert server.callback_query is None and captured.query is None, "Invalid registration must not authorize a user"
+                return None
+        elif page.locator("#username").count():
+            assert prompt != "none", "SSO session was not reused"
+            page.locator("#username").fill(login[0] if login else username)
+            page.locator("#password").fill(login[1] if login else password)
+            page.locator("#kc-login").click()
+        if page.locator("#kc-update-profile-form").count():
+            page.locator("#kc-update-profile-form input[type=submit], #kc-update-profile-form button[type=submit]").click()
+        received = captured.wait()
+        if client_id != "armoney-web":
+            page.wait_for_url(callback + "**", timeout=30000)
+            assert received == server.callback_query, "Loopback server and browser callback must agree"
+        assert received and received.get("state") == [state] and "error" not in received
+        return received["code"][0], verifier
 
 
 def redeem(code, verifier, client_id, redirect_uri=None):
@@ -252,11 +250,6 @@ try:
             {"code_challenge_method": "plain"},
             {"code_challenge": None, "code_challenge_method": None},
         ):
-            callback_result = {}
-            def reject_callback(route):
-                callback_result.update(urllib.parse.parse_qs(urllib.parse.urlsplit(route.request.url).query))
-                route.fulfill(status=200, content_type="text/plain", body="Negative callback")
-            negative_page.route("**/oauth/callback**", reject_callback)
             verifier = secrets.token_urlsafe(32)
             query = {"client_id": "armoney-web", "response_type": "code", "scope": "openid",
                      "redirect_uri": callbacks["armoney-web"], "state": secrets.token_urlsafe(32),
@@ -267,14 +260,16 @@ try:
                     query.pop(key, None)
                 else:
                     query[key] = value
-            negative_page.goto(discovery["authorization_endpoint"] + "?" + urllib.parse.urlencode(query))
-            if callback_result:
-                assert mutation.get("redirect_uri") is None, "Invalid redirect must never be followed"
-                assert "error" in callback_result and "code" not in callback_result
-            else:
-                negative_page.locator("#kc-error-message").wait_for(state="visible")
-            assert "code" not in callback_result
-            negative_page.unroute("**/oauth/callback**")
+            with BrowserCallbackCapture(negative_page, query["redirect_uri"]) as captured:
+                response = negative_page.goto(discovery["authorization_endpoint"] + "?" + urllib.parse.urlencode(query))
+                if "redirect_uri" in mutation:
+                    negative_page.locator("#kc-error-message").wait_for(state="visible")
+                    assert response.status == 400, "Invalid redirect must produce provider HTTP 400"
+                    assert captured.query is None, "Invalid redirect must never be followed"
+                else:
+                    received = captured.wait()
+                    assert received.get("error") == ["invalid_request"] and "code" not in received
+                    assert received.get("state") == [query["state"]], "PKCE rejection must preserve state"
         negative_page.close()
 
         sessions = {}
