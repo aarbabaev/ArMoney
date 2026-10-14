@@ -1,9 +1,10 @@
 # Disposable local Actions runtime
 
-This Linux x64 runtime registers one ephemeral runner for `aarbabaev/ArMoney`.
+This Linux x64 runtime registers one ephemeral runner per slot for `aarbabaev/ArMoney`.
 GitHub supplies the default `self-hosted`, `Linux`, `X64` labels; registration adds
 `armoney-local`. The controller can rotate a bounded number of single-job runners
-or keep rotating in explicitly selected foreground continuous mode.
+or keep rotating in explicitly selected foreground continuous mode. Two allowlisted
+slots can run concurrently in separate PowerShell processes; each accepts one job at a time.
 Each rotation deletes the inner Docker daemon's data and workspace. Only the
 external `armoney-ci-artifacts` volume survives. An offline machine cannot run CI.
 The runner process exit code is **not** the GitHub job result; inspect Actions for
@@ -37,6 +38,11 @@ available and is not an exfiltration firewall. Run on a dedicated machine/VM for
 stronger separation. Neither privileged DinD nor the artifact volume is a safe
 boundary between mutually untrusted jobs. Local reports may contain synthetic
 test data; preserve only intended reports/APKs and apply retention periodically.
+Both slots can read and write the shared artifact volume. Current backend and Android
+jobs write different archive names under `/artifacts/<run-id>/<attempt>/`, so their
+concurrent writes do not collide. Future matrix jobs of the same kind must add unique
+archive paths. The shared volume provides no confidentiality or integrity boundary
+between jobs, including jobs running concurrently in different slots.
 
 ## Build and run (PowerShell, repository root)
 
@@ -46,10 +52,12 @@ before setting the build argument. License text is suppressed in build logs.
 ```powershell
 docker build --build-arg ACCEPT_ANDROID_LICENSES=true -t armoney-local-runner:2.338.0 infra/local-ci
 .\infra\local-ci\Start-LocalRunner.ps1
-# Or rotate two isolated runners, allowing the queued build and Android jobs to run serially:
+# Or rotate two disposable runners serially in slot 1:
 .\infra\local-ci\Start-LocalRunner.ps1 -Jobs 2
 # Keep rotating in the foreground until Ctrl+C or a preflight/runtime error:
 .\infra\local-ci\Start-LocalRunner.ps1 -Continuous
+# In a SECOND PowerShell process, enable a second concurrent slot:
+.\infra\local-ci\Start-LocalRunner.ps1 -Slot 2 -Continuous
 ```
 
 The script reads `GITHUB_PAT_TOKEN` from the host process or user environment. It
@@ -66,10 +74,32 @@ credentials retain their restrictive permissions.
 The PAT remains solely in the host process/environment. Runner authentication
 credentials exist only in the disposable runner container's writable layer.
 
-Do not run parallel controllers or scale the runner service. A host mutex and an
-existing-container and leftover-volume checks reject competing or dirty sessions.
-Cleanup failures stop rotation, including when containers are gone but daemon data
-volumes remain. The external artifact volume is the only preserved volume.
+Only slots `1` (the default) and `2` are accepted. `-Jobs` remains sequential within
+the selected slot; `-Continuous` keeps that same slot for every rotation. Use a
+separate PowerShell process per slot because token/name environment variables are
+process-wide; do not run controllers in parallel runspaces or scale the runner service.
+
+| Slot | Compose project | Host mutex |
+| --- | --- | --- |
+| 1 | `armoney-ci-buildmachine` | `ArMoneyLocalCiController` |
+| 2 | `armoney-ci-buildmachine-slot2` | `ArMoneyLocalCiControllerSlot2` |
+
+Slot 1 retains its original names for compatibility with existing controllers.
+Each slot has a dedicated daemon, socket, workspace, data volumes and network.
+Inner published ports can be the same in both slots because they use separate daemon
+network namespaces. Only the external artifact volume and read-only image layers are
+shared. The host mutex rejects competing controllers in the same slot; container and
+leftover-volume checks reject a dirty slot before registration. Cleanup only targets
+the selected project and the exact generated runner registration. Cleanup failures
+stop that slot's rotation, including when containers are gone but daemon data volumes
+remain. They do not clean up the other slot. The external artifact volume survives.
+
+To add slot 2 while a legacy slot 1 controller is active, run the reviewed controller
+from a separate checkout. Do not edit or replace the active controller's files: it
+rereads its script for each rotation. Both slots use the same workflow labels; neither
+is reserved for backend or Android work. They share host CPU, memory, disk and network,
+so concurrency is not a throughput guarantee. Stop slot 2 independently with Ctrl+C
+if resources become constrained; do not change the primary slot's project or mutex.
 The image must already be
 built: the controller uses `--no-build`. It ignores repository `.env` files by
 passing an empty environment file. Stop with Ctrl+C; its `finally` block removes
@@ -109,16 +139,21 @@ complete the cleanup below if resources remain, then manually run
 
 After a forced process kill or host reboot, inspect the exact project before
 removing it. Never substitute the application's persistent Compose project here.
-The following command removes **only** `armoney-ci-buildmachine` resources and its
-disposable volumes; the external artifact volume remains.
+Stop the selected slot's controller before manual recovery; never recover an active
+slot. Select exactly one of the two projects below. The following command removes
+**only** that project's resources and disposable volumes; the other slot and external
+artifact volume remain.
 
 ```powershell
-docker ps -a --filter label=com.docker.compose.project=armoney-ci-buildmachine
+$ciRecoverySlot = 1 # Change to 2 only when recovering slot 2.
+if ($ciRecoverySlot -notin @(1, 2)) { throw 'Recovery slot must be 1 or 2.' }
+$ciRecoveryProject = if ($ciRecoverySlot -eq 1) { 'armoney-ci-buildmachine' } else { 'armoney-ci-buildmachine-slot2' }
+docker ps -a --filter "label=com.docker.compose.project=$ciRecoveryProject"
 $ciEmptyFile = [IO.Path]::GetTempFileName()
 $ciPreviousTokenFile = $env:RUNNER_TOKEN_FILE
 try {
     $env:RUNNER_TOKEN_FILE = $ciEmptyFile
-    docker compose --project-name armoney-ci-buildmachine --env-file $ciEmptyFile -f infra/local-ci/compose.yaml down --volumes --remove-orphans
+    docker compose --project-name $ciRecoveryProject --env-file $ciEmptyFile -f infra/local-ci/compose.yaml down --volumes --remove-orphans
 } finally {
     $env:RUNNER_TOKEN_FILE = $ciPreviousTokenFile
     Remove-Item -LiteralPath $ciEmptyFile
@@ -132,6 +167,18 @@ left them behind. Do not delete unrelated temporary directories. To fully uninst
 after exporting desired artifacts, explicitly remove `armoney-ci-artifacts` with
 `docker volume rm armoney-ci-artifacts`, then remove image
 `armoney-local-runner:2.338.0`. Do not use global Docker prune commands.
+
+## Controller regression checks
+
+Run `powershell -NoProfile -File infra/local-ci/Test-RuntimeLifecycle.ps1` (or `pwsh`)
+for host-only mocked lifecycle checks. The fixture relocates mutex names so it cannot
+contend with a live controller; all Docker and GitHub calls are mocked. It covers both
+slots, same-slot rejection, invalid slots, bounded/continuous forwarding, dirty-state
+and trust rejection, exact registration cleanup, and cleanup isolation/failures.
+This does not prove live Docker isolation or job success. Runtime validation must
+also show separate daemon/socket/workspace resources, independent inner port bindings,
+simultaneous job results and one-slot cleanup preserving the other, alongside the
+existing Linux guard tests and full backend/Compose acceptance.
 
 ## Toolchain and limits
 
