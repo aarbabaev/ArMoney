@@ -140,6 +140,51 @@ class Guards(unittest.TestCase):
             self.assertEqual(run.call_args.kwargs['timeout'], 90)
             self.assertEqual(run.call_args.kwargs['env'], smoke.env)
 
+    def test_failed_docker_stage_is_diagnosable_without_rendering_sensitive_data(self):
+        smoke = kafka.Smoke.__new__(kafka.Smoke)
+        smoke.env = {'PATH': '/synthetic'}
+        smoke.phase = 'storage-identity'
+        secret = 'synthetic-secret-token-private-path-https-private-host'
+        result = subprocess.CompletedProcess([], 1, secret, 'ConfigException: ' + secret)
+        with patch.object(kafka.subprocess, 'run', return_value=result), self.assertRaises(kafka.Failed) as failed:
+            smoke.docker('compose', '--env-file', '/private/' + secret, 'run',
+                         'kafka-broker-3', secret, input=secret,
+                         env={'KAFKA_CLIENT_PRINCIPAL': 'admin', 'PASSWORD': secret})
+        message = str(failed.exception)
+        for expected in ('phase=storage-identity', 'operation=compose', 'subcommand=run',
+                         'principal=admin', 'node=kafka-broker-3', 'exit=1', 'errors=ConfigException'):
+            self.assertIn(expected, message)
+        self.assertNotIn(secret, message)
+        self.assertNotIn('/private/', message)
+        self.assertNotIn('PASSWORD', message)
+
+    def test_diagnostics_reject_unrecognized_labels_and_unclassified_output(self):
+        secret = 'synthetic-sensitive-label'
+        result = subprocess.CompletedProcess([], secret, secret, 'UnknownError: ' + secret)
+        message = kafka.safe_docker_failure((secret, '/private/' + secret), result, secret,
+                                           {'KAFKA_CLIENT_PRINCIPAL': secret})
+        self.assertEqual(message, 'Docker failure: phase=unknown operation=unknown subcommand=none '
+                         'principal=none node=none exit=unknown errors=unclassified')
+        smoke = kafka.Smoke.__new__(kafka.Smoke)
+        with patch('builtins.print') as output, self.assertRaises(kafka.Failed):
+            smoke.stage(secret)
+        output.assert_not_called()
+        with patch('builtins.print') as output:
+            smoke.stage('cold-restore')
+        output.assert_called_once_with('Kafka phase: cold-restore', flush=True)
+
+    def test_timeout_diagnostics_do_not_expose_command_or_captured_output(self):
+        smoke = kafka.Smoke.__new__(kafka.Smoke)
+        smoke.env = {}
+        smoke.phase = 'cold-restore'
+        secret = 'synthetic-sensitive-timeout-command'
+        error = subprocess.TimeoutExpired([secret], 1, output=secret, stderr=secret)
+        with patch.object(kafka.subprocess, 'run', side_effect=error), self.assertRaises(kafka.Failed) as failed:
+            smoke.docker('start', secret)
+        self.assertIn('phase=cold-restore operation=start', str(failed.exception))
+        self.assertIn('exit=-1 errors=TimeoutException', str(failed.exception))
+        self.assertNotIn(secret, str(failed.exception))
+
     def test_freshness_rejects_existing_resources_without_cleanup(self):
         fixture = Fixture()
         fixture.smoke.owned = False

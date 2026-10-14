@@ -23,6 +23,17 @@ TOPICS = ('armoney.ledger.transfer.commands.v1', 'armoney.ledger.transfer.result
           'armoney.payment.outcomes.v1')
 CONFIG = '/run/kafka-secrets/client.properties'
 BOOTSTRAP = ','.join(f'kafka-broker-{n}:9092' for n in (1, 2, 3))
+PHASES = frozenset(('prepare', 'format', 'initial-start', 'topics', 'baseline', 'restart',
+                   'one-broker-failure', 'two-broker-failure', 'broker-recovery',
+                   'controller-failure', 'missing-client-TLS', 'wrong-CA-TLS',
+                   'storage-identity', 'allowed-ACL', 'denied-ACL', 'cold-copy',
+                   'cold-restore', 'cleanup'))
+OPERATIONS = frozenset(('ps', 'inspect', 'volume', 'network', 'compose', 'create', 'start', 'stop', 'rm'))
+SUBCOMMANDS = frozenset(('ls', 'inspect', 'rm', 'create', 'run', 'up', 'config'))
+ERROR_TYPES = ('AuthorizationException', 'TopicAuthorizationException', 'GroupAuthorizationException',
+               'ClusterAuthorizationException', 'SSLHandshakeException', 'SslAuthenticationException',
+               'TimeoutException', 'NotEnoughReplicasException', 'NotEnoughReplicasAfterAppendException',
+               'ConfigException', 'IllegalArgumentException', 'AccessDeniedException')
 
 
 class Failed(Exception):
@@ -32,6 +43,22 @@ class Failed(Exception):
 def require(condition, message):
     if not condition:
         raise Failed(message)
+
+
+def safe_docker_failure(args, result, phase, env=None):
+    # Emit only finite labels. Arguments, output, paths and credential values
+    # must never become diagnostic prose, including unexpected command shapes.
+    operation = args[0] if args and args[0] in OPERATIONS else 'unknown'
+    subcommand = next((arg for arg in args[1:] if arg in SUBCOMMANDS), 'none')
+    node = next((arg for arg in args if arg in NODES), 'none')
+    principal = (env or {}).get('KAFKA_CLIENT_PRINCIPAL')
+    principal = principal if principal in ('admin', 'payment', 'ledger', 'denied') else 'none'
+    phase = phase if phase in PHASES else 'unknown'
+    code = result.returncode if isinstance(result.returncode, int) else 'unknown'
+    output = result.stdout + '\n' + result.stderr
+    errors = [error for error in ERROR_TYPES if re.search(r'\b' + error + r'\b', output)]
+    return (f'Docker failure: phase={phase} operation={operation} subcommand={subcommand} '
+            f'principal={principal} node={node} exit={code} errors=' + (','.join(errors) or 'unclassified'))
 
 
 def guard(project, env, root=ROOT):
@@ -197,12 +224,23 @@ class Smoke:
         self.secret_parent = None
         self.secrets = None
         self.hash = hashlib.sha256((self.root / 'compose.kafka.yaml').read_bytes()).digest()
+        self.phase = 'prepare'
+
+    def stage(self, phase):
+        require(phase in PHASES, 'Invalid diagnostic phase')
+        self.phase = phase
+        print('Kafka phase: ' + phase, flush=True)
 
     def docker(self, *args, check=True, timeout=90, input=None, env=None):
-        result = subprocess.run(['docker', '--host', HOST, *args], env=env or self.env,
-                                input=input, capture_output=True, text=True, timeout=timeout)
+        try:
+            result = subprocess.run(['docker', '--host', HOST, *args], env=env or self.env,
+                                    input=input, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            result = subprocess.CompletedProcess([], -1, '', 'TimeoutException')
+            raise Failed(safe_docker_failure(args, result, getattr(self, 'phase', 'unknown'), env)) from None
         if check:
-            require(result.returncode == 0, 'Docker command failed; sensitive diagnostics withheld')
+            require(result.returncode == 0,
+                    safe_docker_failure(args, result, getattr(self, 'phase', 'unknown'), env))
         return result
 
     def resources(self):
@@ -386,6 +424,7 @@ exec /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-broker
                 os.chown(path, 1000, 1000)
 
     def run(self):
+        self.stage('prepare')
         self.prepare()
         for principal in ('payment', 'ledger'):
             properties = dict(line.split('=', 1) for line in
@@ -397,12 +436,15 @@ exec /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-broker
                 'allow.auto.create.topics': 'false'}.items()), 'Client safety configuration drift')
         self.compose('create', *NODES)
         _, _, _, self.known = self.inventory()
+        self.stage('format')
         for node in NODES:
             self.inventory()
             self.compose('run', '--rm', '--no-deps', '-T', '--name', self.project + '-probe',
                          node, 'bash', '/opt/armoney/format.sh')
+        self.stage('initial-start')
         self.compose('up', '-d', '--wait', '--wait-timeout', '240', *NODES, timeout=300)
         self.inventory()
+        self.stage('topics')
         self.compose('run', '--rm', '--no-deps', '-T', '--name', self.project + '-probe', 'kafka-init')
         self.wait_isr({'101', '102', '103'})
         cluster = self.quorum()
@@ -416,23 +458,28 @@ exec /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-broker
             commands.append(record)
             self.consume('ledger', TOPICS[0], 'ledger-transfer-v1', commands, recovered_uncertain)
 
+        self.stage('baseline')
         publish('baseline')
+        self.stage('restart')
         self.change('stop', *NODES)
         self.change('start', *NODES)
         self.wait_isr({'101', '102', '103'})
         self.quorum(cluster)
         self.consume('ledger', TOPICS[0], 'ledger-transfer-v1', commands, recovered_uncertain)
         publish('after-restart')
+        self.stage('one-broker-failure')
         self.change('stop', 'kafka-broker-1')
         self.wait_isr({'102', '103'})
         self.quorum(cluster)
         publish('one-broker-down')
+        self.stage('two-broker-failure')
         self.change('stop', 'kafka-broker-2')
         self.wait_isr({'103'})
         self.quorum(cluster)
         refused = str(uuid.uuid4()) + ':{"synthetic":"insufficient-isr"}'
         rejected(self.probe('payment', 'produce', TOPICS[0], input=refused + '\n', check=False),
                  'NotEnoughReplicas', 'minimum-ISR produce')
+        self.stage('broker-recovery')
         self.change('start', 'kafka-broker-1', 'kafka-broker-2')
         self.wait_isr({'101', '102', '103'})
         self.quorum(cluster)
@@ -442,14 +489,19 @@ exec /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-broker
         if refused in observed:
             recovered_uncertain.append(refused)
         publish('after-recovery')
+        self.stage('controller-failure')
         self.controller_failure(cluster, publish)
+        self.stage('missing-client-TLS')
         self.missing_tls()
+        self.stage('wrong-CA-TLS')
         self.invalid_tls()
+        self.stage('storage-identity')
         self.storage_negative()
         self.quorum(cluster)
         self.consume('ledger', TOPICS[0], 'ledger-transfer-v1', commands, recovered_uncertain)
         publish('after-storage-identity-probes')
         # Exercise the remaining permitted routes as well as the command route.
+        self.stage('allowed-ACL')
         for writer, reader, topic, group in (
                 ('ledger', 'payment', TOPICS[1], 'payment-ledger-result-v1'),
                 ('payment', 'admin', TOPICS[2], 'synthetic-outcomes-verification')):
@@ -457,6 +509,7 @@ exec /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-broker
             result = self.probe(writer, 'produce', topic, input=record + '\n')
             require('ERROR' not in result.stderr, 'Producer reported a failed send')
             self.consume(reader, topic, group, [record])
+        self.stage('denied-ACL')
         for principal, topic in (('denied', TOPICS[0]), ('ledger', TOPICS[0]), ('payment', TOPICS[1])):
             rejected(self.probe(principal, 'produce', topic, input='synthetic:{"denied":true}\n', check=False),
                      'AuthorizationException', principal + ' unauthorized produce')
@@ -544,6 +597,7 @@ exec /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-broker
             self.docker('rm', '--force', cid)
 
     def cold_restore(self, cluster, commands, uncertain):
+        self.stage('cold-copy')
         watermark = self.offsets()
         self.change('stop', *NODES)
         archive = self.secret_parent / 'cold-snapshot'
@@ -557,6 +611,7 @@ exec /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-broker
                          dict(self.env, DOCKER_HOST=HOST), self.root)
         started = time.monotonic()
         try:
+            restored.stage('cold-restore')
             restored.prepare(self.secrets)
             restored.compose('create', *NODES)
             _, _, _, restored.known = restored.inventory()
@@ -576,6 +631,7 @@ exec /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-broker
     def cleanup(self):
         if not self.owned:
             return
+        self.stage('cleanup')
         containers, volumes, networks, _ = self.inventory(complete=False)
         # Validate the full inventory before the first destructive command.
         if containers:
