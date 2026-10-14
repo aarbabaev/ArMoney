@@ -23,6 +23,10 @@ Only requests for changes with nonblank evidence route to the original authorize
 owner within its retry budget. Dependency and infrastructure blockers route to
 the operator and preserve successful implementations. Repository, role and usable
 Git HEAD checks reject unsupported assignments before consuming an attempt.
+Optional manifest pipeline identifiers isolate generations of work on the same
+issue; legacy tasks retain their original issue grouping. Prerequisite and repair
+edges cannot cross pipelines. Both approval and actionable change findings must
+match the implementation and applicable independent-QA revision fingerprints.
 Rejected success evidence stays blocked. Crash recovery quarantines
 leases until explicit orphan-stop reconciliation; it never blindly replays.
 

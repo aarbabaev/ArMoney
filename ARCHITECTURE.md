@@ -572,6 +572,9 @@ route back to the original owner within the manifest's retry budget. Dependency
 and infrastructure blockers require operator action and preserve successful
 implementations. Repository, role and usable-HEAD preflight rejects unsupported
 assignments before consuming an attempt. Interrupted work retains its
+leases. Optional pipeline identifiers isolate generations on the same issue;
+prerequisites, evidence fences and remediation stay within that pipeline. Stale
+change findings cannot invalidate a successful implementation. Interrupted work retains its
 leases until an operator proves orphan processes stopped. Agent results never
 establish merge, deployment or Done; those remain externally verified gates.
 The runner filters credential environment variables and connector settings;
