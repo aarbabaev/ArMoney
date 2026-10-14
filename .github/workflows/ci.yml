@@ -52,6 +52,34 @@ jobs:
           python3 scripts/provisioning-smoke.py
           python3 scripts/ledger-smoke.py
           python3 scripts/p2p-smoke.py
+      - name: Assistant delegation and provider-outage Compose acceptance
+        env:
+          LOCAL_DB_PASSWORD: ci-only-assistant-banking-password
+          ASSISTANT_DB_PASSWORD: ci-only-assistant-operator-password
+          ASSISTANT_RUNTIME_DB_PASSWORD: ci-only-assistant-reader-password
+          GATEWAY_ASSISTANT_KEY: ci-only-gateway-to-assistant-key-32-characters
+          ASSISTANT_GATEWAY_KEY: ci-only-assistant-to-gateway-key-32-characters
+          OPENAI_API_KEY: ci-invalid-key-expect-provider-unavailable
+          ASSISTANT_RETRIEVAL_MODE: lexical
+        run: |
+          docker compose -p assistant-qa-ci -f compose.yaml -f compose.assistant.yaml -f compose.assistant-qa.yaml up --build -d assistant-db
+          docker compose -p assistant-qa-ci -f compose.yaml -f compose.assistant.yaml -f compose.assistant-qa.yaml run --build --rm assistant-ingestion operator migrate
+          docker compose -p assistant-qa-ci -f compose.yaml -f compose.assistant.yaml -f compose.assistant-qa.yaml run --rm assistant-ingestion operator stage /policies/demo.json
+          docker compose -p assistant-qa-ci -f compose.yaml -f compose.assistant.yaml -f compose.assistant-qa.yaml run --rm assistant-ingestion operator activate demo-main-112b01d-ft-v1
+          docker compose -p assistant-qa-ci -f compose.yaml -f compose.assistant.yaml -f compose.assistant-qa.yaml up --build -d
+          python3 -B scripts/assistant-ready.py --project assistant-qa-ci
+          printf '%s\n' '{"disposable":true,"compose_project":"assistant-qa-ci","gateway_origin":"http://localhost:18083"}' > /tmp/assistant-qa-marker.json
+          python3 -B scripts/assistant-smoke.py --base http://localhost:18083 --disposable-marker /tmp/assistant-qa-marker.json
+      - name: Assistant Compose cleanup
+        if: always() && steps.isolation.outcome == 'success'
+        env:
+          LOCAL_DB_PASSWORD: ci-only-assistant-banking-password
+          ASSISTANT_DB_PASSWORD: ci-only-assistant-operator-password
+          ASSISTANT_RUNTIME_DB_PASSWORD: ci-only-assistant-reader-password
+          GATEWAY_ASSISTANT_KEY: ci-only-gateway-to-assistant-key-32-characters
+          ASSISTANT_GATEWAY_KEY: ci-only-assistant-to-gateway-key-32-characters
+          OPENAI_API_KEY: ci-invalid-key-expect-provider-unavailable
+        run: docker compose -p assistant-qa-ci -f compose.yaml -f compose.assistant.yaml -f compose.assistant-qa.yaml down --volumes
       - name: Container diagnostics
         if: failure() && steps.isolation.outcome == 'success'
         run: docker compose logs --no-color
@@ -108,6 +136,34 @@ jobs:
       - name: Save backend reports locally
         if: always()
         run: bash scripts/archive-local-ci.sh backend
+  assistant:
+    if: github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64, armoney-local]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Verify isolated daemon before assistant persistence tests
+        id: isolation
+        run: |
+          python3 scripts/test-local-ci-guards.py
+          bash scripts/check-local-ci.sh
+      - name: Assistant deterministic and real PostgreSQL checks
+        run: |
+          docker compose -p armoney-assistant-check -f compose.assistant-tests.yaml up -d --wait
+          docker run --rm --network armoney-assistant-check_default \
+            --mount type=bind,src="$GITHUB_WORKSPACE/ai-assistant-service",dst=/source \
+            --workdir /source \
+            --env 'ASSISTANT_TEST_DATABASE_URL=Host=assistant-test-db;Database=assistant_test;Username=assistant_test_operator;Password=synthetic-assistant-check-only' \
+            mcr.microsoft.com/dotnet/sdk:10.0@sha256:e70cdb7f80b0348f5cb85f19a8f670fca061f033d57eed12fa003d58b0e06317 \
+            dotnet run --project tests/Assistant.Tests.csproj -c Release
+          python3 -B scripts/test-assistant-smoke.py
+          python3 -B scripts/test-assistant-ready.py
+          docker build -t armoney-assistant-ci ai-assistant-service
+      - name: Assistant disposable database cleanup
+        if: always() && steps.isolation.outcome == 'success'
+        run: docker compose -p armoney-assistant-check -f compose.assistant-tests.yaml down
   android:
     # GitHub all_external_contributors approval policy is the external-run gate.
     if: github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
@@ -127,3 +183,4 @@ jobs:
       - name: Save Android APK and reports locally
         if: always()
         run: bash scripts/archive-local-ci.sh android
+

@@ -5,6 +5,57 @@ info:
   description: 'Public ArMoney API: authentication, profiles, phone recipients, wallets
     and balances, durable P2P and in-app notifications.'
 paths:
+  /v1/assistant/messages:
+    post:
+      operationId: assistantMessage
+      security:
+      - BearerAuth: []
+      description: Stateless read-only assistant turn. Revalidates the session before
+        execution, on each delegated read and before returning. No transfers or server
+        conversation history. Financial facts come from verified owner-scoped reads;
+        history is limited to the latest visible page of 50 payments. Policy citations
+        refer to versioned local documents. Total gateway deadline is 35 seconds.
+        Admission is limited to 10 turns per minute per verified owner and four
+        concurrent turns. Quotas are in-memory and reset on gateway restart.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [message]
+              properties:
+                message:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+                  description: Nonblank Unicode text. Entire request is limited to 4096 UTF-8 bytes.
+      responses:
+        '200':
+          description: Validated assistant reply; never financial command acceptance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantReply'
+        '400':
+          description: Invalid content type, exact JSON object or message bounds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Assistant disabled, unavailable, malformed or timed out; authentication or read dependency unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /v1/auth/sso:
     post:
       operationId: exchangeSsoToken
@@ -789,6 +840,72 @@ components:
         maxLength: 512
         pattern: '^[A-Za-z0-9_-]+$'
   schemas:
+    AssistantReply:
+      type: object
+      additionalProperties: false
+      required: [reply, outcome, citations, facts, provenance]
+      description: Entire response is limited to 32768 UTF-8 bytes. Render reply as plain text.
+      properties:
+        reply:
+          type: string
+          minLength: 1
+          maxLength: 8000
+        outcome:
+          type: string
+          enum: [answered, insufficient_evidence, empty_history, conflicting_evidence]
+        citations:
+          type: array
+          maxItems: 6
+          items:
+            type: object
+            additionalProperties: false
+            required: [document_id, version, section, excerpt]
+            properties:
+              document_id: {type: string, minLength: 1, maxLength: 128}
+              version: {type: string, minLength: 1, maxLength: 64}
+              section: {type: string, minLength: 1, maxLength: 256}
+              excerpt: {type: string, minLength: 1, maxLength: 1000}
+        facts:
+          type: object
+          additionalProperties: false
+          required: [wallets, last_transaction]
+          properties:
+            wallets:
+              type: array
+              nullable: true
+              maxItems: 10
+              items:
+                type: object
+                additionalProperties: false
+                required: [wallet_id, currency, balance_minor]
+                properties:
+                  wallet_id: {type: string, format: uuid}
+                  currency: {type: string, enum: [AED]}
+                  balance_minor: {type: integer, format: int64, minimum: 0}
+            last_transaction:
+              type: object
+              nullable: true
+              additionalProperties: false
+              required: [id, created_at, currency, amount_minor, direction, status]
+              properties:
+                id: {type: string, format: uuid}
+                created_at: {type: string, format: date-time}
+                currency: {type: string, enum: [AED]}
+                amount_minor: {type: integer, format: int64, minimum: 1}
+                direction: {type: string, enum: [incoming, outgoing]}
+                status: {type: string, enum: [PENDING, COMPLETED, REJECTED]}
+        provenance:
+          type: array
+          maxItems: 3
+          description: At most one entry for each source.
+          items:
+            type: object
+            additionalProperties: false
+            required: [source, fetched_at, scope]
+            properties:
+              source: {type: string, enum: [wallet-service, payment-service, policy-index]}
+              fetched_at: {type: string, format: date-time}
+              scope: {type: string, minLength: 1, maxLength: 128}
     NextCursor:
       type: string
       nullable: true
@@ -1186,3 +1303,4 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+

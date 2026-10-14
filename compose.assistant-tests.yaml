@@ -1,0 +1,15 @@
+# Isolated assistant persistence checks; never overlays the persistent banking stack.
+name: armoney-assistant-check
+services:
+  assistant-test-db:
+    image: pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
+    environment:
+      POSTGRES_DB: assistant_test
+      POSTGRES_USER: assistant_test_operator
+      POSTGRES_PASSWORD: synthetic-assistant-check-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U assistant_test_operator -d assistant_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    tmpfs: [/var/lib/postgresql/data]
