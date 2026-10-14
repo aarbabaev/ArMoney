@@ -36,4 +36,45 @@ class Observations(unittest.TestCase):
         (self.state/'queue.sqlite').unlink();result=dashboard.snapshot(self.state,lambda r:(False,0))
         self.assertIsNotNone(result['dispatcher']['error']);self.assertEqual(result['counts']['active'],0)
 
+    def test_explicit_archive_excludes_old_blocker_without_changing_queue(self):
+        db=sqlite3.connect(self.state/'queue.sqlite')
+        db.execute("UPDATE tasks SET state='blocked'");db.commit();db.close()
+        archived_at=dashboard.timestamp()
+        (self.state/'archived-tasks.json').write_text(json.dumps({'real-task':{'reason':'Superseded attempt; original failure retained','archived_at':archived_at}}))
+        result=dashboard.snapshot(self.state,lambda r:(False,0))
+        self.assertEqual(result['counts']['blocked'],0)
+        self.assertEqual(result['counts']['total'],1)
+        self.assertEqual(result['dispatcher']['agents'],[])
+        history=result['dispatcher']['history'][0]
+        self.assertEqual(history['state'],'blocked');self.assertEqual(history['task_id'],'real-task')
+        self.assertEqual(history['archived_at'],archived_at)
+        db=sqlite3.connect(self.state/'queue.sqlite')
+        self.assertEqual(db.execute('SELECT state FROM tasks').fetchone()[0],'blocked');db.close()
+
+    def test_archived_queued_attempt_excluded_and_current_identity_retained(self):
+        db=sqlite3.connect(self.state/'queue.sqlite')
+        db.execute("UPDATE tasks SET state='queued'")
+        current=dict(self.spec,task_id='current-attempt')
+        db.execute('INSERT INTO tasks VALUES(?,?)',(json.dumps(current),'blocked'));db.commit();db.close()
+        (self.state/'archived-tasks.json').write_text(json.dumps({'real-task':{'reason':'Explicit old generation','archived_at':dashboard.timestamp()}}))
+        result=dashboard.snapshot(self.state,lambda r:(False,0))
+        self.assertEqual(result['counts']['queued'],0);self.assertEqual(result['counts']['blocked'],1)
+        self.assertEqual(result['counts']['total'],1)
+        self.assertEqual(result['dispatcher']['agents'][0]['task_id'],'current-attempt')
+
+    def test_invalid_archive_never_hides_current_attempts(self):
+        for annotation in ('not-json', '[]', json.dumps({'real-task':{'reason':'','archived_at':dashboard.timestamp()}})):
+            (self.state/'archived-tasks.json').write_text(annotation)
+            result=dashboard.snapshot(self.state,lambda r:(True,1))
+            self.assertEqual(len(result['dispatcher']['agents']),1)
+            self.assertEqual(result['dispatcher']['history'],[])
+            self.assertTrue(any('Archive annotations' in w for w in result['warnings']))
+
+    def test_archive_annotations_cannot_invent_history_when_queue_unavailable(self):
+        (self.state/'archived-tasks.json').write_text(json.dumps({'real-task':{'reason':'Old attempt','archived_at':dashboard.timestamp()}}))
+        (self.state/'queue.sqlite').unlink()
+        result=dashboard.snapshot(self.state,lambda r:(False,0))
+        self.assertEqual(result['dispatcher']['history'],[])
+        self.assertIsNotNone(result['dispatcher']['error'])
+
 if __name__=='__main__':unittest.main()
