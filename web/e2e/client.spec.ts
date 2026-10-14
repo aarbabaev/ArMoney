@@ -4,6 +4,18 @@ const owner = "11111111-1111-4111-8111-111111111111",
   recipient = "22222222-2222-4222-8222-222222222222",
   wallet = "33333333-3333-4333-8333-333333333333",
   paymentId = "44444444-4444-4444-8444-444444444444";
+
+test("initial callback navigation mounts the callback and rejects missing OIDC state", async ({ page }) => {
+  const bankRequests: string[] = [];
+  page.on("request", request => {
+    if (new URL(request.url()).pathname.startsWith("/v1/")) bankRequests.push(request.method());
+  });
+  await page.goto("/oauth/callback?error=invalid_request&state=synthetic-missing-state");
+  await expect(page.getByRole("heading", { name: "Completing secure sign-in" })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveText("No matching state found in storage");
+  await expect(page.getByRole("navigation", { name: "Main navigation" })).toHaveCount(0);
+  expect(bankRequests).toEqual([]);
+});
 const command = {
   source_wallet_id: wallet,
   recipient_id: recipient,

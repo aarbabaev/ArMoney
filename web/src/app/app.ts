@@ -1,10 +1,13 @@
 import { Component, inject } from "@angular/core";
+import { toSignal } from "@angular/core/rxjs-interop";
+import { filter, map } from "rxjs";
 import {
   provideRouter,
   RouterOutlet,
   RouterLink,
   RouterLinkActive,
   Router,
+  NavigationEnd,
   Routes,
 } from "@angular/router";
 import { Bank } from "./core/bank";
@@ -142,6 +145,13 @@ export const routes: Routes = [
 export class App {
   bank = inject(Bank);
   router = inject(Router);
+  private readonly routeUrl = toSignal(
+    this.router.events.pipe(
+      filter((event): event is NavigationEnd => event instanceof NavigationEnd),
+      map((event) => event.urlAfterRedirects),
+    ),
+    { initialValue: this.router.url },
+  );
   links = [
     { path: "/home", label: "Home", icon: "⌂" },
     { path: "/accounts", label: "Accounts", icon: "◉" },
@@ -153,6 +163,6 @@ export class App {
   ];
   refresh = () => this.bank.refresh();
   isCallback() {
-    return this.router.url.startsWith("/oauth/callback");
+    return this.routeUrl().startsWith("/oauth/callback");
   }
 }
