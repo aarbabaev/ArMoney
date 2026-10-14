@@ -610,8 +610,8 @@ exposed. See [M1](docs/m1.md) for acceptance and remaining scope.
 ## Agent team
 
 Agents run for specific tasks inside Codex; they are not bank containers or permanent
-background processes. The main chat acts as the orchestrator. Up to three workers run
-concurrently; other roles run in waves, and only roles needed for the task are activated.
+background processes. The main chat acts as the orchestrator. Up to six subagents run
+concurrently when the active session permits it; only roles needed for actionable work are activated. The primary orchestrator is separate. Prefer four implementers, QA and an independent reviewer; heavy build concurrency remains capped at two isolated CI slots.
 Models/permissions are inherited from the session; instructions are not a security sandbox.
 
 ```mermaid
