@@ -562,6 +562,35 @@ background processes. The main chat acts as the orchestrator. Up to six subagent
 concurrently when the active session permits it; only roles needed for actionable work are activated. The primary orchestrator is separate. Prefer four implementers, QA and an independent reviewer; heavy build concurrency remains capped at two isolated CI slots.
 Models/permissions are inherited from the session; instructions are not a security sandbox.
 
+The optional local dispatcher runs a finite owner-approved manifest through
+separate `codex exec` processes. SQLite persists claims, dependency stages,
+attempts and reporting failures. Completion immediately schedules eligible work;
+an empty or dependency-blocked queue exits without periodic GitHub polling.
+Implementation, QA and review are independent assignments bound to the same Git
+revision and source fingerprint. Completed failures can route back to the
+original owner within the manifest's retry budget. Interrupted work retains its
+leases until an operator proves orphan processes stopped. Agent results never
+establish merge, deployment or Done; those remain externally verified gates.
+The runner filters credential environment variables and connector settings;
+role file leases are coordination rules within each workspace sandbox.
+See [dispatcher operations](docs/agents/dispatcher.md) and
+[ADR 0023](docs/adr/0023-local-task-dispatcher.md).
+
+```mermaid
+flowchart LR
+    O["Owner-approved local manifest"] --> D["Local one-shot dispatcher"]
+    D --> Q[("Private SQLite queue and reporting outbox")]
+    D --> W["Separate Codex CLI processes in leased worktrees"]
+    W --> C["Existing account-backed model service"]
+    W -->|"Completion and evidence"| D
+    D -->|"Timestamped status transitions"| G["GitHub issues and Project"]
+    G -->|"Compact issue metadata"| T["One-shot intake with approved local catalog"]
+    T -->|"Authorized eligible pipelines"| Q
+    D --> I["Idle exit: no task polling"]
+    R["Independent reviewer and verified CI"] --> M["Guarded merge"]
+    M --> P["Separate authorized deployment and readiness verification"]
+```
+
 ```mermaid
 flowchart LR
     H["User"] --> O["bank_orchestrator"]

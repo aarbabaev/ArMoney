@@ -1,8 +1,13 @@
 # Bank agent team
 
-This repository uses on-demand Codex subagents. It does not run a daemon, poll
-GitHub, or start work when the chat is closed. Roles inherit the user's model,
-tools and permissions; instructions are coordination rules, not access controls.
+Native Codex subagents run while their parent chat is active. Role files do not
+start a daemon or poll GitHub. The optional [local dispatcher](dispatcher.md)
+runs an explicitly authorized finite manifest independently of the chat, refills
+slots on completion and exits when no eligible work remains. It does not poll
+for new tasks while idle. CLI jobs are separate from the native subagent panel.
+Native roles inherit their parent settings; dispatcher jobs use the existing
+CLI login and exclude connector configuration. Instructions are coordination
+rules, not filesystem access controls.
 Up to six subagents may run concurrently, excluding the primary orchestrator, subject to the active session limit. Prefer four implementation agents, one QA/security agent and one independent reviewer when actionable work supports this split. A configuration edit does not prove that an already-running session has reloaded its limit.
 
 Independent feature implementation may continue in separate worktrees while the
