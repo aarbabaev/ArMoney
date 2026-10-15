@@ -1080,8 +1080,9 @@ two-instance committed-state visibility, session/tab/user removal and pinned
 browser/runtime behavior remain unrun mandatory gates. No new SPI or realm
 activation is introduced, and the final action still requires ACTIVE.
 
-Auth Main/routes/configuration do not wire this authority or a trusted production
-observation supplier. Positive proof/projection eligibility remains UNAVAILABLE;
+The earlier authority stage did not wire an observation supplier. The observation
+integration now provides explicit Main/routes/configuration wiring behind the
+default-false authority-bridge flag. Positive proof/projection eligibility remains UNAVAILABLE;
 no ACTIVE, principal materialization, legacy cutoff, bank-session or notice flow
 is activated. The earlier projection deployment remains default-off; this is
 not new authority rollout evidence. Candidate/contact and immutable phone-claim
@@ -1133,3 +1134,22 @@ Gateway keeps the original bank bearer and internal bank key; assistant receives
 
 The planner selects a finite policy intent; application code supplies fixed retrieval questions and filters relevant sections. Policy selection returns citation identifiers, never free-form answer prose. Application code renders exact demonstration source excerpts with document/version/section and explicit conflicting or insufficient evidence. Bank facts never enter model context. Prompts and documents are untrusted data; deterministic code validates tools, authorization and budgets. Runtime provider/embedding ports use external OpenAI despite local Docker hosting; owner authorized minimal egress. No personal server conversation is persisted; Android clears displayed turns on session change and rejects stale results. Provider store=false is not a zero-retention guarantee. The ai_assistant_owner configures a Codex developer, distinct from runtime assistant roles and containers. Local and required CI checks, measured model evaluation, independent review and local deployment readiness passed. Authenticated actual-provider acceptance ran in a matching disposable stack; no live-owner message or physical-device UX pass is claimed. See the versioned [learning-outcome evidence](docs/ai-assistant-learning-outcomes.md) for scope and limitations.
 
+
+### Auth pre-token observation bridge: default-disabled source, delivery pending
+
+The observation client and explicit authority-mode routes are implemented under
+[ADR 0037](docs/adr/0037-auth-verification-observation.md) and the
+[wire contract](docs/auth-verification-observation-contract.md).
+`AUTH_VERIFICATION_AUTHORITY_BRIDGE_ENABLED` defaults false; off constructs no client,
+authority repository or routes. Auth owns the database admission timestamp and staged
+contact receipts. A strictly bounded provider observation supplies current server
+session/contact facts, never identity, receipt, epoch or ACTIVE authority. Explicit
+legacy construction remains separate; authority mode never accepts shortened bindings.
+
+Enrollment/status, issue and consume preserve their distinct seven/five/three-field
+responses. Main owns client startup/shutdown cleanup. No gateway route, principal
+materialization, positive projection/proof eligibility or bank session/notice is added.
+Independent focused transport/configuration/routes (84) and PostgreSQL operation (2)
+checks passed; the full Auth check passed 599 tests with no failures or skips.
+Exact-head CI and deployment remain pending. Separate two-node provider committed-state,
+removal and expiry evidence remains required before activation; no deployment is claimed.

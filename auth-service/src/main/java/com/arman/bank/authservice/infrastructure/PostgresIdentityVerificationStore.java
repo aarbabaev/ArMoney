@@ -274,8 +274,14 @@ public final class PostgresIdentityVerificationStore implements IdentityVerifica
     private static void advance(DSLContext sql,UUID id){sql.execute("update verification_authorities set revision=revision+1,verification_epoch=verification_epoch+1,state='PENDING_CONTACTS' where enrollment_id=?",id);}
     private static Binding binding(Flow flow){return new Binding(flow.issuer(),flow.subject(),flow.authenticationSessionId());}
     private UUID coreCommand(String writer,Flow flow,UUID command){return UUID.nameUUIDFromBytes(digest("core-command",writer,Base64.getEncoder().encodeToString(tuple(flow)),command.toString()));}
-    private static Verification.Result response(DSLContext sql,Record e,Verification.Result result){var a=authority(sql,e.get("id",UUID.class));var email=candidate(sql,a,Purpose.REGISTRATION_EMAIL);var phone=candidate(sql,a,Purpose.REGISTRATION_PHONE);int revision=a.get("revision",Integer.class);
-        return new Verification.Result(e.get("id",UUID.class),result==null?null:result.challengeId(),result==null?null:result.receiptId(),revision,a.get("state",String.class),time(e,"expires_at"),result==null?null:result.resendAt(),result==null?0:result.attemptsRemaining(),null,receipt(sql,email)!=null,receipt(sql,phone)!=null,revision,email.get("version",Integer.class),phone.get("version",Integer.class));}
+    private static Verification.Result response(DSLContext sql,Record e,Verification.Result result){
+        var a=authority(sql,e.get("id",UUID.class));var email=candidate(sql,a,Purpose.REGISTRATION_EMAIL);var phone=candidate(sql,a,Purpose.REGISTRATION_PHONE);int revision=a.get("revision",Integer.class);
+        // Operation fields retain challenge/consume semantics; enrollment revision is independent.
+        return new Verification.Result(e.get("id",UUID.class),result==null?null:result.challengeId(),result==null?null:result.receiptId(),
+            result==null?revision:result.contactVersion(),result==null?a.get("state",String.class):result.state(),
+            result==null?time(e,"expires_at"):result.expiresAt(),result==null?null:result.resendAt(),result==null?0:result.attemptsRemaining(),result==null?null:result.error(),
+            receipt(sql,email)!=null,receipt(sql,phone)!=null,revision,email.get("version",Integer.class),phone.get("version",Integer.class));
+    }
     private static String encode(Verification.Result r){return String.join("|",text(r.enrollmentId()),text(r.challengeId()),text(r.receiptId()),""+r.contactVersion(),r.state(),text(r.expiresAt()),text(r.resendAt()),""+r.attemptsRemaining(),text(r.error()),""+r.emailVerified(),""+r.phoneVerified(),""+r.version(),""+r.emailContactVersion(),""+r.phoneContactVersion());}
     private static Verification.Result decode(String value){String[] a=value.split("\\|",-1);return new Verification.Result(uuid(a[0]),uuid(a[1]),uuid(a[2]),Integer.parseInt(a[3]),a[4],instant(a[5]),instant(a[6]),Integer.parseInt(a[7]),a[8].isEmpty()?null:Error.valueOf(a[8]),Boolean.parseBoolean(a[9]),Boolean.parseBoolean(a[10]),Integer.parseInt(a[11]),Integer.parseInt(a[12]),Integer.parseInt(a[13]));}
     private static UUID uuid(String value){return value.isEmpty()?null:UUID.fromString(value);}
