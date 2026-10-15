@@ -27,6 +27,7 @@ public final class EmailWorker implements AutoCloseable {
                     if (recipient==null || recipient.email()==null) { store.finish(c,"SKIPPED","missing_email"); return; }
                     address=recipient.email(); verified=recipient.verified();
                     if (!store.freezeRecipient(c,recipient)) return;
+                    c=c.withRecipient(recipient);
                 }
                 if (mode.equals("sending") && !verified) { store.finish(c,"SKIPPED","unverified_email"); return; }
                 switch (delivery.send(c,address)) {

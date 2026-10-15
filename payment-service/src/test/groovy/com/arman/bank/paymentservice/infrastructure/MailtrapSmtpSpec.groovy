@@ -34,7 +34,7 @@ class MailtrapSmtpSpec extends Specification {
     static Map env() {
         [EMAIL_DELIVERY_ENABLED:'true',MAILTRAP_TRANSPORT:'smtp',MAILTRAP_MODE:'sandbox',
          MAILTRAP_SMTP_USERNAME:'synthetic-user',MAILTRAP_SMTP_PASSWORD:'synthetic-password',
-         MAILTRAP_FROM_EMAIL:'bank@example.test',AUTH_BASE_URL:'http://auth-service:8080',
+         MAILTRAP_FROM_EMAIL:'bank@example.test',AUTH_BASE_URL:'http://auth-service:8080',USER_BASE_URL:'http://user-service:8080',
          INTERNAL_AUTH_KEY:'synthetic-internal-key-at-least-32-characters']
     }
     def 'SMTP configuration uses no API token and rejects unsafe configuration without echoing secrets'() {
@@ -144,6 +144,41 @@ class MailtrapSmtpSpec extends Specification {
         cleanup:
         fixture?.close()
     }
+    def 'styled SMTP email preserves equivalent UTF-8 plain and HTML alternatives for #recipientName'() {
+        given:
+        def fixture=new SmtpFixture(serverTls,'data',250)
+        def delivery=new MailtrapSmtp(new EmailConfiguration(env()),'localhost',fixture.port,clientTls.socketFactory,15000)
+        def claim=new com.arman.bank.paymentservice.application.EmailOutbox.Claim(
+            UUID.randomUUID(),UUID.randomUUID(),UUID.randomUUID(),'PAYMENT_RECEIVED',125L,UUID.randomUUID(),1,null,null,recipientName)
+        def content=PaymentEmail.render(claim)
+        when:
+        def result=delivery.send('recipient@example.test',content.subject(),content.text(),content.html())
+        fixture.done.get(5,TimeUnit.SECONDS)
+        def parsed=new jakarta.mail.internet.MimeMessage(jakarta.mail.Session.getInstance(new Properties()),
+            new ByteArrayInputStream(fixture.message.getBytes('UTF-8')))
+        def alternatives=(jakarta.mail.Multipart)parsed.content
+        then:
+        result==EmailDelivery.Result.ACCEPTED
+        parsed.isMimeType('multipart/alternative')
+        alternatives.count==2
+        alternatives.getBodyPart(0).isMimeType('text/plain')
+        alternatives.getBodyPart(1).isMimeType('text/html')
+        new jakarta.mail.internet.ContentType(alternatives.getBodyPart(0).contentType).getParameter('charset').equalsIgnoreCase('UTF-8')
+        new jakarta.mail.internet.ContentType(alternatives.getBodyPart(1).contentType).getParameter('charset').equalsIgnoreCase('UTF-8')
+        alternatives.getBodyPart(0).content.toString().replace('\r\n','\n').strip()==content.text().strip()
+        alternatives.getBodyPart(1).content.toString().replace('\r\n','\n').strip()==content.html().strip()
+        alternatives.getBodyPart(0).content.toString().contains(plainGreeting)
+        alternatives.getBodyPart(1).content.toString().contains(htmlGreeting)
+        parsed.subject==content.subject()
+        fixture.failure==null
+        cleanup:
+        fixture?.close()
+        where:
+        recipientName             | plainGreeting                     | htmlGreeting
+        null                      | 'Hello,'                          | 'Hello,'
+        'ليلى Zoë <&> "\''       | 'Hello ليلى Zoë <&> "\','        | 'Hello ليلى Zoë &lt;&amp;&gt; &quot;&#39;,'
+    }
+
     def 'lost DATA acknowledgement remains retryable'() {
         given:
         def fixture=new SmtpFixture(serverTls,'lost-ack',250)

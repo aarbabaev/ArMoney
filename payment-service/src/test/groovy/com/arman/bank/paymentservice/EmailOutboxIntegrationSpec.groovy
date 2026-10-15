@@ -141,6 +141,58 @@ class EmailOutboxIntegrationSpec extends Specification {
         worker?.close(); restarted?.close()
     }
 
+    def 'display name is frozen atomically with email and used unchanged on first send and restart'() {
+        given:
+        terminal()
+        def seen=[]
+        def first=Stub(EmailDelivery) {
+            recipient(_) >> new EmailDelivery.Recipient('owner@example.test',true,'Original Name')
+            send(_,_) >> { EmailOutbox.Claim c, String address -> seen << c.recipientName(); EmailDelivery.Result.TRANSIENT_FAILURE }
+        }
+        def restartedDelivery=Mock(EmailDelivery)
+        def worker=new EmailWorker(outbox,first,'sandbox')
+        when:
+        worker.tick()
+        then:
+        seen==['Original Name']
+        rows().first().get('recipient_name')=='Original Name'
+        rows().first().get('recipient_email')=='owner@example.test'
+        when:
+        db.transaction { it.execute('update email_outbox set recipient_name=?','Changed Name') }
+        then:
+        thrown(org.jooq.exception.DataAccessException)
+        when:
+        worker.close()
+        due()
+        def restarted=new EmailWorker(new PostgresEmailOutbox(db),restartedDelivery,'sandbox')
+        restarted.tick()
+        then:
+        0 * restartedDelivery.recipient(_)
+        1 * restartedDelivery.send({ it.recipientName()=='Original Name' },'owner@example.test') >> EmailDelivery.Result.ACCEPTED
+        rows().first().get('status')=='SENT'
+        cleanup:
+        worker?.close(); restarted?.close()
+    }
+
+    def 'missing display name remains frozen null on retry instead of fetching a later profile'() {
+        given:
+        terminal()
+        def first=outbox.claim('sandbox').get()
+        assert outbox.freezeRecipient(first,new EmailDelivery.Recipient('owner@example.test',true,null))
+        outbox.retry(first,'provider_unavailable')
+        due()
+        when:
+        def fresh=new PostgresEmailOutbox(db).claim('sandbox').get()
+        then:
+        fresh.recipientName()==null
+        fresh.recipientEmail()=='owner@example.test'
+        !outbox.freezeRecipient(fresh,new EmailDelivery.Recipient('owner@example.test',true,'Later Name'))
+        when:
+        db.transaction { it.execute('update email_outbox set recipient_name=?','Later Name') }
+        then:
+        thrown(org.jooq.exception.DataAccessException)
+    }
+
     def 'missing and unverified addresses are distinct skips in sending mode'() {
         given:
         terminal()

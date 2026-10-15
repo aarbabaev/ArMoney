@@ -33,22 +33,33 @@ public final class MailtrapDelivery implements EmailDelivery, AutoCloseable {
         if (json.get("email").isNull()) return new Recipient(null,json.get("verified").booleanValue());
         if (!json.get("email").isTextual() || !EmailConfiguration.validEmail(json.get("email").textValue()))
             throw new IOException("Invalid identity email response");
-        return new Recipient(json.get("email").textValue(),json.get("verified").booleanValue());
+        return new Recipient(json.get("email").textValue(),json.get("verified").booleanValue(),displayName(owner));
+    }
+    private String displayName(UUID owner) throws InterruptedException {
+        // A profile greeting is optional: unavailable or untrusted profile data must not stop email.
+        try {
+            var response=transport.exchange(HttpRequest.newBuilder(config.users.resolve("/v1/users/me"))
+                .timeout(Duration.ofSeconds(3)).header("X-Service-Key",config.key)
+                .header("X-Identity-Id",owner.toString()).GET().build());
+            if (response.status()!=200) return null;
+            var json=InternalHttp.JSON.readTree(response.body());
+            if (json==null || !json.isObject() || !json.path("identity_id").isTextual()
+                || !owner.toString().equalsIgnoreCase(json.path("identity_id").textValue())
+                || !json.path("display_name").isTextual()) return null;
+            String name=json.path("display_name").textValue().strip();
+            if (name.isEmpty() || name.codePointCount(0,name.length())>100
+                || name.codePoints().anyMatch(Character::isISOControl)) return null;
+            return name;
+        } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw e; }
+          catch (Exception e) { return null; }
     }
     @Override public Result send(EmailOutbox.Claim claim,String recipient) throws Exception {
         if (!EmailConfiguration.validEmail(recipient)) return Result.PERMANENT_FAILURE;
-        String action=switch(claim.type()) {
-            case "PAYMENT_COMPLETED" -> "Payment completed";
-            case "PAYMENT_REJECTED" -> "Payment rejected";
-            case "PAYMENT_RECEIVED" -> "Payment received";
-            default -> throw new IllegalArgumentException("Invalid email event");
-        };
-        String amount=claim.amountMinor()/100+"."+String.format(Locale.ROOT,"%02d",claim.amountMinor()%100);
-        String text=action+". Amount: AED "+amount+". Payment ID: "+claim.paymentId()+". Event ID: "+claim.id()+".";
-        if (smtp!=null) return smtp.send(recipient,"ArMoney: "+action,text);
+        var content=PaymentEmail.render(claim);
+        if (smtp!=null) return smtp.send(recipient,content.subject(),content.text(),content.html());
         var payload=Map.of("from",Map.of("email",config.fromEmail,"name",config.fromName),
-            "to",List.of(Map.of("email",recipient)), "subject","ArMoney: "+action,
-            "text",text);
+            "to",List.of(Map.of("email",recipient)), "subject",content.subject(),
+            "text",content.text(), "html",content.html());
         var builder=HttpRequest.newBuilder(config.endpoint).timeout(Duration.ofSeconds(5))
             .header("Content-Type","application/json");
         if (config.mode.equals("sandbox")) builder.header("Api-Token",config.token);

@@ -41,6 +41,10 @@ exact-revision CI and independent review; source implementation is not deploymen
 | Local SMS sandbox | Optional authenticated capture API and web inbox, bounded persistent file storage; no carrier delivery | Identity OTP and transaction producers are separate integration tasks |
 | Kafka infrastructure | Optional source-defined three-controller/three-broker KRaft cluster, mutual TLS, exact service ACLs and cold snapshot helper | Real-cluster acceptance and deployment pending; service adapters and financial Saga recovery remain planned |
 
+A payment email presentation candidate adds HTML/plain text and a frozen optional
+profile display name; it is not yet validated on current CI or deployed. Auth
+remains the destination-verification authority. See [ADR 0030](docs/adr/0030-transaction-email-presentation.md).
+
 Java 21, Gradle multi-project, Javalin, PostgreSQL, Flyway, jOOQ, HikariCP;
 Spock, Testcontainers, ArchUnit; REST/OpenAPI; Docker Compose, GitHub Actions.
 Exact versions: [build.gradle](build.gradle), [runtime build](platform-runtime/build.gradle),
