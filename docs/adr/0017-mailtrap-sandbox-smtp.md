@@ -41,3 +41,16 @@ records are not automatically requeued, and a historical rejection cannot be
 attributed to rate limiting without its original diagnostic evidence.
 
 Reference: [Mailtrap Sandbox limits](https://docs.mailtrap.io/email-sandbox/help/features-and-limits).
+
+## Sanitized attempt diagnostics
+
+A failed SMTP attempt emits one application-owned diagnostic containing only a
+finite stage, a bounded numeric reply code (zero when unknown), a finite enhanced
+status category and the existing delivery result. Successful attempts emit none.
+Raw provider replies, command arguments, exceptions, contacts, credentials and
+message contents are never attached. Ambiguous timeouts and lost acknowledgements
+remain unknown rather than being assigned an inferred cause.
+
+These prospective technical observations do not change retry policy, outbox data
+or financial state. Existing generic terminal records cannot be retroactively
+diagnosed or automatically requeued from these new observations.
