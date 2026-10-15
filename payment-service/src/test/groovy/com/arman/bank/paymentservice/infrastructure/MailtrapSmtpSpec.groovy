@@ -94,6 +94,43 @@ class MailtrapSmtpSpec extends Specification {
         'auth' | 535 | EmailDelivery.Result.PERMANENT_FAILURE
 
     }
+    def 'only documented sandbox throttle is rate limited over real STARTTLS: #stage #reply'() {
+        given:
+        def fixture=new SmtpFixture(serverTls,stage,code,reply)
+        def delivery=new MailtrapSmtp(new EmailConfiguration(env()),'localhost',fixture.port,clientTls.socketFactory,15000)
+        when:
+        def result=delivery.send('recipient@example.test','subject','synthetic message')
+        fixture.done.get(5,TimeUnit.SECONDS)
+        then:
+        result==expected
+        fixture.authenticatedWithSyntheticCredentials
+        fixture.failure==null
+        cleanup:
+        fixture?.close()
+        where:
+        stage | code | reply | expected
+        'data' | 550 | '550 5.7.0 Requested action not taken: too many emails per second' | EmailDelivery.Result.RATE_LIMITED
+        'rcpt' | 550 | '550 5.7.0 Requested action not taken: too many emails per second' | EmailDelivery.Result.RATE_LIMITED
+        'data' | 550 | '550 5.7.0 Requested action not taken: mailbox unavailable' | EmailDelivery.Result.PERMANENT_FAILURE
+        'data' | 550 | '550 5.1.1 Requested action not taken: too many emails per second' | EmailDelivery.Result.PERMANENT_FAILURE
+        'data' | 550 | '550 5.7.0 Message rejected: too many emails per second' | EmailDelivery.Result.PERMANENT_FAILURE
+        'auth' | 535 | '535 5.7.0 Requested action not taken: too many emails per second' | EmailDelivery.Result.PERMANENT_FAILURE
+        'data' | 451 | '451 5.7.0 Requested action not taken: too many emails per second' | EmailDelivery.Result.TRANSIENT_FAILURE
+    }
+
+    def 'a throttle reply to RSET does not replace the original permanent rejection'() {
+        given:
+        def fixture=new SmtpFixture(serverTls,'data',550,'550 5.7.0 Mailbox unavailable',
+            '550 5.7.0 Requested action not taken: too many emails per second')
+        def delivery=new MailtrapSmtp(new EmailConfiguration(env()),'localhost',fixture.port,clientTls.socketFactory,15000)
+        expect:
+        delivery.send('recipient@example.test','subject','synthetic message')==EmailDelivery.Result.PERMANENT_FAILURE
+        fixture.done.get(5,TimeUnit.SECONDS)==null
+        fixture.failure==null
+        cleanup:
+        fixture?.close()
+    }
+
     def 'TLS omission or refusal never sends credentials or content'() {
         given:
         def fixture=new SmtpFixture(serverTls,stage,454)
@@ -269,7 +306,7 @@ class MailtrapSmtpSpec extends Specification {
         volatile boolean authenticatedWithSyntheticCredentials=false
         volatile Throwable failure
         int getPort() { listener.localPort }
-        SmtpFixture(SSLContext tls,String stage,int code) {
+        SmtpFixture(SSLContext tls,String stage,int code,String failureReply=null,String rsetReply=null) {
             listener.soTimeout=5000
             done=CompletableFuture.runAsync {
                 try {
@@ -300,17 +337,17 @@ class MailtrapSmtpSpec extends Specification {
                             authenticatedWithSyntheticCredentials=fields in [
                                 ['', 'synthetic-user', 'synthetic-password'],
                                 ['synthetic-user', 'synthetic-user', 'synthetic-password']]
-                            reply(stage=='auth' ? "${code} synthetic auth rejection" : '235 Authenticated')
+                            reply(stage=='auth' ? (failureReply ?: "${code} synthetic auth rejection") : '235 Authenticated')
                         } else if (line.startsWith('MAIL FROM:')) reply('250 Sender accepted')
-                        else if (line.startsWith('RCPT TO:')) reply(stage=='rcpt' ? "${code} recipient@example.test synthetic rejection" : '250 Recipient accepted')
+                        else if (line.startsWith('RCPT TO:')) reply(stage=='rcpt' ? (failureReply ?: "${code} recipient@example.test synthetic rejection") : '250 Recipient accepted')
                         else if (line=='DATA') {
                             reply('354 Send content')
                             def lines=[]
                             while ((line=reader.readLine())!=null && line!='.') lines.add(line)
                             message=lines.join('\n')
                             if (stage=='lost-ack') break
-                            reply("${code} recipient@example.test synthetic result")
-                        } else if (line=='RSET') reply('250 Reset')
+                            reply(failureReply ?: "${code} recipient@example.test synthetic result")
+                        } else if (line=='RSET') reply(rsetReply ?: '250 Reset')
                         else if (line=='QUIT') break // Client must not depend on QUIT acknowledgement.
                         else throw new AssertionError('Unexpected synthetic SMTP command')
                     }

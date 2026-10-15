@@ -116,6 +116,8 @@ final class MailtrapSmtp {
             return Result.PERMANENT_FAILURE;
         } catch (MessagingException e) {
             int code=replyCode(e,transport.getLastReturnCode());
+            if (code==550 && config.mode.equals("sandbox") && sandboxThrottle(e,transport.getLastServerResponse()))
+                return Result.RATE_LIMITED;
             if (code>=400 && code<500) return Result.TRANSIENT_FAILURE;
             if (code>=500 && code<600 || e instanceof AuthenticationFailedException) return Result.PERMANENT_FAILURE;
             return Result.TRANSIENT_FAILURE;
@@ -125,6 +127,25 @@ final class MailtrapSmtp {
             close(socket);
             try { transport.close(); } catch (MessagingException ignored) { /* No provider data in logs. */ }
         }
+    }
+    private static boolean sandboxThrottle(MessagingException failure,String response) {
+        // Mailtrap Sandbox documents this exact enhanced status and reply. Do not
+        // broaden permanent SMTP errors into retries or expose provider text.
+        final String throttle="550 5.7.0 Requested action not taken: too many emails per second";
+        boolean rejectedReply=false;
+        Exception current=failure;
+        var seen=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Exception,Boolean>());
+        while (current!=null && seen.add(current)) {
+            boolean rejected=(current instanceof SMTPAddressFailedException address && address.getReturnCode()==550)
+                || (current instanceof SMTPSendFailedException send && send.getReturnCode()==550);
+            if (rejected) {
+                rejectedReply=true;
+                if (current.getMessage()!=null && throttle.equals(current.getMessage().strip())) return true;
+            }
+            current=current instanceof MessagingException mail ? mail.getNextException() : null;
+        }
+        // A later RSET/cleanup reply cannot override an authoritative rejection.
+        return !rejectedReply && response!=null && throttle.equals(response.strip());
     }
     private static int replyCode(MessagingException failure,int fallback) {
         Exception current=failure;
