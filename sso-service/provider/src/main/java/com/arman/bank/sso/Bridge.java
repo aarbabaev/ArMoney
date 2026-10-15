@@ -47,6 +47,10 @@ final class Bridge {
         return value;
     }
 
+    JsonNode enrollment(String path, Map<String, Object> body) {
+        return EnrollmentObservation.enrollment(post(path, body));
+    }
+
     JsonNode post(String path, Map<String, Object> body) {
         if (!path.matches("/internal/enrollments(?:/[0-9a-f-]{36}(?:/status|/challenges(?:/[0-9a-f-]{36}/consume)?)?)?"))
             throw new IllegalArgumentException("Invalid bridge path");

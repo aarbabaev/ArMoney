@@ -16,12 +16,18 @@ import org.jooq.Record;
 public final class PostgresVerificationStore implements VerificationStore {
     private final Database database;
     private final VerificationCrypto crypto;
+    private final DSLContext owningContext;
     public PostgresVerificationStore(Database database, VerificationCrypto crypto) {
+        this(database,crypto,null);
+    }
+    PostgresVerificationStore(Database database,VerificationCrypto crypto,DSLContext owningContext) {
         this.database = Objects.requireNonNull(database); this.crypto = Objects.requireNonNull(crypto);
+        this.owningContext=owningContext;
     }
     private <T> T transaction(BiFunction<DSLContext, Instant, T> operation) {
+        if(owningContext!=null){PostgresVerificationProjectionStore.requireLocked(owningContext);return operation.apply(owningContext,owningContext.fetchOne("select clock_timestamp() as now").get("now",OffsetDateTime.class).toInstant());}
         return database.transaction(sql -> {
-            sql.fetchOne("select id from verification_control where id = 1 for update");
+            PostgresVerificationProjectionStore.lockControls(sql);
             Instant now = sql.fetchOne("select clock_timestamp() as now").get("now", OffsetDateTime.class).toInstant();
             return operation.apply(sql, now);
         });
@@ -43,7 +49,8 @@ public final class PostgresVerificationStore implements VerificationStore {
                     // Never infer legacy ownership or verified state from matching email/phone.
                     if (exists(sql, "select 1 from external_identities where issuer = ? and subject = ?", b.issuer(), b.subject())
                             || exists(sql, "select 1 from identities where registration_phone = ?", command.phone())
-                            || exists(sql, "select 1 from verification_phone_claims where phone = ?", command.phone()))
+                            || exists(sql, "select 1 from verification_phone_claims where phone = ?", command.phone())
+                            || exists(sql, "select 1 from verification_authority_phone_claims where phone = ?", command.phone()))
                         return Result.rejected(Error.CONFLICT);
                     if (count(sql, "select count(*) as n from verification_enrollments") >= 10_000
                             || count(sql, "select count(*) as n from verification_enrollments where created_at > cast(? as timestamptz)", at(now.minusSeconds(3600))) >= 1_000)
@@ -72,7 +79,7 @@ public final class PostgresVerificationStore implements VerificationStore {
             if (e == null) return Result.rejected(Error.BINDING);
             return command(sql, now, e.get("binding_digest", byte[].class), input.commandId(),
                 new String[]{"issue", input.enrollmentId().toString(), input.purpose().name(), Integer.toString(input.contactVersion())}, () -> {
-                    if (!pending(e, input.contactVersion(), now)) return Result.rejected(Error.CONFLICT);
+                    if (!pending(sql,e,input.purpose(), input.contactVersion(), now)) return Result.rejected(Error.CONFLICT);
                     if (exists(sql, "select 1 from verification_receipts where enrollment_id = ? and purpose = ? and contact_version = ?",
                             input.enrollmentId(), input.purpose().name(), input.contactVersion())) return Result.rejected(Error.CONFLICT);
                     var recent = sql.fetchOne("""
@@ -112,6 +119,7 @@ public final class PostgresVerificationStore implements VerificationStore {
                         values (?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, cast(? as timestamptz), cast(? as timestamptz))
                         """, delivery, challenge, input.enrollmentId(), input.purpose().name(), input.contactVersion(),
                         encrypted.keyId(), encrypted.nonce(), encrypted.ciphertext(), at(now), at(expiry));
+                    sql.execute("update verification_challenges set candidate_id=? where id=?",candidate(sql,e,input.purpose()),challenge);
                     return new Result(input.enrollmentId(), challenge, null, input.contactVersion(), "PENDING_DELIVERY", expiry, now.plusSeconds(60), 5, null);
                 });
         });
@@ -123,7 +131,7 @@ public final class PostgresVerificationStore implements VerificationStore {
             return command(sql, now, e.get("binding_digest", byte[].class), input.commandId(),
                 new String[]{"consume", input.enrollmentId().toString(), input.challengeId().toString(), input.purpose().name(),
                     Integer.toString(input.contactVersion()), input.code()}, () -> {
-                    if (!pending(e, input.contactVersion(), now)) return Result.rejected(Error.CONFLICT);
+                    if (!pending(sql,e,input.purpose(), input.contactVersion(), now)) return Result.rejected(Error.CONFLICT);
                     var c = sql.fetchOne("select * from verification_challenges where id = ? and enrollment_id = ? for update", input.challengeId(), input.enrollmentId());
                     if (c == null || !input.purpose().name().equals(c.get("purpose"))
                             || input.contactVersion() != c.get("contact_version", Integer.class)) return Result.rejected(Error.CONFLICT);
@@ -146,7 +154,8 @@ public final class PostgresVerificationStore implements VerificationStore {
                     sql.execute("insert into verification_receipts(id, enrollment_id, challenge_id, purpose, contact_version, created_at) values (?, ?, ?, ?, ?, cast(? as timestamptz))",
                         receipt, input.enrollmentId(), input.challengeId(), input.purpose().name(), input.contactVersion(), at(now));
                     sql.execute("update verification_challenges set state = 'CONSUMED', digest = null where id = ?", input.challengeId());
-                    if (count(sql, "select count(*) as n from verification_receipts where enrollment_id = ? and contact_version = ?", input.enrollmentId(), input.contactVersion()) == 2)
+                    sql.execute("update verification_receipts set candidate_id=? where id=?",candidate(sql,e,input.purpose()),receipt);
+                    if (receipt(sql,e,Purpose.REGISTRATION_EMAIL)&&receipt(sql,e,Purpose.REGISTRATION_PHONE))
                         sql.execute("update verification_enrollments set state = 'VERIFIED' where id = ?", input.enrollmentId());
                     // VERIFIED deliberately remains ineligible: no identity or fake projection ACK.
                     return new Result(input.enrollmentId(), input.challengeId(), receipt, input.contactVersion(), "CONSUMED", null, null, 5 - c.get("attempts", Integer.class), null);
@@ -156,17 +165,18 @@ public final class PostgresVerificationStore implements VerificationStore {
     private Record bound(DSLContext sql, UUID id, Binding binding) {
         var e = sql.fetchOne("select * from verification_enrollments where id = ? for update", id);
         if (e == null || !binding.issuer().equals(e.get("issuer")) || !binding.subject().equals(e.get("subject"))) return null;
+        if(sql.fetchOne("select enrollment_id from verification_authorities where enrollment_id=?",id)!=null)return owningContext!=null?e:null;
         return crypto.matches(e.get("binding_digest", byte[].class), binding(e.get("binding_key_id", String.class), binding)) ? e : null;
     }
     private byte[] binding(String key, Binding binding) {
         return crypto.fingerprint(key, "binding-v1", binding.issuer(), binding.subject(), binding.session());
     }
-    private static boolean pending(Record e, int version, Instant now) {
-        return "PENDING_CONTACTS".equals(e.get("state")) && version == e.get("contact_version", Integer.class)
+    private static boolean pending(DSLContext sql,Record e,Purpose purpose, int version, Instant now) {
+        return "PENDING_CONTACTS".equals(e.get("state")) && version == contactVersion(sql,e,purpose)
             && now.isBefore(instant(e, "expires_at"));
     }
     private static Result enrollment(DSLContext sql, Record e) {
-        return new Result(e.get("id", UUID.class), null, null, e.get("contact_version", Integer.class), e.get("state", String.class), instant(e, "expires_at"), null, 0, null, receipt(sql, e, Purpose.REGISTRATION_EMAIL), receipt(sql, e, Purpose.REGISTRATION_PHONE));
+        return new Result(e.get("id", UUID.class), null, null, e.get("contact_version", Integer.class), e.get("state", String.class), instant(e, "expires_at"), null, 0, null, receipt(sql, e, Purpose.REGISTRATION_EMAIL), receipt(sql, e, Purpose.REGISTRATION_PHONE),e.get("contact_version",Integer.class),contactVersion(sql,e,Purpose.REGISTRATION_EMAIL),contactVersion(sql,e,Purpose.REGISTRATION_PHONE));
     }
     private Result command(DSLContext sql, Instant now, byte[] requester, UUID command, String[] payload, Supplier<Result> action) {
         var existing = sql.fetchOne("select * from verification_commands where requester_digest = ? and command_id = ?", requester, command);
@@ -197,9 +207,15 @@ public final class PostgresVerificationStore implements VerificationStore {
     private static OffsetDateTime at(Instant value) { return value.atOffset(ZoneOffset.UTC); }
     private static Instant instant(Record row, String field) { return row.get(field, OffsetDateTime.class).toInstant(); }
     private static boolean receipt(DSLContext sql, Record e, Purpose purpose) {
+        UUID candidate=candidate(sql,e,purpose);
+        if(candidate!=null)return exists(sql,"select 1 from verification_receipts where candidate_id=? and purpose=?",candidate,purpose.name());
         return exists(sql, "select 1 from verification_receipts where enrollment_id = ? and contact_version = ? and purpose = ?",
             e.get("id", UUID.class), e.get("contact_version", Integer.class), purpose.name());
     }
+    private static UUID candidate(DSLContext sql,Record e,Purpose purpose){
+        var row=sql.fetchOne(purpose==Purpose.REGISTRATION_EMAIL?"select email_candidate_id as id from verification_authorities where enrollment_id=?":"select phone_candidate_id as id from verification_authorities where enrollment_id=?",e.get("id",UUID.class));return row==null?null:row.get("id",UUID.class);
+    }
+    private static int contactVersion(DSLContext sql,Record e,Purpose purpose){UUID candidate=candidate(sql,e,purpose);return candidate==null?e.get("contact_version",Integer.class):sql.fetchOne("select version from verification_candidates where id=?",candidate).get("version",Integer.class);}
     private static boolean exists(DSLContext sql, String query, Object... bindings) { return sql.fetchOne(query, bindings) != null; }
     private static long count(DSLContext sql, String query, Object... bindings) { return sql.fetchOne(query, bindings).get("n", Long.class); }
     private static void retire(DSLContext sql, UUID challenge, String state) {

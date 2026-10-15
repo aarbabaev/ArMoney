@@ -28,6 +28,20 @@ final class StatusBoundaryTest {
                 "{\"issuer\":\"x\",\"subject\":\"s\",\"user_session_id\":\"with space\"}"))
             assertEmpty(resource.status(KEY, json(body)), 400);
     }
+    @Test void enrollmentObservationIsDefaultOffAndUsesIndependentCredentialFirst() {
+        var resource = new StatusResource(null, () -> KEY, () -> { throw new AssertionError("Binding key accessed"); }, () -> false);
+        assertEmpty(resource.enrollment("wrong", new byte[20000]),401);
+        assertEmpty(resource.enrollment(KEY, json("{}")),503);
+        assertEmpty(new StatusResource(null, () -> null).enrollment(KEY,json("{}")),503);
+    }
+    @Test void enrollmentObservationRejectsMalformedOrPostTokenShapeBeforeProviderAccess() {
+        var resource = new StatusResource(null, () -> KEY, () -> KEY, () -> true);
+        assertEmpty(resource.enrollment(KEY,null),400);
+        assertEmpty(resource.enrollment(KEY,new byte[12289]),400);
+        for (String body : List.of("null","[]","{}","{}{}",
+                "{\"issuer\":\"https://issuer.example/realms/armoney\",\"subject\":\"s\",\"user_session_id\":\"sid\"}"))
+            assertEmpty(resource.enrollment(KEY,json(body)),400);
+    }
     private static byte[] json(String value) { return value.getBytes(StandardCharsets.UTF_8); }
     private static void assertEmpty(Response response, int status) {
         try (response) {

@@ -17,14 +17,17 @@ public final class Verification {
     /** Bounded, contact-free result suitable for the future private bridge. */
     public record Result(UUID enrollmentId, UUID challengeId, UUID receiptId, int contactVersion,
                          String state, Instant expiresAt, Instant resendAt, int attemptsRemaining, Error error,
-                         boolean emailVerified, boolean phoneVerified) {
+                         boolean emailVerified, boolean phoneVerified, int version, int emailContactVersion, int phoneContactVersion) {
+        public Result(UUID enrollmentId, UUID challengeId, UUID receiptId, int contactVersion,
+                String state, Instant expiresAt, Instant resendAt, int attemptsRemaining, Error error,
+                boolean emailVerified, boolean phoneVerified) {
+            this(enrollmentId,challengeId,receiptId,contactVersion,state,expiresAt,resendAt,attemptsRemaining,error,
+                emailVerified,phoneVerified,contactVersion,contactVersion,contactVersion);
+        }
         public Result(UUID enrollmentId, UUID challengeId, UUID receiptId, int contactVersion,
                 String state, Instant expiresAt, Instant resendAt, int attemptsRemaining, Error error) {
             this(enrollmentId, challengeId, receiptId, contactVersion, state, expiresAt, resendAt, attemptsRemaining, error, false, false);
         }
-        public int version() { return contactVersion; }
-        public int emailContactVersion() { return contactVersion; }
-        public int phoneContactVersion() { return contactVersion; }
         public static Result rejected(Error error) {
             return new Result(null, null, null, 0, "REJECTED", null, null, 0, error);
         }

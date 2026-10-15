@@ -82,13 +82,20 @@ class LoginProofIntegrationSpec extends Specification {
 
     def cleanup() { database?.close(); postgres?.stop() }
 
-    def 'populated published V6 migrates through V7 to V8 without modifying old rows or checksums'() {
+    def 'populated published V6 migrates through V7 and V8 to V9 without modifying old rows or checksums'() {
         expect:
         database.transaction { sql ->
             assert snapshots(sql) == preserved
             assert sql.fetch('select version,script,checksum from flyway_schema_history where cast(version as integer) <= ? order by installed_rank', 6).intoMaps() == history
-            assert sql.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '8'
-            assert sql.fetch('select version from flyway_schema_history order by installed_rank').getValues('version', String) == ['1','2','3','4','5','6','7','8']
+            assert sql.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '9'
+            ['verification_authorities','verification_candidates','verification_authority_phone_claims','verification_flow_barriers','verification_flows','verification_authority_admission','verification_authority_commands'].each { table ->
+                assert sql.fetchOne('select count(*) as n from ' + table).get('n', Long) == 0
+            }
+            assert sql.fetch('select * from verification_authority_config').intoMaps() == [[id: 1, retention_key_fingerprint: null]]
+            ['verification_challenges','verification_receipts'].each { table ->
+                assert sql.fetchOne('select count(*) as n from ' + table + ' where candidate_id is not null').get('n', Long) == 0
+            }
+            assert sql.fetch('select version from flyway_schema_history order by installed_rank').getValues('version', String) == ['1','2','3','4','5','6','7','8','9']
             ['sso_login_proofs','sso_login_events','sso_login_proof_commands','sso_login_proof_admission',
              'auth_verification_projection_commands','auth_verification_projection_tombstones','auth_verification_projection_admission'].each { table ->
                 assert sql.fetchOne('select count(*) as n from ' + table).get('n', Long) == 0
@@ -373,7 +380,8 @@ class LoginProofIntegrationSpec extends Specification {
         [identities: 'id', sessions: 'token_hash', external_identities: 'issuer,subject',
          verification_enrollments: 'id', verification_challenges: 'id', verification_receipts: 'id',
          verification_delivery_outbox: 'id', verification_commands: 'requester_digest,command_id'].collectEntries { table, ordering ->
-            [(table): sql.fetch('select row_to_json(t)::text as snapshot from ' + table + ' t order by ' + ordering).getValues('snapshot', String)]
+            // Only new V9 candidate_id is excluded; every published column remains in the snapshot.
+            [(table): sql.fetch('select ' + (table in ['verification_challenges','verification_receipts'] ? "(to_jsonb(t) - 'candidate_id')::text" : 'row_to_json(t)::text') + ' as snapshot from ' + table + ' t order by ' + ordering).getValues('snapshot', String)]
         }
     }
 }

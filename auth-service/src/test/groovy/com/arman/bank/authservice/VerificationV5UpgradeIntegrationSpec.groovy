@@ -9,11 +9,11 @@ import spock.lang.Specification
 import java.sql.DriverManager
 import java.time.Instant
 
-/** Explicit populated V5 -> current V8 upgrade on synthetic PostgreSQL only.
+/** Explicit populated V5 -> current V9 upgrade on synthetic PostgreSQL only.
  * No receipts, identities, provider state or ACTIVE eligibility are invented.
  */
 class VerificationV5UpgradeIntegrationSpec extends Specification {
-    def 'V6 through V8 preserve populated V5 credentials sessions verified contacts mappings and legacy constraints'() {
+    def 'V6 through V9 preserve populated V5 credentials sessions verified contacts mappings and legacy constraints'() {
         given:
         def postgres = new PostgreSQLContainer('postgres:17.6-alpine')
         postgres.start()
@@ -48,9 +48,16 @@ class VerificationV5UpgradeIntegrationSpec extends Specification {
 
         then:
         database.transaction { current ->
-            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '8'
+            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '9'
+            ['verification_authorities','verification_candidates','verification_authority_phone_claims','verification_flow_barriers','verification_flows','verification_authority_admission','verification_authority_commands'].each { table ->
+                assert current.fetchOne('select count(*) as n from ' + table).get('n', Long) == 0
+            }
+            assert current.fetch('select * from verification_authority_config').intoMaps() == [[id: 1, retention_key_fingerprint: null]]
+            ['verification_challenges','verification_receipts'].each { table ->
+                assert current.fetchOne('select count(*) as n from ' + table + ' where candidate_id is not null').get('n', Long) == 0
+            }
             assert current.fetch('select version,script,checksum from flyway_schema_history where cast(version as integer) <= ? order by installed_rank', 5).intoMaps() == history
-            assert current.fetch('select version from flyway_schema_history order by installed_rank').getValues('version', String) == ['1','2','3','4','5','6','7','8']
+            assert current.fetch('select version from flyway_schema_history order by installed_rank').getValues('version', String) == ['1','2','3','4','5','6','7','8','9']
             assert rows(current, 'identities', 'id') == before.identities
             assert rows(current, 'sessions', 'token_hash') == before.sessions
             assert rows(current, 'external_identities', 'issuer,subject') == before.external

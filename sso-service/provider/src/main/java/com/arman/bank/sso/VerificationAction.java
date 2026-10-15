@@ -11,22 +11,23 @@ import java.util.*;
 final class VerificationAction implements RequiredActionProvider {
     private final String purpose;
     private final String id;
-    VerificationAction(String purpose, String id) { this.purpose = purpose; this.id = id; }
+    private final java.util.function.BooleanSupplier enabled;
+    VerificationAction(String purpose, String id) { this(purpose, id, Bridge::enabled); }
+    VerificationAction(String purpose, String id, java.util.function.BooleanSupplier enabled) {
+        this.purpose = purpose; this.id = id; this.enabled = enabled;
+    }
     @Override public void evaluateTriggers(RequiredActionContext context) {
-        if (Bridge.enabled()) context.getAuthenticationSession().addRequiredAction(id);
+        if (enabled.getAsBoolean()) context.getAuthenticationSession().addRequiredAction(id);
     }
     @Override public void requiredActionChallenge(RequiredActionContext context) {
-        if (!Bridge.enabled()) { context.failure(); return; }
-        try {
-            var bridge = Bridge.configured();
-            JsonNode enrollment = enroll(context, bridge);
-            JsonNode status = status(context, bridge, uuid(enrollment, "enrollment_id"));
-            if (!complete(context, status)) render(context, null);
-        } catch (RuntimeException unavailable) { render(context, "Verification is unavailable. Please try again."); }
+        if (!enabled.getAsBoolean()) { context.failure(); return; }
+        // A separate private HTTP request can only observe committed state. Do not
+        // bootstrap authority inside the request which first renders this action.
+        render(context, null);
     }
 
     @Override public void processAction(RequiredActionContext context) {
-        if (!Bridge.enabled()) { context.failure(); return; }
+        if (!enabled.getAsBoolean()) { context.failure(); return; }
         try {
             var session = context.getAuthenticationSession();
             var bridge = Bridge.configured();
@@ -77,7 +78,7 @@ final class VerificationAction implements RequiredActionProvider {
 
     private JsonNode status(RequiredActionContext context, Bridge bridge, String enrollment) {
         var body = command(context, "status"); body.remove("command_id");
-        return bridge.post("/internal/enrollments/" + enrollment + "/status", body);
+        return bridge.enrollment("/internal/enrollments/" + enrollment + "/status", body);
     }
     private boolean complete(RequiredActionContext context, JsonNode status) {
         boolean done = permitsCompletion(purpose, status);
@@ -92,12 +93,12 @@ final class VerificationAction implements RequiredActionProvider {
     }
 
     private JsonNode enroll(RequiredActionContext context, Bridge bridge) {
-        if (context.getUser().getUsername() == null || !context.getUser().getUsername().matches("\\+9715[024568][0-9]{7}")
-                || context.getUser().getEmail() == null || context.getUser().getEmail().length() > 254)
+        if (!EnrollmentObservation.canonicalPhone(context.getUser().getUsername())
+                || !EnrollmentObservation.canonicalEmail(context.getUser().getEmail()))
             throw new Bridge.Rejected();
         var body = command(context, "enroll");
         body.put("phone_number", context.getUser().getUsername()); body.put("email", context.getUser().getEmail());
-        return bridge.post("/internal/enrollments", body);
+        return bridge.enrollment("/internal/enrollments", body);
     }
     private int version(JsonNode enrollment) {
         int version = enrollment.path(purpose.equals("REGISTRATION_EMAIL") ? "email_contact_version" : "phone_contact_version").asInt(-1);
@@ -110,6 +111,9 @@ final class VerificationAction implements RequiredActionProvider {
         body.put("command_id", stable(session, note(operation)));
         body.put("issuer", Urls.realmIssuer(context.getUriInfo().getBaseUri(), context.getRealm().getName()));
         body.put("subject", context.getUser().getId());
+        body.put("client_id", session.getClient().getClientId());
+        body.put("provider_root_session_id", session.getParentSession().getId());
+        body.put("provider_tab_id", session.getTabId());
         body.put("authentication_session_id", SessionBinding.of(context.getRealm().getId(), session));
         return body;
     }

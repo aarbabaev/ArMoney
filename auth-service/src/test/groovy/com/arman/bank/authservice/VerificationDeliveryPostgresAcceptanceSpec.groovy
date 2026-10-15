@@ -39,7 +39,7 @@ class VerificationDeliveryPostgresAcceptanceSpec extends Specification {
     }
     def cleanupSpec() { database?.close(); postgres?.stop() }
     def setup() {
-        database.transaction { it.execute('truncate auth_verification_projection_commands, verification_receipts, verification_delivery_outbox, verification_challenges, verification_commands, verification_phone_claims, verification_enrollments') }
+        database.transaction { it.execute('truncate verification_authority_commands, verification_authority_admission, verification_flows, verification_flow_barriers, verification_authority_phone_claims, verification_authorities, verification_candidates, auth_verification_projection_commands, verification_receipts, verification_delivery_outbox, verification_challenges, verification_commands, verification_phone_claims, verification_enrollments') }
         crypto = new VerificationCrypto('test', ['test': ([11] * 32) as byte[]], ['test': ([22] * 32) as byte[]])
         store = new PostgresVerificationStore(database, crypto)
         service = new VerificationService(store, [ISSUER] as Set)

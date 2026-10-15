@@ -8,6 +8,16 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
 final class SessionBinding {
+    static byte[] decode(String value) {
+        if (value == null || !value.matches("[A-Za-z0-9_-]{43}")) throw new IllegalArgumentException("Invalid binding");
+        byte[] decoded = Base64.getUrlDecoder().decode(value);
+        if (decoded.length != 32 || !Base64.getUrlEncoder().withoutPadding().encodeToString(decoded).equals(value))
+            throw new IllegalArgumentException("Invalid binding");
+        return decoded;
+    }
+    static boolean matches(String expected, String supplied) {
+        return java.security.MessageDigest.isEqual(decode(expected), decode(supplied));
+    }
     static String derive(String key, String... fields) {
         if (key == null || key.length() < 32) throw new IllegalArgumentException("Invalid binding configuration");
         try {

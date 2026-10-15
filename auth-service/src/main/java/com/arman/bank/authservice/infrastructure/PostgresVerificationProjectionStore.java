@@ -25,6 +25,18 @@ public final class PostgresVerificationProjectionStore implements VerificationPr
     private final Policy policy;
     private final byte[] retentionKey, keyFingerprint;
     private final Function<DSLContext, AuthorityPort> authority;
+    private static final Object LOCK_CONTEXT = new Object();
+    private record Locked(DSLContext context,long transaction) {}
+    /** Global prefix for every projection/verification writer; marker is scoped to this DB transaction. */
+    public static void lockControls(DSLContext sql) {
+        if(sql.fetchOne("select id from verification_control where id=1 for update")==null
+                ||sql.fetchOne("select id from auth_verification_projection_control where id=1 for update")==null)throw new Failure(Error.UNAVAILABLE);
+        sql.configuration().data(LOCK_CONTEXT,new Locked(sql,sql.fetchOne("select txid_current() as id").get("id",Long.class)));
+    }
+    public static void requireLocked(DSLContext sql) {
+        Object marker=sql.configuration().data(LOCK_CONTEXT);
+        if(!(marker instanceof Locked locked)||locked.context()!=sql||locked.transaction()!=sql.fetchOne("select txid_current() as id").get("id",Long.class))throw new Failure(Error.UNAVAILABLE);
+    }
     public PostgresVerificationProjectionStore(Database database, Policy policy, byte[] retentionKey, Function<DSLContext, AuthorityPort> authority) {
         this.database = Objects.requireNonNull(database); this.policy = Objects.requireNonNull(policy); this.authority = Objects.requireNonNull(authority);
         if (retentionKey == null || retentionKey.length != 32) throw new IllegalArgumentException("Invalid projection retention key");
@@ -32,6 +44,7 @@ public final class PostgresVerificationProjectionStore implements VerificationPr
     }
     private <T> T transaction(BiFunction<DSLContext, Instant, T> action) {
         return database.transaction(sql -> {
+            lockControls(sql);
             var control = sql.fetchOne("select retention_key_fingerprint from auth_verification_projection_control where id=1 for update");
             if (control == null) throw new Failure(Error.UNAVAILABLE);
             byte[] stored = control.get("retention_key_fingerprint", byte[].class);
@@ -65,7 +78,14 @@ public final class PostgresVerificationProjectionStore implements VerificationPr
     }
     @Override public Status allocate(String writer, Command command) {
         admit(writer); VerificationProjection.validate(command);
-        return transaction((sql, now) -> {
+        return transaction((sql, now) -> allocateInTransaction(sql,writer,command));
+    }
+    public Status allocateInTransaction(DSLContext sql,String writer,Command command) {
+            requireLocked(sql);VerificationProjection.writer(writer,policy);VerificationProjection.validate(command);
+            Instant now=now(sql);
+            var control=sql.fetchOne("select retention_key_fingerprint from auth_verification_projection_control where id=1");
+            byte[] fingerprint=control.get("retention_key_fingerprint",byte[].class);
+            if(fingerprint!=null&&!MessageDigest.isEqual(fingerprint,keyFingerprint))throw new Failure(Error.UNAVAILABLE);
             byte[] scope = writerHash(writer), identity = identityDigest(command.identityId());
             var previous = tombstone(sql, scope, command.operationId());
             if (previous != null) {
@@ -97,7 +117,6 @@ public final class PostgresVerificationProjectionStore implements VerificationPr
                 command.phoneContactVersion(), current.emailContactVersion(), command.verificationEpoch(), current.emailReceiptId(), current.phoneReceiptId(),
                 command.payloadHash(), HttpVerificationProjection.body(command), at(now), at(now), at(now.plusSeconds(604800)));
             return new Status(command.operationId(), State.PENDING, null, now.plusSeconds(604800));
-        });
     }
     @Override public Status status(String writer, UUID operation) {
         admit(writer);
@@ -132,7 +151,15 @@ public final class PostgresVerificationProjectionStore implements VerificationPr
     @Override public boolean finish(Claim claim, Result result) {
         if (claim == null || result == null) throw new Failure(Error.BAD_INPUT);
         VerificationProjection.writer(claim.writer(), policy); VerificationProjection.validate(claim.command());
-        return transaction((sql, now) -> {
+        return transaction((sql, now) -> finishInTransaction(sql,claim,result));
+    }
+    public boolean finishInTransaction(DSLContext sql,Claim claim,Result result) {
+            requireLocked(sql);if(claim==null||result==null)throw new Failure(Error.BAD_INPUT);
+            VerificationProjection.writer(claim.writer(),policy);VerificationProjection.validate(claim.command());
+            Instant now=now(sql);
+            var control=sql.fetchOne("select retention_key_fingerprint from auth_verification_projection_control where id=1");
+            byte[] fingerprint=control.get("retention_key_fingerprint",byte[].class);
+            if(fingerprint!=null&&!MessageDigest.isEqual(fingerprint,keyFingerprint))throw new Failure(Error.UNAVAILABLE);
             byte[] writer = writerHash(claim.writer()); UUID operation = claim.command().operationId();
             var row = full(sql, writer, operation); var tomb = tombstone(sql, writer, operation);
             if (row == null || tomb == null || !"PENDING".equals(tomb.get("state")) || !Objects.equals(claim.fence(),row.get("fence",UUID.class))
@@ -164,7 +191,6 @@ public final class PostgresVerificationProjectionStore implements VerificationPr
             }
             transition(sql,writer,operation,state,state!=State.ACKNOWLEDGED && state!=State.SUPERSEDED);
             return true;
-        });
     }
     private Authority current(DSLContext sql, Command command, Instant now) {
         Authority current;

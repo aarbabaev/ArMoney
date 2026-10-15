@@ -1053,6 +1053,47 @@ handler compatibility, linked disposable smoke tests and independent review
 remain delivery gates. See [ADR 0034](docs/adr/0034-verification-projection.md)
 and the [projection contract](docs/verification-projection-contract.md).
 
+## Disabled verification authority staging
+
+Auth V9 source adds stable pending association, independent contact candidates/
+versions and current receipt pointers, bounded authorized flows, permanent
+contact-free denial barriers, command replay and reservation history. Pending
+UUIDs stay outside banking identities. New-subject projection remains unavailable;
+caller-owned preparation/ACK helpers stage existing-mapped projection under the
+global verification-control-first/projection-control-second transaction order.
+ACK can yield PROJECTED only. Final disabled auth source has independent bounded
+source/security clearance and passing focused unit/PostgreSQL evidence, including
+the trusted timing-anchor regression. Full auth check passed 513 tests without failures, errors or skips;
+published-head CI and runtime acceptance remain separate gates.
+
+The assigned timing adjustment makes admission return an auth DB timestamp
+after its locks, which the service passes unchanged to remote observation.
+Final database age/future/expiry checks follow all authority row locks; provider
+time cannot become the trusted anchor. Independent focused auth tests verify this
+boundary; it does not establish a durable-commit latency bound.
+
+Disabled provider source adds a read-only pre-token observation subpath using
+six exact server-context fields, seven-field enrollment results and twelve-field
+observations. Internal-ID HMAC, required-action/USER expiry and render-first
+sequencing are implemented source boundaries. Independent provider checks passed;
+two-instance committed-state visibility, session/tab/user removal and pinned
+browser/runtime behavior remain unrun mandatory gates. No new SPI or realm
+activation is introduced, and the final action still requires ACTIVE.
+
+Auth Main/routes/configuration do not wire this authority or a trusted production
+observation supplier. Positive proof/projection eligibility remains UNAVAILABLE;
+no ACTIVE, principal materialization, legacy cutoff, bank-session or notice flow
+is activated. The earlier projection deployment remains default-off; this is
+not new authority rollout evidence. Candidate/contact and immutable phone-claim
+history retention differs from bounded flow/command-response cleanup; no general
+PII purge or operational cleanup guarantee is claimed.
+
+Source completion, affected auth checks, isolated PostgreSQL upgrade/concurrency
+acceptance, pinned provider cross-instance/runtime proof, linked disposable smoke
+tests and independent review remain required. See
+[ADR 0035](docs/adr/0035-disabled-verification-authority.md) and the
+[authority contract](docs/verification-authority-contract.md).
+
 ## Disabled Keycloak provider package
 
 The standalone `sso-service/provider` Java 21 module packages verification
