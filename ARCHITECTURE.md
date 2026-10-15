@@ -1005,6 +1005,18 @@ and does not bypass email/phone verification requirements. Execution and restore
 are separate delivery gates. See [ADR 0019](docs/adr/0019-local-synthetic-baseline.md)
 and [operations](docs/local-baseline.md).
 
+## Disabled auth login proof storage
+
+Auth contains V7 login proof/event storage, immutable payload replay, shared
+writer admission and strict private route classes. Main does not register the
+routes (404); the optional configuration factory always uses unavailable
+production eligibility (503 in explicitly constructed route fixtures). Existing
+identity/session and verification authority remain unchanged. Synthetic positive
+fixtures establish storage behavior only, not ACTIVE eligibility or session and
+notification completion. Bounded cleanup needs scheduling and monitoring before
+activation. See [ADR 0033](docs/adr/0033-disabled-login-proof-storage.md) and the
+[planned proof contract](auth-service/LOGIN-PROOF-CONTRACT.md).
+
 ## Disabled Keycloak provider package
 
 The standalone `sso-service/provider` Java 21 module packages verification

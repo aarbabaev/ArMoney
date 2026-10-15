@@ -1,0 +1,231 @@
+package com.arman.bank.authservice.infrastructure;
+
+import com.arman.bank.authservice.application.LoginProofStore;
+import com.arman.bank.authservice.domain.LoginProof;
+import com.arman.bank.authservice.domain.LoginProof.*;
+import com.arman.bank.authservice.domain.LoginProof.Error;
+import com.arman.bank.runtime.Database;
+import java.io.*;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.security.MessageDigest;
+import java.time.*;
+import java.util.*;
+import java.util.function.*;
+import org.jooq.DSLContext;
+import org.jooq.Record;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+
+/** Owning-database immutable snapshots and budgets. No network, banking session or notice dispatch. */
+public final class PostgresLoginProofStore implements LoginProofStore {
+    private final Database database;
+    private final Policy policy;
+    private final byte[] retentionKey;
+    private final Function<DSLContext, EligibilityPort> eligibility;
+    public PostgresLoginProofStore(Database database, Policy policy, byte[] retentionKey,
+            Function<DSLContext, EligibilityPort> eligibility) {
+        this.database = Objects.requireNonNull(database); this.policy = Objects.requireNonNull(policy);
+        if (retentionKey == null || retentionKey.length != 32) throw new IllegalArgumentException("Invalid proof retention key");
+        this.retentionKey = retentionKey.clone(); this.eligibility = Objects.requireNonNull(eligibility);
+    }
+    private <T> T transaction(BiFunction<DSLContext, Instant, T> action) {
+        return database.transaction(sql -> {
+            if (sql.fetchOne("select id from sso_login_proof_control where id = 1 for update") == null) throw new Failure(Error.UNAVAILABLE);
+            return action.apply(sql, now(sql));
+        });
+    }
+    @Override public void admit(String writer) {
+        LoginProof.writer(writer, policy);
+        // This transaction commits before parsing/provider I/O and before any rejected write.
+        boolean allowed = transaction((sql, now) -> {
+            byte[] key = LoginProof.writerHash(writer);
+            var row = sql.fetchOne("select credits, refilled_at from sso_login_proof_admission where writer_hash = ?", key);
+            BigDecimal credits;
+            if (row == null) {
+                if (count(sql, "select count(*) as n from sso_login_proof_admission") >= 16) return false;
+                credits = BigDecimal.valueOf(20);
+                sql.execute("insert into sso_login_proof_admission(writer_hash, credits, refilled_at) values (?, ?, cast(? as timestamptz))", key, credits, at(now));
+            } else {
+                BigDecimal elapsed = BigDecimal.valueOf(Math.max(0, Duration.between(time(row, "refilled_at"), now).toNanos()), 9);
+                credits = row.get("credits", BigDecimal.class).add(elapsed.multiply(BigDecimal.valueOf(2))).min(BigDecimal.valueOf(20));
+            }
+            boolean permit = credits.compareTo(BigDecimal.ONE) >= 0;
+            sql.execute("update sso_login_proof_admission set credits = ?, refilled_at = cast(? as timestamptz) where writer_hash = ?",
+                permit ? credits.subtract(BigDecimal.ONE) : credits, at(now), key);
+            return permit;
+        });
+        if (!allowed) throw new Failure(Error.RATE_LIMITED);
+    }
+    @Override public Snapshot write(String writer, Write input) {
+        LoginProof.validate(input, writer, policy);
+        return transaction((sql, now) -> {
+            LoginProof.unexpired(input.expiresAt(), now);
+            byte[] requester = LoginProof.requesterHash(writer, input.issuer(), input.clientId()), payload = LoginProof.payloadHash(input);
+            var command = sql.fetchOne("select * from sso_login_proof_commands where requester_hash = ? and command_id = ?", requester, input.commandId());
+            if (command != null) {
+                same(command.get("payload_hash", byte[].class), payload);
+                LoginProof.unexpired(time(command, "retained_until"), now);
+                var original = sql.fetchOne("select * from sso_login_proofs where id = ?", command.get("proof_id", UUID.class));
+                if (original == null) throw new Failure(Error.UNAVAILABLE);
+                LoginProof.unexpired(time(original, "expires_at"), now);
+                Activation active = active(sql, input.binding(), now);
+                if (input.kind() == Kind.INTERACTIVE) event(sql, input, active, now, false);
+                finalCheck(sql, input, active);
+                return snapshot(original);
+            }
+            var code = sql.fetchOne("select * from sso_login_proofs where issuer = ? and code_digest = ?", input.issuer(), input.codeDigest());
+            if (code != null) {
+                same(code.get("payload_hash", byte[].class), payload);
+                LoginProof.unexpired(time(code, "expires_at"), now);
+                Activation active = active(sql, input.binding(), now);
+                if (input.kind() == Kind.INTERACTIVE) event(sql, input, active, now, false);
+                reserveCommand(sql, requester, input.commandId(), payload, code.get("id", UUID.class), now);
+                finalCheck(sql, input, active);
+                return snapshot(code);
+            }
+            LoginProof.fresh(input, now);
+            if (count(sql, "select count(*) as n from sso_login_proofs") >= policy.maxProofs()
+                    || count(sql, "select count(*) as n from sso_login_proof_commands") >= policy.maxCommands()
+                    || count(sql, "select count(*) as n from sso_login_proofs where created_at > cast(? as timestamptz)", at(now.minusSeconds(3600))) >= policy.maxHourly())
+                throw new Failure(Error.RATE_LIMITED);
+            Activation active = active(sql, input.binding(), now);
+            if (input.kind() == Kind.INTERACTIVE) event(sql, input, active, now, true);
+            UUID proof = UUID.randomUUID();
+            sql.execute("""
+                insert into sso_login_proofs(id, issuer, code_digest, code_key_id, binding_hash, payload_hash,
+                    kind, event_id, login_notice_eligible, issued_at, expires_at, created_at, retained_until)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, cast(? as timestamptz), cast(? as timestamptz), cast(? as timestamptz), cast(? as timestamptz))
+                """, proof, input.issuer(), input.codeDigest(), input.codeKeyId(), LoginProof.bindingHash(input.binding()), payload,
+                input.kind().wire(), input.eventId(), input.kind() == Kind.INTERACTIVE, at(input.issuedAt()), at(input.expiresAt()), at(now), at(now.plusSeconds(604800)));
+            reserveCommand(sql, requester, input.commandId(), payload, proof, now);
+            finalCheck(sql, input, active);
+            return new Snapshot(proof, input.codeKeyId(), input.eventId(), input.kind(), input.kind() == Kind.INTERACTIVE, input.issuedAt(), input.expiresAt());
+        });
+    }
+    private void event(DSLContext sql, Write input, Activation active, Instant now, boolean mayCreate) {
+        var event = sql.fetchOne("select * from sso_login_events where issuer = ? and event_id = ?", input.issuer(), input.eventId());
+        if (event != null) {
+            same(event.get("binding_hash", byte[].class), LoginProof.bindingHash(input.binding()));
+            same(event.get("authentication_hash", byte[].class), LoginProof.authenticationHash(input.authenticationSessionId()));
+            same(event.get("identity_digest", byte[].class), LoginProof.identityHash(active.identityId()));
+            same(event.get("recipient_digest", byte[].class), recipientDigest(retentionKey, active.verifiedEmail()));
+            if (!now.isBefore(time(event, "recipient_expires_at")) || event.get("verified_email", String.class) == null
+                    || !time(event, "password_authenticated_at").equals(input.passwordAuthenticatedAt())
+                    || active.emailContactVersion() != event.get("email_contact_version", Integer.class)
+                    || active.phoneContactVersion() != event.get("phone_contact_version", Integer.class)
+                    || active.verificationEpoch() != event.get("verification_epoch", Long.class)
+                    || active.projectionRevision() != event.get("projection_revision", Integer.class)) throw new Failure(Error.CONFLICT);
+            return;
+        }
+        if (!mayCreate) throw new Failure(Error.UNAVAILABLE);
+        if (count(sql, "select count(*) as n from sso_login_events") >= policy.maxProofs()) throw new Failure(Error.RATE_LIMITED);
+        sql.execute("""
+            insert into sso_login_events(issuer, event_id, binding_hash, authentication_hash, identity_id, identity_digest,
+                password_authenticated_at, verified_email, recipient_digest, email_contact_version, phone_contact_version,
+                verification_epoch, projection_revision, recipient_expires_at, created_at, retained_until)
+            values (?, ?, ?, ?, ?, ?, cast(? as timestamptz), ?, ?, ?, ?, ?, ?, cast(? as timestamptz), cast(? as timestamptz), cast(? as timestamptz))
+            """, input.issuer(), input.eventId(), LoginProof.bindingHash(input.binding()), LoginProof.authenticationHash(input.authenticationSessionId()),
+            active.identityId(), LoginProof.identityHash(active.identityId()), at(input.passwordAuthenticatedAt()), active.verifiedEmail(),
+            recipientDigest(retentionKey, active.verifiedEmail()), active.emailContactVersion(), active.phoneContactVersion(),
+            active.verificationEpoch(), active.projectionRevision(), at(now.plusSeconds(86400)), at(now), at(now.plusSeconds(604800)));
+    }
+    private void reserveCommand(DSLContext sql, byte[] requester, UUID command, byte[] payload, UUID proof, Instant now) {
+        if (count(sql, "select count(*) as n from sso_login_proof_commands") >= policy.maxCommands()) throw new Failure(Error.RATE_LIMITED);
+        sql.execute("""
+            insert into sso_login_proof_commands(requester_hash, command_id, payload_hash, proof_id, created_at, retained_until)
+            values (?, ?, ?, ?, cast(? as timestamptz), cast(? as timestamptz))
+            """, requester, command, payload, proof, at(now), at(now.plusSeconds(604800)));
+    }
+    private Activation active(DSLContext sql, Binding binding, Instant now) {
+        Activation active;
+        try {
+            EligibilityPort gate = eligibility.apply(sql);
+            if (gate == null) throw new Failure(Error.UNAVAILABLE);
+            active = gate.requireActive(binding, now);
+        } catch (Failure failure) { throw failure; }
+        catch (RuntimeException unavailable) { throw new Failure(Error.UNAVAILABLE); }
+        if (active == null) throw new Failure(Error.UNAVAILABLE);
+        if (!active.completeFor(binding, now)) throw new Failure(Error.CONFLICT);
+        if (sql.fetchOne("""
+                select i.id from identities i join external_identities e on e.identity_id = i.id
+                where i.id = ? and e.issuer = ? and e.subject = ? for update of i, e
+                """, active.identityId(), binding.issuer(), binding.subject()) == null) throw new Failure(Error.CONFLICT);
+        return active;
+    }
+    private static void finalCheck(DSLContext sql, Write input, Activation active) {
+        Instant now = now(sql);
+        LoginProof.unexpired(input.expiresAt(), now);
+        if (!active.completeFor(input.binding(), now)) throw new Failure(Error.CONFLICT);
+    }
+    @Override public Snapshot resolve(String writer, Resolve input) {
+        LoginProof.writer(writer, policy); LoginProof.validate(input, policy);
+        return database.transaction(sql -> {
+            var proof = sql.fetchOne("select * from sso_login_proofs where issuer = ? and code_digest = ?", input.issuer(), input.codeDigest());
+            if (proof == null) throw new Failure(Error.MISSING);
+            same(proof.get("binding_hash", byte[].class), LoginProof.bindingHash(input.binding()));
+            if (!input.codeKeyId().equals(proof.get("code_key_id", String.class))) throw new Failure(Error.CONFLICT);
+            LoginProof.unexpired(time(proof, "expires_at"), now(sql));
+            return snapshot(proof);
+        });
+    }
+    /** Bounded owning-store maintenance only; scheduling/monitoring is an integration responsibility.
+     * No standalone notice resolver or outbox exists in this disabled slice. */
+    public void cleanup() {
+        transaction((sql, now) -> {
+            sql.execute("""
+                update sso_login_events set verified_email = null, identity_id = null where (issuer, event_id) in (
+                    select issuer, event_id from sso_login_events where verified_email is not null
+                        and recipient_expires_at <= cast(? as timestamptz)
+                    order by recipient_expires_at, issuer, event_id limit 100)
+                """, at(now));
+            sql.execute("""
+                delete from sso_login_proof_commands where (requester_hash, command_id) in (
+                    select requester_hash, command_id from sso_login_proof_commands where retained_until <= cast(? as timestamptz)
+                    order by retained_until, command_id limit 100)
+                """, at(now));
+            sql.execute("""
+                delete from sso_login_proofs where id in (select p.id from sso_login_proofs p
+                    where p.retained_until <= cast(? as timestamptz)
+                        and not exists (select 1 from sso_login_proof_commands c where c.proof_id = p.id)
+                    order by p.retained_until, p.id limit 100)
+                """, at(now));
+            sql.execute("""
+                delete from sso_login_events where (issuer, event_id) in (select e.issuer, e.event_id from sso_login_events e
+                    where e.retained_until <= cast(? as timestamptz)
+                        and not exists (select 1 from sso_login_proofs p where p.issuer = e.issuer and p.event_id = e.event_id)
+                    order by e.retained_until, e.event_id limit 100)
+                """, at(now));
+            return null;
+        });
+    }
+    private static Snapshot snapshot(Record proof) {
+        Kind kind = switch (proof.get("kind", String.class)) {
+            case "interactive" -> Kind.INTERACTIVE; case "reuse" -> Kind.REUSE; default -> throw new Failure(Error.UNAVAILABLE);
+        };
+        UUID event = proof.get("event_id", UUID.class);
+        boolean eligible = Boolean.TRUE.equals(proof.get("login_notice_eligible", Boolean.class));
+        if ((kind == Kind.INTERACTIVE && (event == null || !eligible)) || (kind == Kind.REUSE && (event != null || eligible))) throw new Failure(Error.UNAVAILABLE);
+        return new Snapshot(proof.get("id", UUID.class), proof.get("code_key_id", String.class), event, kind, eligible, time(proof, "issued_at"), time(proof, "expires_at"));
+    }
+    /** Technical retention-key HMAC; preserves the original domain-separated length-prefixed bytes. */
+    public static byte[] recipientDigest(byte[] retentionKey, String recipient) {
+        try {
+            var bytes = new ByteArrayOutputStream(); var output = new DataOutputStream(bytes);
+            for (String field : new String[]{"armoney-login-proof-recipient-v1", recipient}) {
+                byte[] value = field.getBytes(StandardCharsets.UTF_8);
+                output.writeInt(value.length); output.write(value);
+            }
+            var mac = Mac.getInstance("HmacSHA256"); mac.init(new SecretKeySpec(retentionKey, "HmacSHA256"));
+            return mac.doFinal(bytes.toByteArray());
+        } catch (IOException | GeneralSecurityException unavailable) { throw new Failure(Error.UNAVAILABLE); }
+    }
+    private static void same(byte[] first, byte[] second) {
+        if (first == null || second == null || !MessageDigest.isEqual(first, second)) throw new Failure(Error.CONFLICT);
+    }
+    private static OffsetDateTime at(Instant instant) { return instant.atOffset(ZoneOffset.UTC); }
+    private static Instant time(Record record, String field) { return record.get(field, OffsetDateTime.class).toInstant(); }
+    private static Instant now(DSLContext sql) { return time(sql.fetchOne("select clock_timestamp() as now"), "now"); }
+    private static long count(DSLContext sql, String query, Object... values) { return sql.fetchOne(query, values).get("n", Long.class); }
+}

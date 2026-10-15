@@ -9,11 +9,11 @@ import spock.lang.Specification
 import java.sql.DriverManager
 import java.time.Instant
 
-/** Explicit published V5 -> unpublished V6 upgrade on synthetic PostgreSQL only.
+/** Explicit populated V5 -> current V7 upgrade on synthetic PostgreSQL only.
  * No receipts, identities, provider state or ACTIVE eligibility are invented.
  */
 class VerificationV5UpgradeIntegrationSpec extends Specification {
-    def 'V6 preserves populated V5 credentials sessions verified contacts mappings and legacy constraints'() {
+    def 'V6 and V7 preserve populated V5 credentials sessions verified contacts mappings and legacy constraints'() {
         given:
         def postgres = new PostgreSQLContainer('postgres:17.6-alpine')
         postgres.start()
@@ -48,17 +48,20 @@ class VerificationV5UpgradeIntegrationSpec extends Specification {
 
         then:
         database.transaction { current ->
-            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '6'
-            assert current.fetch('select version,script,checksum from flyway_schema_history where version <> ? order by installed_rank', '6').intoMaps() == history
+            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '7'
+            assert current.fetch('select version,script,checksum from flyway_schema_history where version not in (?, ?) order by installed_rank', '6', '7').intoMaps() == history
+            assert current.fetch('select version from flyway_schema_history order by installed_rank').getValues('version', String) == ['1','2','3','4','5','6','7']
             assert rows(current, 'identities', 'id') == before.identities
             assert rows(current, 'sessions', 'token_hash') == before.sessions
             assert rows(current, 'external_identities', 'issuer,subject') == before.external
             assert rows(current, 'auth_attempts', 'subject_hash') == before.attempts
             ['verification_enrollments','verification_phone_claims','verification_challenges','verification_receipts',
-             'verification_delivery_outbox','verification_commands'].each { table ->
+             'verification_delivery_outbox','verification_commands', 'sso_login_proof_admission',
+             'sso_login_events','sso_login_proofs','sso_login_proof_commands'].each { table ->
                 assert current.fetchOne('select count(*) as n from ' + table).get('n', Long) == 0
             }
             assert current.fetchOne('select count(*) as n from verification_control where id=1').get('n', Long) == 1
+            assert current.fetchOne('select count(*) as n from sso_login_proof_control where id=1').get('n', Long) == 1
             true
         }
         store.findSession('a' * 64, Instant.now()).orElseThrow().id() == passwordOwner
