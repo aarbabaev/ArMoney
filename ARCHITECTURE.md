@@ -45,6 +45,19 @@ A payment email presentation candidate adds HTML/plain text and a frozen optiona
 profile display name; it is not yet validated on current CI or deployed. Auth
 remains the destination-verification authority. See [ADR 0030](docs/adr/0030-transaction-email-presentation.md).
 
+Auth also contains a default-disabled registration verification delivery worker
+and encrypted intent/challenge Store, described in
+[ADR 0031](docs/adr/0031-registration-verification-delivery.md) and the
+[delivery contract](auth-service/VERIFICATION-DELIVERY-CONTRACT.md). This clean
+source slice has not been deployed or activated; clean-revision acceptance is
+pending. Main registers no verification/proof routes (absent routes remain 404),
+starts no login-notice worker, and preserves current registration/session/ACTIVE
+authority and working web SSO. Delivery acknowledgement can open a challenge
+through a fenced Store operation; it cannot establish verified ownership, a
+receipt, projection acknowledgement or ACTIVE identity. No new provider or
+Compose activation is included. The unpublished V6 migration's lineage and the
+limits of historical dirty-worktree evidence are recorded in the contract.
+
 Java 21, Gradle multi-project, Javalin, PostgreSQL, Flyway, jOOQ, HikariCP;
 Spock, Testcontainers, ArchUnit; REST/OpenAPI; Docker Compose, GitHub Actions.
 Exact versions: [build.gradle](build.gradle), [runtime build](platform-runtime/build.gradle),
