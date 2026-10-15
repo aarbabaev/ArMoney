@@ -1,3 +1,4 @@
+import "@angular/compiler";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import "fake-indexeddb/auto";
 import {
@@ -10,6 +11,7 @@ import {
   hash,
 } from "../src/app/core/contracts";
 import { Store } from "../src/app/core/storage";
+import { Bank } from "../src/app/core/bank";
 const owner = "11111111-1111-4111-8111-111111111111",
   other = "22222222-2222-4222-8222-222222222222",
   wallet = "33333333-3333-4333-8333-333333333333";
@@ -34,6 +36,24 @@ beforeEach(() => {
     },
   });
 });
+
+async function rawRecord(store: Store, kind: string, write = false, value?: unknown, count = false): Promise<unknown> {
+  const open = indexedDB.open("armoney-browser-v1", 1);
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    open.onsuccess = () => resolve(open.result);
+    open.onerror = () => reject(open.error);
+  });
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction("records", write ? "readwrite" : "readonly");
+      const records = tx.objectStore("records");
+      const key = store.scope(owner, kind);
+      const request = write ? records.put(value, key) : count ? records.count(key) : records.get(key);
+      tx.oncomplete = () => resolve(request.result);
+      tx.onerror = tx.onabort = () => reject(tx.error);
+    });
+  } finally { db.close(); }
+}
 describe("exact AED contract", () => {
   it("round trips Java long maximum without a Number conversion", () => {
     expect(decode('{"amount_minor":9223372036854775807}').amount_minor).toBe(
@@ -77,6 +97,48 @@ describe("exact AED contract", () => {
   });
 });
 describe("durable owner recovery", () => {
+  it.each(["null", null, undefined])("preserves present corrupt pending record %s and blocks replacement and payment POST", async raw => {
+    const s = new Store("https://null-pending-" + crypto.randomUUID());
+    await rawRecord(s, "pending", true, raw);
+    expect(await rawRecord(s, "pending", false, undefined, true)).toBe(1);
+    await expect(s.pending(owner)).rejects.toThrow();
+    await expect(s.create(owner, command)).rejects.toThrow();
+    expect(await rawRecord(s, "pending")).toBe(raw);
+    expect(await rawRecord(s, "pending", false, undefined, true)).toBe(1);
+    vi.stubGlobal("sessionStorage", { getItem: () => null, setItem: () => {}, removeItem: () => {}, length: 0, key: () => null });
+    const b = new Bank();
+    Object.assign(b, { store: s, token: "x".repeat(43), expires: Date.now() + 1800000 });
+    b.owner.set(owner);
+    const request = vi.spyOn(b, "request").mockImplementation(async path => {
+      if (path === "/v1/auth/me") return { id: owner };
+      throw Error("Unexpected banking request");
+    });
+    const write = vi.spyOn(s, "write");
+    const newKey = vi.spyOn(crypto, "randomUUID");
+    await b.send(command);
+    expect(request.mock.calls.some(([path]) => path === "/v1/payments")).toBe(false);
+    expect(write).not.toHaveBeenCalled();
+    expect(newKey).not.toHaveBeenCalled();
+    expect(b.message()).toContain("invalid");
+    expect(await rawRecord(s, "pending")).toBe(raw);
+    expect(await rawRecord(s, "pending", false, undefined, true)).toBe(1);
+    expect(await s.pending(other)).toBeNull();
+  });
+  it.each(["[]", "false", "0", '"text"', "{broken"])("rejects present non-record encoding %s without overwrite", async raw => {
+    const s = new Store("https://invalid-shape-" + crypto.randomUUID());
+    await rawRecord(s, "pending", true, raw);
+    await expect(s.create(owner, command)).rejects.toThrow();
+    expect(await rawRecord(s, "pending")).toBe(raw);
+  });
+  it("treats an actually missing record as absent and permits a first command", async () => {
+    const s = new Store("https://missing-" + crypto.randomUUID());
+    expect(await rawRecord(s, "pending")).toBeUndefined();
+    expect(await rawRecord(s, "pending", false, undefined, true)).toBe(0);
+    expect(await s.pending(owner)).toBeNull();
+    expect(await s.cards(owner)).toEqual([]);
+    const saved = await s.create(owner, command);
+    expect(await s.pending(owner)).toEqual(saved);
+  });
   it("preserves exact attempted command across reload and other identities", async () => {
     const store = new Store("https://recovery-" + crypto.randomUUID());
     const saved = await store.lock(owner, () => store.create(owner, command));
@@ -124,6 +186,16 @@ describe("owner demonstration cards", () => {
     provisioning_status: "READY",
     ledger_account_id: wallet,
   };
+  it.each(["null", null, undefined])("preserves present corrupt card record %s and rejects a replacement", async raw => {
+    const s = new Store("https://null-cards-" + crypto.randomUUID());
+    await rawRecord(s, "cards", true, raw);
+    expect(await rawRecord(s, "cards", false, undefined, true)).toBe(1);
+    await expect(s.cards(owner)).rejects.toThrow();
+    await expect(s.changeCard(owner, w, "VIRTUAL")).rejects.toThrow();
+    expect(await rawRecord(s, "cards")).toBe(raw);
+    expect(await rawRecord(s, "cards", false, undefined, true)).toBe(1);
+    expect(await s.cards(other)).toEqual([]);
+  });
   it("allows one live type per wallet and keeps closure terminal", async () => {
     const s = new Store("https://cards-" + crypto.randomUUID());
     const first = await s.changeCard(owner, w, "VIRTUAL");

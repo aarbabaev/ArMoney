@@ -36,13 +36,23 @@ export class Store {
   }
   async read(owner: string, kind: string): Promise<any> {
     const db = await this.db;
-    const raw = await request(
-      db
-        .transaction("records")
-        .objectStore("records")
-        .get(this.scope(owner, kind)),
-    );
-    return raw === undefined ? null : decode(raw);
+    const records = db.transaction("records").objectStore("records");
+    const key = this.scope(owner, kind);
+    // Queue both requests before awaiting so presence and content come from
+    // the same snapshot, including records whose stored value is undefined.
+    const valueRequest = records.get(key);
+    const keyRequest = records.getKey(key);
+    const [raw, presentKey] = await Promise.all([request(valueRequest), request(keyRequest)]);
+    if (presentKey === undefined) return null;
+    try {
+      if (typeof raw !== "string") throw Error();
+      const record = decode(raw);
+      if (record === null || typeof record !== "object" ||
+          Object.getPrototypeOf(record) !== Object.prototype) throw Error();
+      return record;
+    } catch {
+      throw Error("Saved local record is invalid; saved data preserved.");
+    }
   }
   async write(owner: string, kind: string, value: unknown): Promise<void> {
     const db = await this.db;

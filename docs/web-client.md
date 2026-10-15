@@ -8,8 +8,8 @@ Assistant integration uses the protected stateless contract delivered by issue #
 ## Source baseline and parity audit
 
 Remote main baseline: `112b01d90c247bd774db7fa9f9720edcc0b439f8`.
-Latest main integrated during implementation: `7a99a668f4689121b30c284e3cc5c8ddbcfeb37b`
-(Android semantic design, [tokens](android-design.md)).
+Main integrated for final validation: `1e312ee5ba10564a396bfdd3ba71cb53f23179a4`.
+Android semantic design uses the shared [tokens](android-design.md).
 The original sibling arman-bank directory is a preserved source snapshot without
 Git metadata. Its account/detail/demo-card functionality is included in scope,
 but it cannot be honestly assigned a Git revision. Current main Android includes
@@ -90,6 +90,16 @@ SEC-WEB-001 (logout during pending work and stale card responses), session-gener
 races and QA pagination, immutable-notification and card-capacity findings have developer
 fixes. Independent exact-revision retest remains required. Final PR records exact revision,
 executed commands, outcomes, blocked checks and deployment status. No device acceptance or persistent deployment is implied by a build.
+
+The profile uses synchronous reactive form controls so initial template-driven
+registration cannot overwrite an early edit. Its browser regression enters text
+at input insertion and checks retention and the submitted profile payload.
+SEC-WEB-002 keeps candidate session expiry local until the callback generation
+and identity checks pass. SEC-WEB-003 distinguishes an absent IndexedDB key from
+a present corrupt record, including a stored `undefined` value, using key and
+value reads in the same transaction. Corruption blocks replacement and payment
+submission while preserving the saved record. Focused regressions cover these
+cases; exact-head CI and deployment verification remain separate gates.
 
 ### Local backend evidence (2026-10-13)
 

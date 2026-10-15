@@ -130,10 +130,11 @@ export class Bank {
     body?: unknown,
     key?: string,
     token = this.token,
+    credentialExpiry = this.expires,
   ): Promise<any> {
     if (!path.startsWith("/v1/") || path.startsWith("//"))
       throw Error("Invalid API path");
-    if (token && Date.now() >= this.expires) {
+    if (token && Date.now() >= credentialExpiry) {
       this.clear();
       throw Error(
         "Session expired. Sign in again; saved transfers are preserved.",
@@ -211,27 +212,31 @@ export class Bank {
       const epoch = this.generation;
       try {
         const user = await this.oidc.signinRedirectCallback();
+        if (epoch !== this.generation) return;
         const session = await this.request("/v1/auth/sso", "POST", {
           access_token: user.access_token,
         });
+        if (epoch !== this.generation) return;
+        const expires = Date.parse(session.expires_at);
         if (
           !/^[A-Za-z0-9_-]{43}$/.test(session.access_token) ||
           session.token_type !== "Bearer" ||
-          !Number.isFinite(Date.parse(session.expires_at)) ||
-          Date.parse(session.expires_at) <= Date.now()
+          !Number.isFinite(expires) ||
+          expires <= Date.now()
         )
           throw Error("Invalid bank session");
-        this.expires = Date.parse(session.expires_at);
         const identity = await this.request(
           "/v1/auth/me",
           "GET",
           undefined,
           undefined,
           session.access_token,
+          expires,
         );
         uuid(identity.id);
         if (epoch !== this.generation) return;
         this.generation++;
+        this.expires = expires;
         this.token = session.access_token;
         this.owner.set(identity.id);
         this.timer = setTimeout(() => {

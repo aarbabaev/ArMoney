@@ -249,6 +249,70 @@ describe("session isolation and recovery", () => {
   });
 });
 describe("new session and stale revocation", () => {
+  it("keeps the newer expiry when an earlier unauthenticated SSO response arrives late", async () => {
+    const b = bank(), held = deferred();
+    (b as any).clear();
+    Object.assign(b, { expires: 0 });
+    const newerExpiry = Date.now() + 1800000;
+    const oldExpiry = Date.now() + 60000;
+    let exchanges = 0;
+    const response = (body: unknown) => new Response(JSON.stringify(body), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    });
+    vi.stubGlobal("history", { replaceState: vi.fn() });
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => {
+      if (path === "/v1/auth/sso") {
+        if (++exchanges === 1) return held.promise;
+        return response({ access_token: "b".repeat(43), token_type: "Bearer", expires_at: new Date(newerExpiry).toISOString() });
+      }
+      return response({ id: recipient });
+    }));
+    vi.spyOn((b as any).oidc, "signinRedirectCallback").mockResolvedValue({ access_token: "synthetic-provider-token" });
+    vi.spyOn(b, "refresh").mockResolvedValue();
+    try {
+      const old = b.callback();
+      await vi.waitFor(() => expect(exchanges).toBe(1));
+      await b.logout();
+      await b.callback();
+      expect((b as any).expires).toBe(newerExpiry);
+      held.resolve(response({ access_token: "a".repeat(43), token_type: "Bearer", expires_at: new Date(oldExpiry).toISOString() }));
+      await old;
+      expect(b.owner()).toBe(recipient);
+      expect((b as any).token).toBe("b".repeat(43));
+      expect((b as any).expires).toBe(newerExpiry);
+    } finally {
+      (b as any).clear();
+    }
+  });
+  it("does not exchange a provider result from an earlier login generation", async () => {
+    const b = bank(), held = deferred();
+    (b as any).clear();
+    Object.assign(b, { expires: 0 });
+    vi.stubGlobal("history", { replaceState: vi.fn() });
+    const fetch = vi.fn(async (path: string) => new Response(JSON.stringify(
+      path === "/v1/auth/sso"
+        ? { access_token: "b".repeat(43), token_type: "Bearer", expires_at: new Date(Date.now() + 1800000).toISOString() }
+        : { id: recipient },
+    ), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetch);
+    vi.spyOn((b as any).oidc, "signinRedirectCallback")
+      .mockReturnValueOnce(held.promise).mockResolvedValue({ access_token: "new-provider-token" });
+    vi.spyOn(b, "refresh").mockResolvedValue();
+    try {
+      const old = b.callback();
+      await b.logout();
+      await b.callback();
+      const expiry = (b as any).expires;
+      held.resolve({ access_token: "old-provider-token" });
+      await old;
+      expect(fetch.mock.calls.filter(([path]) => path === "/v1/auth/sso")).toHaveLength(1);
+      expect(b.owner()).toBe(recipient);
+      expect((b as any).token).toBe("b".repeat(43));
+      expect((b as any).expires).toBe(expiry);
+    } finally {
+      (b as any).clear();
+    }
+  });
   it("keeps a newly verified login when an earlier logout returns HTTP 401", async () => {
     const b = bank(),
       held = deferred();
