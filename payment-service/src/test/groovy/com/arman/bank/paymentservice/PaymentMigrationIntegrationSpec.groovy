@@ -68,6 +68,46 @@ class PaymentMigrationIntegrationSpec extends Specification {
         connection?.close(); db?.close(); postgres?.stop()
     }
 
+    def 'V5 keeps populated V4 frozen destinations and null names unchanged on upgrade'() {
+        given:
+        def postgres=new PostgreSQLContainer('postgres:17.6-alpine')
+        postgres.start()
+        def flyway=Class.forName('org.flywaydb.core.Flyway').getMethod('configure').invoke(null)
+        flyway.dataSource(postgres.jdbcUrl,postgres.username,postgres.password).locations('classpath:db/migration').target('4').load().migrate()
+        def owner=UUID.randomUUID()
+        def payment=UUID.randomUUID()
+        def event=UUID.randomUUID()
+        def connection=DriverManager.getConnection(postgres.jdbcUrl,postgres.username,postgres.password)
+        connection.prepareStatement("insert into payments(id,requester_id,idempotency_key,request_hash,source_wallet_id,destination_wallet_id,currency,amount_minor,status) values (?,?,?,?,?,?,'AED',125,'COMPLETED')").withCloseable { insert ->
+            [payment,owner,'frozen','0'*64,UUID.randomUUID(),UUID.randomUUID()].eachWithIndex { value,index -> insert.setObject(index+1,value) }
+            insert.executeUpdate()
+        }
+        connection.prepareStatement("insert into notifications(id,owner_id,payment_id,type,currency,amount_minor) values (?,?,?,'PAYMENT_COMPLETED','AED',125)").withCloseable { insert ->
+            [UUID.randomUUID(),owner,payment].eachWithIndex { value,index -> insert.setObject(index+1,value) }
+            insert.executeUpdate()
+        }
+        connection.prepareStatement("insert into email_outbox(id,owner_id,payment_id,type,amount_minor,recipient_email,recipient_verified,delivery_mode) values (?,?,?,'PAYMENT_COMPLETED',125,'owner@example.test',true,'sandbox')").withCloseable { insert ->
+            [event,owner,payment].eachWithIndex { value,index -> insert.setObject(index+1,value) }
+            insert.executeUpdate()
+        }
+        when:
+        def db=new Database(postgres.jdbcUrl,postgres.username,postgres.password)
+        def store=new com.arman.bank.paymentservice.infrastructure.PostgresEmailOutbox(db)
+        def claim=store.claim('sandbox').get()
+        then:
+        claim.id()==event
+        claim.recipientName()==null
+        claim.recipientEmail()=='owner@example.test'
+        !store.freezeRecipient(claim,new com.arman.bank.paymentservice.application.EmailDelivery.Recipient(
+            'owner@example.test',true,'Later Name'))
+        when:
+        db.transaction { it.execute('update email_outbox set recipient_name=? where id=?','Later Name',event) }
+        then:
+        thrown(org.jooq.exception.DataAccessException)
+        cleanup:
+        connection?.close(); db?.close(); postgres?.stop()
+    }
+
     def 'AED migration refuses existing non-AED #source without modifying monetary data'() {
         given:
         def postgres = new PostgreSQLContainer('postgres:17.6-alpine')

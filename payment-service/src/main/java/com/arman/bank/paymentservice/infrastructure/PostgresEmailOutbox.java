@@ -30,15 +30,15 @@ public final class PostgresEmailOutbox implements EmailOutbox {
                 """, token, mode, row.get("id", UUID.class));
             return Optional.of(new Claim(r.get("id",UUID.class),r.get("owner_id",UUID.class),r.get("payment_id",UUID.class),
                 r.get("type",String.class),r.get("amount_minor",Long.class),token,r.get("attempts",Integer.class),
-                r.get("recipient_email",String.class),r.get("recipient_verified",Boolean.class)));
+                r.get("recipient_email",String.class),r.get("recipient_verified",Boolean.class),r.get("recipient_name",String.class)));
         });
     }
     @Override public boolean freezeRecipient(Claim c, EmailDelivery.Recipient recipient) {
         return db.transaction(sql -> sql.execute("""
-            update email_outbox set recipient_email=?,recipient_verified=?,updated_at=clock_timestamp()
+            update email_outbox set recipient_email=?,recipient_verified=?,recipient_name=?,updated_at=clock_timestamp()
             where id=? and status='PENDING' and lease_token=? and lease_until>clock_timestamp()
             and recipient_email is null
-            """,recipient.email(),recipient.verified(),c.id(),c.token()) == 1);
+            """,recipient.email(),recipient.verified(),recipient.displayName(),c.id(),c.token()) == 1);
     }
     @Override public boolean finish(Claim c,String status,String code) {
         if (!Set.of("SENT","SKIPPED","DEAD").contains(status)) throw new IllegalArgumentException("Invalid email status");

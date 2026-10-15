@@ -8,7 +8,7 @@ public final class EmailConfiguration {
     public final String mode, transport, token, fromEmail, fromName, key;
     public final String smtpHost, smtpUsername, smtpPassword;
     public final int smtpPort;
-    public final URI endpoint, auth;
+    public final URI endpoint, auth, users;
     public EmailConfiguration(Map<String,String> env) {
         String enabledValue=env.getOrDefault("EMAIL_DELIVERY_ENABLED","false");
         if (!enabledValue.equals("true") && !enabledValue.equals("false")) throw new IllegalArgumentException("Invalid EMAIL_DELIVERY_ENABLED");
@@ -19,7 +19,7 @@ public final class EmailConfiguration {
         if (!Set.of("api","smtp").contains(transport)) throw new IllegalArgumentException("Invalid MAILTRAP_TRANSPORT");
         if (transport.equals("smtp") && !mode.equals("sandbox")) throw new IllegalArgumentException("SMTP requires sandbox mode");
         if (!enabled) {
-            token=null; fromEmail=null; fromName=null; key=null; endpoint=null; auth=null;
+            token=null; fromEmail=null; fromName=null; key=null; endpoint=null; auth=null; users=null;
             smtpHost=null; smtpUsername=null; smtpPassword=null; smtpPort=0; return;
         }
         if (transport.equals("smtp")) {
@@ -44,10 +44,16 @@ public final class EmailConfiguration {
         if (fromName.length()>100 || fromName.chars().anyMatch(Character::isISOControl)) throw new IllegalArgumentException("Invalid MAILTRAP_FROM_NAME");
         key=required(env,"INTERNAL_AUTH_KEY");
         if (key.length()<32 || key.length()>256 || key.chars().anyMatch(Character::isISOControl)) throw new IllegalArgumentException("Invalid internal key");
-        auth=URI.create(required(env,"AUTH_BASE_URL"));
-        if (!("http".equals(auth.getScheme()) || "https".equals(auth.getScheme())) || auth.getHost()==null ||
-            auth.getUserInfo()!=null || auth.getQuery()!=null || auth.getFragment()!=null ||
-            !(auth.getPath().isEmpty() || auth.getPath().equals("/"))) throw new IllegalArgumentException("Invalid auth origin");
+        auth=origin(required(env,"AUTH_BASE_URL"));
+        users=origin(required(env,"USER_BASE_URL"));
+    }
+    private static URI origin(String value) {
+        final URI uri;
+        try { uri=URI.create(value); } catch (IllegalArgumentException e) { throw new IllegalArgumentException("Invalid email peer origin"); }
+        if (!("http".equals(uri.getScheme()) || "https".equals(uri.getScheme())) || uri.getHost()==null ||
+            uri.getUserInfo()!=null || uri.getQuery()!=null || uri.getFragment()!=null ||
+            !(uri.getPath().isEmpty() || uri.getPath().equals("/"))) throw new IllegalArgumentException("Invalid email peer origin");
+        return uri;
     }
     private static String credential(Map<String,String> env,String name) {
         String value=required(env,name);

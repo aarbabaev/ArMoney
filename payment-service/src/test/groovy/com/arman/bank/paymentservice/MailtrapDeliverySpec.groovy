@@ -12,7 +12,7 @@ import com.sun.net.httpserver.HttpServer
 class MailtrapDeliverySpec extends Specification {
     def env(String mode='sandbox') {
         [EMAIL_DELIVERY_ENABLED:'true',MAILTRAP_MODE:mode,MAILTRAP_API_TOKEN:'synthetic-token',
-         MAILTRAP_INBOX_ID:'123',MAILTRAP_FROM_EMAIL:'bank@example.test',AUTH_BASE_URL:'http://auth-service:8080',
+         MAILTRAP_INBOX_ID:'123',MAILTRAP_FROM_EMAIL:'bank@example.test',AUTH_BASE_URL:'http://auth-service:8080',USER_BASE_URL:'http://user-service:8080',
          INTERNAL_AUTH_KEY:'synthetic-internal-key-at-least-32-characters']
     }
     def claim() { new EmailOutbox.Claim(UUID.randomUUID(),UUID.randomUUID(),UUID.randomUUID(),'PAYMENT_COMPLETED',125L,UUID.randomUUID(),1,null,null) }
@@ -56,6 +56,11 @@ class MailtrapDeliverySpec extends Specification {
         payload.path('text').asText().contains(c.id().toString())
         !payload.path('text').asText().contains('recipient@example.test')
         payload.path('to').size()==1
+        payload.path('html').asText().contains('AED 1.25')
+        payload.path('html').asText().contains(c.paymentId().toString())
+        payload.path('html').asText().contains(c.id().toString())
+        payload.path('html').asText().contains('Outgoing transfer')
+        !payload.path('html').asText().contains('recipient@example.test')
         where:
         mode | endpoint | header | credential
         'sandbox' | 'https://sandbox.api.mailtrap.io/api/send/123' | 'Api-Token' | 'synthetic-token'
@@ -119,6 +124,57 @@ class MailtrapDeliverySpec extends Specification {
         '{"email":"owner@example.test","verified":true}' | 'owner@example.test' | true
         '{"email":null,"verified":false}' | null | false
     }
+    def 'owner matched profile display name personalizes email without trusting profile contact fields'() {
+        given:
+        def owner=UUID.randomUUID()
+        def requests=[]
+        def profileName='Amina <Admin> & "Team"'
+        def delivery=new MailtrapDelivery(new EmailConfiguration(env()), { HttpRequest req ->
+            requests << req
+            if (req.uri().path.endsWith('/email'))
+                return new MailtrapDelivery.Response(200,bytes('{"email":"owner@example.test","verified":true}'))
+            assert req.uri().toString()=='http://user-service:8080/v1/users/me'
+            assert req.headers().firstValue('X-Service-Key').get()==env().INTERNAL_AUTH_KEY
+            assert req.headers().firstValue('X-Identity-Id').get()==owner.toString()
+            assert req.timeout().get()==Duration.ofSeconds(3)
+            new MailtrapDelivery.Response(200,InternalHttp.JSON.writeValueAsBytes(
+                [identity_id:owner.toString(),display_name:profileName,email:'other@example.test']))
+        } as MailtrapDelivery.Transport)
+        when:
+        def recipient=delivery.recipient(owner)
+        then:
+        recipient==new EmailDelivery.Recipient('owner@example.test',true,profileName)
+        requests.size()==2
+    }
+
+    def 'missing unavailable and untrusted profile metadata falls back without disabling mail'() {
+        given:
+        def owner=UUID.randomUUID()
+        def delivery=new MailtrapDelivery(new EmailConfiguration(env()), { HttpRequest req ->
+            if (req.uri().path.endsWith('/email'))
+                return new MailtrapDelivery.Response(200,bytes('{"email":"owner@example.test","verified":false}'))
+            if (failure) throw new java.net.http.HttpTimeoutException('synthetic')
+            String response=profile=='malformed' ? 'not json' : InternalHttp.JSON.writeValueAsString(
+                [identity_id:wrongOwner ? UUID.randomUUID().toString() : owner.toString(),display_name:profile])
+            new MailtrapDelivery.Response(status,bytes(response))
+        } as MailtrapDelivery.Transport)
+        expect:
+        delivery.recipient(owner)==new EmailDelivery.Recipient('owner@example.test',false,null)
+        where:
+        status | profile | wrongOwner | failure
+        404 | 'Name' | false | false
+        503 | 'Name' | false | false
+        401 | 'Name' | false | false
+        302 | 'Name' | false | false
+        200 | 'Name' | true | false
+        200 | null | false | false
+        200 | 7 | false | false
+        200 | '' | false | false
+        200 | 'N' * 101 | false | false
+        200 | 'malformed' | false | false
+        200 | 'Name' | false | true
+    }
+
     def 'real bounded HTTP transport does not follow redirect and rejects oversized response'() {
         given:
         def server=HttpServer.create(new InetSocketAddress('127.0.0.1',0),0)
