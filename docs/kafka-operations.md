@@ -115,6 +115,12 @@ upload in CI reports, print, or include this directory in a build context.
 
 Formatting is an explicit action. `format.sh` accepts an already formatted volume
 only if cluster/node identity matches, and refuses unrecognized nonempty data.
+The pinned image seeds a new volume root as uid 1000, gid 0. Explicit formatting
+or verified cold restore may change only a real, empty root from gid 0 to gid
+1000, while retaining uid 1000. The shared preparation helper accepts only the
+fixed data/restore paths, checks directory inspection succeeded, and never
+recurses or changes existing/nonempty storage. Snapshot ownership checks remain
+uid/gid 1000:1000; this is not an ownership-repair procedure for existing data.
 Normal startup never formats; missing/mismatched `meta.properties` fails closed.
 Do not run format against an unexpectedly empty prior volume. Investigate lost
 mounts/data first; formatting cannot recover a missing metadata quorum.

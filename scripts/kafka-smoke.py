@@ -35,6 +35,33 @@ ERROR_TYPES = ('AuthorizationException', 'TopicAuthorizationException', 'GroupAu
                'ClusterAuthorizationException', 'SSLHandshakeException', 'SslAuthenticationException',
                'TimeoutException', 'NotEnoughReplicasException', 'NotEnoughReplicasAfterAppendException',
                'ConfigException', 'IllegalArgumentException', 'AccessDeniedException')
+SNAPSHOT_STAGES = frozenset(('SETUP', 'SOURCE_INVENTORY', 'SOURCE_IDENTITY', 'COPY',
+                            'ARCHIVE_INVENTORY', 'CHECKSUMS', 'MANIFEST', 'TARGET', 'RESTORED_VERIFY'))
+SNAPSHOT_REASONS = {
+    'Snapshot ownership mismatch': 'OWNERSHIP',
+    'Snapshot metadata ownership mismatch': 'OWNERSHIP',
+    'Restore target must belong to uid/gid 1000': 'OWNERSHIP',
+    'Snapshot hard links are forbidden': 'HARDLINK',
+    'Snapshot metadata hard links are forbidden': 'HARDLINK',
+    'Snapshot links and special files are forbidden': 'LINK_OR_SPECIAL',
+    'Unsafe snapshot path': 'UNSAFE_PATH',
+    'Snapshot identity mismatch': 'IDENTITY',
+    'Snapshot identity must occur exactly once': 'IDENTITY',
+    'Escaped snapshot metadata is forbidden': 'IDENTITY',
+    'Snapshot metadata missing': 'IDENTITY',
+    'Snapshot inventory changed': 'INVENTORY',
+    'Snapshot contents changed': 'CHECKSUM',
+    'Snapshot checksums or inventory mismatch': 'CHECKSUM',
+    'Restored data checksum mismatch': 'CHECKSUM',
+    'Snapshot manifest checksum mismatch': 'MANIFEST',
+    'Snapshot manifest identity mismatch': 'MANIFEST',
+    'Restore target must be empty': 'TARGET_NOT_EMPTY',
+    'Storage preparation requires an empty root': 'TARGET_NOT_EMPTY',
+    'Storage preparation could not inspect the root': 'INVENTORY',
+    'Unexpected fresh storage ownership; refusing preparation': 'OWNERSHIP',
+    'Fresh storage group normalization failed': 'OWNERSHIP',
+    'Storage preparation requires a real directory': 'UNSAFE_PATH',
+}
 
 
 class Failed(Exception):
@@ -60,6 +87,18 @@ def safe_docker_failure(args, result, phase, env=None):
     errors = [error for error in ERROR_TYPES if re.search(r'\b' + error + r'\b', output)]
     return (f'Docker failure: phase={phase} operation={operation} subcommand={subcommand} '
             f'principal={principal} node={node} exit={code} errors=' + (','.join(errors) or 'unclassified'))
+
+
+def safe_snapshot_failure(result, mode, node):
+    lines = result.stderr.splitlines()
+    stages = [line.removeprefix('SNAPSHOT_FAILURE_') for line in lines
+              if line.startswith('SNAPSHOT_FAILURE_') and line.removeprefix('SNAPSHOT_FAILURE_') in SNAPSHOT_STAGES]
+    reason = next((SNAPSHOT_REASONS[line] for line in lines if line in SNAPSHOT_REASONS), 'UNCLASSIFIED')
+    mode = mode if mode in ('archive', 'restore') else 'unknown'
+    node = node if node in NODES else 'unknown'
+    code = result.returncode if isinstance(result.returncode, int) else 'unknown'
+    return (f'Snapshot helper did not complete successfully: mode={mode} node={node} '
+            f'stage={stages[-1] if stages else "UNKNOWN"} reason={reason} exit={code}')
 
 
 @contextmanager
@@ -606,10 +645,10 @@ exec /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-broker
         with preserving_cleanup(cleanup_helper):
             validate()
             self.stopped()
-            result = self.docker('start', '--attach', cid, timeout=180)
+            result = self.docker('start', '--attach', cid, timeout=180, check=False)
             state = json.loads(self.docker('inspect', cid).stdout)[0]['State']
-            require(not state['Running'] and state['ExitCode'] == 0,
-                    'Snapshot helper did not complete successfully')
+            require(result.returncode == 0 and not state['Running'] and state['ExitCode'] == 0,
+                    safe_snapshot_failure(result, mode, node))
             output = result.stdout.strip()
             require(re.fullmatch('[0-9a-f]{64}', output) if mode == 'archive' else
                     output == 'RESTORE_VERIFIED', 'Snapshot helper confirmation missing')

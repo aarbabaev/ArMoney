@@ -185,6 +185,18 @@ class Guards(unittest.TestCase):
         self.assertIn('exit=-1 errors=TimeoutException', str(failed.exception))
         self.assertNotIn(secret, str(failed.exception))
 
+    def test_snapshot_diagnostics_allow_only_fixed_stage_and_guard_reason(self):
+        secret = 'synthetic-sensitive-path-and-payload'
+        result = subprocess.CompletedProcess([], 1, secret,
+                    'SNAPSHOT_FAILURE_SOURCE_INVENTORY\nSnapshot ownership mismatch\n' + secret)
+        message = kafka.safe_snapshot_failure(result, 'archive', 'kafka-controller-1')
+        self.assertIn('stage=SOURCE_INVENTORY reason=OWNERSHIP exit=1', message)
+        self.assertNotIn(secret, message)
+        result = subprocess.CompletedProcess([], 1, secret, 'SNAPSHOT_FAILURE_' + secret)
+        message = kafka.safe_snapshot_failure(result, secret, secret)
+        self.assertIn('mode=unknown node=unknown stage=UNKNOWN reason=UNCLASSIFIED', message)
+        self.assertNotIn(secret, message)
+
     def test_freshness_rejects_existing_resources_without_cleanup(self):
         fixture = Fixture()
         fixture.smoke.owned = False

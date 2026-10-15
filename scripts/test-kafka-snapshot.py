@@ -50,8 +50,13 @@ class SnapshotTests(unittest.TestCase):
         self.original_hash = hashlib.sha256(SOURCE.read_bytes()).hexdigest()
         self.script = self.root / 'snapshot.sh'
         text = SOURCE.read_text()
+        helper = self.root / 'prepare-empty-storage.sh'
+        helper_source = (SOURCE.parent / 'prepare-empty-storage.sh').read_text()
+        text = text.replace('/opt/armoney/prepare-empty-storage.sh', str(helper))
         for name, replacement in (('source', self.source), ('archive', self.archive), ('target', self.target)):
             text = re.sub('/' + name + r'(?![A-Za-z0-9_-])', str(replacement), text)
+            helper_source = re.sub('/' + name + r'(?![A-Za-z0-9_-])', str(replacement), helper_source)
+        helper.write_text(helper_source)
         self.script.write_text(text)
         self.bundle = self.archive / NODE
 
@@ -99,6 +104,21 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(PAYLOAD, (self.target / self.log.relative_to(self.source)).read_bytes())
         self.assertTrue((self.target / 'empty-directory').is_dir())
         self.assertEqual(fingerprint(self.source), fingerprint(self.target))
+
+    def test_snapshot_guard_and_command_failures_emit_static_stage_markers(self):
+        metadata = self.source / 'meta.properties'
+        metadata.write_text(f'cluster.id={CLUSTER}\nnode.id=102\n')
+        result = self.command('archive')
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('SNAPSHOT_FAILURE_SOURCE_IDENTITY', result.stderr)
+        metadata.write_text(f'cluster.id={CLUSTER}\nnode.id=101\n')
+        self.archive.chmod(0o500)
+        try:
+            result = self.command('archive')
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn('SNAPSHOT_FAILURE_COPY', result.stderr)
+        finally:
+            self.archive.chmod(0o700)
 
     def test_extra_file(self):
         self.reject_restore(lambda: (self.bundle / 'data/extra.log').write_text('extra'))
@@ -228,6 +248,168 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(0, owned.stat().st_uid)
         self.reject_archive(lambda: None)
         self.assertEqual((0, 0), (owned.stat().st_uid, owned.stat().st_gid))
+
+
+@unittest.skipUnless(os.name == 'posix', 'Linux/WSL Bash fixtures required')
+class FreshFormatTests(unittest.TestCase):
+    """Actual Bash format ordering; image ownership utilities are controlled stubs.
+
+    These tests do not establish real image chgrp/Kafka compatibility. The
+    separately leased pinned-image probe must verify those operations.
+    """
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='armoney-kafka-format-')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.data = self.root / 'data'
+        self.data.mkdir()
+        self.target = self.root / 'target'
+        self.target.mkdir()
+        self.bin = self.root / 'bin'
+        self.bin.mkdir()
+        self.calls = self.root / 'calls'
+        self.normalized = self.root / 'normalized'
+        (self.root / 'cluster.id').write_text(CLUSTER)
+        self.prepare = self.root / 'prepare.sh'
+        self.prepare.write_text('exit 0\n')
+        self.storage = self.root / 'storage.sh'
+        self.storage.write_text('#!/usr/bin/env bash\nprintf "storage\\n" >> "$FORMAT_CALLS"\n')
+        self.storage.chmod(0o755)
+        source = (SOURCE.parent / 'format.sh').read_text()
+        self.helper = self.root / 'prepare-empty-storage.sh'
+        self.helper.write_text((SOURCE.parent / 'prepare-empty-storage.sh').read_text().replace(
+            '/var/lib/kafka/data', str(self.data)).replace('/target', str(self.target)))
+        for before, after in (
+                ('/opt/armoney/prepare-empty-storage.sh', str(self.helper)),
+                ('/opt/armoney/prepare-config.sh', str(self.prepare)),
+                ('/var/lib/kafka/data', str(self.data)),
+                ('/run/kafka-secrets/cluster.id', str(self.root / 'cluster.id')),
+                ('/opt/kafka/bin/kafka-storage.sh', str(self.storage))):
+            source = source.replace(before, after)
+        self.script = self.root / 'format.sh'
+        self.script.write_text(source)
+        (self.bin / 'stat').write_text('''#!/usr/bin/env bash
+printf 'stat\n' >> "$FORMAT_CALLS"
+if [[ "$FORMAT_OWNER" == 1000:0 && -e "$FORMAT_NORMALIZED" ]]; then
+  printf '1000:1000\n'
+else
+  printf '%s\n' "$FORMAT_OWNER"
+fi
+''')
+        (self.bin / 'chgrp').write_text('''#!/usr/bin/env bash
+printf 'chgrp\n' >> "$FORMAT_CALLS"
+[[ $# == 2 && "$1" == 1000 && "$2" == "$FORMAT_DATA" ]] || exit 3
+[[ "${FORMAT_FAIL_CHGRP:-}" != true ]] || exit 1
+touch "$FORMAT_NORMALIZED"
+''')
+        for path in self.bin.iterdir():
+            path.chmod(0o755)
+
+    def execute(self, owner='1000:0', fail=False):
+        environment = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
+                           FORMAT_OWNER=owner, FORMAT_CALLS=str(self.calls), FORMAT_DATA=str(self.data),
+                           FORMAT_NORMALIZED=str(self.normalized), FORMAT_FAIL_CHGRP=str(fail).lower(),
+                           KAFKA_NODE_ROLE='broker', KAFKA_NODE_ID='101')
+        return subprocess.run(['bash', str(self.script)], capture_output=True, text=True,
+                              timeout=10, env=environment)
+
+    def operations(self):
+        return self.calls.read_text().splitlines() if self.calls.exists() else []
+
+    def test_fresh_image_root_group_normalizes_once_nonrecursively_before_format(self):
+        result = self.execute()
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(['stat', 'chgrp', 'stat', 'storage'], self.operations())
+        self.assertEqual([], list(self.data.iterdir()))
+
+    def test_already_correct_empty_root_never_changes_group(self):
+        result = self.execute('1000:1000')
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(['stat', 'stat', 'storage'], self.operations())
+
+    def test_existing_matching_metadata_returns_without_ownership_or_storage_operations(self):
+        (self.data / 'meta.properties').write_text(f'cluster.id={CLUSTER}\nnode.id=101\n')
+        before = fingerprint(self.data)
+        result = self.execute()
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual([], self.operations())
+        self.assertEqual(before, fingerprint(self.data))
+
+    def test_nonempty_unrecognized_data_and_mismatched_metadata_refuse_untouched(self):
+        metadata = self.data / 'meta.properties'
+        metadata.write_text(f'cluster.id={CLUSTER}\nnode.id=102\n')
+        for name in ('meta.properties', 'unexpected-log'):
+            if name != 'meta.properties':
+                metadata.rename(self.data / name)
+            before = fingerprint(self.data)
+            result = self.execute()
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual([], self.operations())
+            self.assertEqual(before, fingerprint(self.data))
+
+    def test_foreign_empty_root_owner_or_group_never_normalizes_or_formats(self):
+        for owner in ('0:0', '1001:1000', '1000:999'):
+            if self.calls.exists():
+                self.calls.unlink()
+            before = fingerprint(self.data)
+            result = self.execute(owner)
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual(['stat'], self.operations())
+            self.assertEqual(before, fingerprint(self.data))
+            self.assertFalse(self.normalized.exists())
+
+    def test_failed_group_change_never_invokes_storage_format(self):
+        result = self.execute(fail=True)
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual(['stat', 'chgrp'], self.operations())
+
+    def test_both_allowed_empty_routes_normalize_only_the_root(self):
+        for root in (self.data, self.target):
+            self.calls.unlink(missing_ok=True)
+            self.normalized.unlink(missing_ok=True)
+            environment = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
+                               FORMAT_OWNER='1000:0', FORMAT_CALLS=str(self.calls), FORMAT_DATA=str(root),
+                               FORMAT_NORMALIZED=str(self.normalized))
+            result = subprocess.run(['bash', str(self.helper), str(root)], capture_output=True,
+                                    text=True, timeout=10, env=environment)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(['stat', 'chgrp', 'stat'], self.operations())
+            sentinel = root / 'existing-node-data'
+            sentinel.write_text('preserve')
+            before = fingerprint(root)
+            self.calls.unlink()
+            result = subprocess.run(['bash', str(self.helper), str(root)], capture_output=True,
+                                    text=True, timeout=10, env=environment)
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual([], self.operations())
+            self.assertEqual(before, fingerprint(root))
+
+    def test_helper_refuses_arbitrary_and_symlink_roots_without_mutation(self):
+        other = self.root / 'other'
+        other.mkdir()
+        self.target.rmdir()
+        self.target.symlink_to(other, target_is_directory=True)
+        for root in (other, self.target):
+            before = fingerprint(other)
+            result = subprocess.run(['bash', str(self.helper), str(root)], capture_output=True,
+                                    text=True, timeout=10)
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual([], self.operations())
+            self.assertEqual(before, fingerprint(other))
+
+    def test_unreadable_target_is_not_treated_as_empty_or_repaired(self):
+        (self.target / 'existing-node-data').write_text('preserve')
+        before = fingerprint(self.target)
+        self.target.chmod(0)
+        try:
+            result = subprocess.run(['bash', str(self.helper), str(self.target)], capture_output=True,
+                                    text=True, timeout=10)
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual(0, self.target.stat().st_mode & 0o777)
+            self.assertEqual([], self.operations())
+        finally:
+            self.target.chmod(0o755)
+        self.assertEqual(before, fingerprint(self.target))
 
 
 if __name__ == '__main__':

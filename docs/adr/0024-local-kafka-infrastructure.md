@@ -30,6 +30,11 @@ directory read-only and exclude CA signing material. Containers run as uid/gid
 
 Format storage only by explicit operator action with persisted cluster/node/voter
 identities. Startup refuses missing or mismatched metadata and never formats.
+Normalize the pinned image's fresh uid 1000/gid 0 volume root to gid 1000 only
+during explicit formatting or validated restore into a strictly empty target.
+Use fixed paths, checked directory inspection and a nonrecursive group change;
+reject foreign ownership and preserve all existing/nonempty storage. Normal
+startup never performs this preparation, and snapshot ownership remains strict.
 Provision the v1 topics explicitly with three partitions, replication factor
 three, minimum ISR two and unclean election disabled. Verify existing settings
 instead of silently changing them. Broker acknowledgement is a transport result,
