@@ -26,3 +26,18 @@ SMTP does not require an API token or inbox ID. Real SMTP sending and implicit T
 on port 465 are outside this slice. TLS validation cannot be disabled in production
 configuration. Lost acknowledgement may still cause duplicate submission; no
 exactly-once delivery claim or mailbox-delivery guarantee is made.
+
+## Sandbox rate-limit response
+
+The documented Sandbox response
+
+    550 5.7.0 Requested action not taken: too many emails per second
+
+is classified as rate-limited and uses the existing durable bounded retry policy.
+This exception requires the exact documented response and Sandbox mode; unrelated
+5xx rejections and authentication failures remain permanent. Provider reply text
+is compared only in memory and is not logged or persisted. Existing terminal
+records are not automatically requeued, and a historical rejection cannot be
+attributed to rate limiting without its original diagnostic evidence.
+
+Reference: [Mailtrap Sandbox limits](https://docs.mailtrap.io/email-sandbox/help/features-and-limits).
