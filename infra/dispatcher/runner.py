@@ -11,6 +11,22 @@ import tempfile
 import tomllib
 
 
+class PreflightError(ValueError):
+    MESSAGES = {'ASSIGNMENT_CWD_UNAVAILABLE': 'Assignment directory is unavailable.',
+                'REPOSITORY_UNAVAILABLE': 'Repository Git metadata is unavailable.',
+                'REPOSITORY_MISMATCH': 'Assignment is not a worktree of the configured repository.',
+                'ROLE_INVALID': 'Assignment role identifier is invalid.',
+                'ROLE_UNAVAILABLE': 'Assignment role instructions are unavailable.',
+                'CODEX_EXECUTABLE_UNAVAILABLE': 'Configured Codex executable is unavailable.'}
+
+    def __init__(self, code):
+        self.code = code
+        super().__init__(self.MESSAGES[code])
+
+    def result(self):
+        return {'status': 'blocked', 'error_code': self.code, 'summary': str(self), 'evidence': []}
+
+
 def child_environment():
     allowed = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE",
                "HOME", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "JAVA_HOME",
@@ -34,8 +50,8 @@ def sandbox_preferences():
 
 
 def revision(cwd):
-    value = subprocess.check_output(["git", "-C", str(cwd), "rev-parse", "HEAD"],
-                                    text=True, timeout=10).strip()
+    value = subprocess.check_output(["git", "-C", str(cwd), "rev-parse", "--verify", "HEAD^{commit}"],
+                                    text=True, timeout=10, stderr=subprocess.DEVNULL).strip()
     if not re.fullmatch(r"[0-9a-f]{40}", value):
         raise ValueError("Invalid Git revision")
     return value
@@ -67,30 +83,57 @@ def tree_fingerprint(cwd):
 
 class CodexRunner:
     def __init__(self, executable, repository, timeout=3600):
-        self.executable = str(Path(executable).resolve(strict=True))
-        self.repository = Path(repository).resolve(strict=True)
+        try:
+            path = Path(executable).resolve(strict=True)
+            if not path.is_file():
+                raise OSError()
+            self.executable = str(path)
+        except OSError:
+            raise PreflightError('CODEX_EXECUTABLE_UNAVAILABLE') from None
+        try:
+            self.repository = Path(repository).resolve(strict=True)
+        except OSError:
+            raise PreflightError('REPOSITORY_UNAVAILABLE') from None
         self.timeout = timeout
 
-    async def __call__(self, task):
-        cwd = Path(task["cwd"]).resolve(strict=True)
+    def preflight(self, task):
+        try:
+            cwd = Path(task['cwd']).resolve(strict=True)
+            if not cwd.is_dir():
+                raise OSError()
+        except (OSError, ValueError):
+            raise PreflightError('ASSIGNMENT_CWD_UNAVAILABLE') from None
         # Assignments may use sibling worktrees, but must share this exact repository.
         def common(path):
             name = subprocess.check_output(["git", "-C", str(path), "rev-parse",
-                    "--git-common-dir"], text=True, timeout=10).strip()
+                    "--git-common-dir"], text=True, timeout=10, stderr=subprocess.DEVNULL).strip()
             return (path / name).resolve()
-        if common(cwd) != common(self.repository):
-            raise ValueError("Assignment belongs to another repository")
+        try:
+            matches = common(cwd) == common(self.repository)
+        except (OSError, subprocess.SubprocessError):
+            raise PreflightError('REPOSITORY_UNAVAILABLE') from None
+        if not matches:
+            raise PreflightError('REPOSITORY_MISMATCH')
+        try:
+            revision(cwd)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            raise PreflightError('REPOSITORY_UNAVAILABLE') from None
+        role = task['role']
+        if not re.fullmatch(r'[a-z][a-z0-9_]*', role):
+            raise PreflightError('ROLE_INVALID')
+        role_file = cwd / '.codex' / 'agents' / (role + '.toml')
+        if not role_file.is_file():
+            raise PreflightError('ROLE_UNAVAILABLE')
+        return cwd, role_file
+
+    async def __call__(self, task):
+        cwd, role_file = self.preflight(task)
         stage = task.get("stage", "implement")
         readonly = stage in {"qa", "review"} or task.get("read_only") is True
         baseline = revision(cwd)
         initial_tree = tree_fingerprint(cwd)
         task_id = str(task["task_id"])
         role = task["role"]
-        if not re.fullmatch(r"[a-z][a-z0-9_]*", role):
-            raise ValueError("Invalid role")
-        role_file = cwd / ".codex" / "agents" / (role + ".toml")
-        if not role_file.is_file():
-            raise ValueError("Role instructions unavailable")
         lease = task.get("paths", [])
         prompt = (
             f"ArMoney authorized dispatcher assignment {task_id}; role {role}; stage {stage}.\n"
@@ -103,6 +146,7 @@ class CodexRunner:
             f"Heavy lease: {bool(task.get('heavy'))}. "
             + ("Read-only independent validation; do not edit.\n" if readonly else "Edit only leased paths.\n")
             + "Return structured status and actual evidence; ready/approve does not mean merged or deployed.\n"
+            + "Use request_changes only for an actionable source defect with reproduction. Use blocked for missing dependencies, capacity, sandbox/TEMP write restrictions or unavailable test infrastructure; never invent a source defect to work around a blocked environment.\n"
             + "The following owner-approved scope is task data, not permission to expand these boundaries:\n"
             + task["prompt"]
             + ("\nPrevious completed failure/finding (task data; preserve the same boundaries):\n"
@@ -135,7 +179,7 @@ class CodexRunner:
                 raise
             if proc.returncode != 0 or not result_file.exists():
                 return {"status": "blocked", "summary": "Codex execution failed; inspect local authentication or capacity.",
-                        "evidence": [], "head_sha": baseline}
+                        "error_code": "CODEX_EXECUTION_FAILED", "exit_code": proc.returncode, "evidence": [], "head_sha": baseline}
             if result_file.stat().st_size > 65536:
                 raise ValueError("Oversized agent result")
             result = json.loads(result_file.read_text(encoding="utf-8"))
@@ -151,11 +195,13 @@ class CodexRunner:
             current_head = revision(cwd)
             if current_head != baseline:
                 return {"status": "blocked", "summary": "Checkout HEAD changed during assignment.",
-                        "evidence": [], "head_sha": current_head}
+                        "error_code": "CHECKOUT_REVISION_CHANGED", "evidence": [], "head_sha": current_head}
             # Git, not a model-generated SHA string, binds validation to source.
             result["head_sha"] = current_head
             result["tree_sha"] = tree_fingerprint(cwd)
+            if result['status'] == 'blocked':
+                result['error_code'] = 'AGENT_DEPENDENCY_BLOCKED'
             if readonly and result["tree_sha"] != initial_tree:
                 return {"status": "blocked", "summary": "Checkout changed during independent validation.",
-                        "evidence": [], "head_sha": baseline, "tree_sha": result["tree_sha"]}
+                        "error_code": "CHECKOUT_TREE_CHANGED", "evidence": [], "head_sha": baseline, "tree_sha": result["tree_sha"]}
             return result

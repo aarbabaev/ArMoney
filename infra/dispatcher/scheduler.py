@@ -1,5 +1,6 @@
 """Completion-driven scheduling; idle queues exit without polling."""
 import asyncio
+from .runner import PreflightError
 
 
 class Scheduler:
@@ -22,6 +23,15 @@ class Scheduler:
         active = {}
         try:
             while True:
+                if hasattr(self.runner, 'preflight'):
+                    for task in self.store.snapshot():
+                        if task['state'] != 'queued':
+                            continue
+                        try:
+                            self.runner.preflight(task)
+                        except PreflightError as exc:
+                            if self.store.block_preflight(task['task_id'], exc.result()):
+                                await self._notify('preflight_blocked', dict(task, state='blocked'), exc.result())
                 limits = self.limits() if callable(self.limits) else self.limits
                 for task in self.store.claim_available(limits):
                     active[asyncio.create_task(self.runner(task))] = task
@@ -33,8 +43,10 @@ class Scheduler:
                     task = active.pop(future)
                     try:
                         result = future.result()
+                    except PreflightError as exc:
+                        result = exc.result()
                     except Exception as exc:
-                        result = {'status': 'blocked', 'reason': type(exc).__name__}
+                        result = {'status': 'blocked', 'error_code': 'RUNNER_FAILURE', 'reason': type(exc).__name__}
                     try:
                         accepted = self.store.complete(task['task_id'], task['attempt'], result)
                     except (ValueError, TypeError):

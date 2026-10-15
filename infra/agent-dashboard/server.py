@@ -38,6 +38,27 @@ def processes(record):
 
 def snapshot(state, process_probe=processes):
     warnings = []
+    archives = {}
+    try:
+        raw_archives = json.loads((state/'archived-tasks.json').read_text(encoding='utf-8-sig'))
+        if not isinstance(raw_archives, dict):
+            raise ValueError('Invalid archive mapping')
+        for task_id, entry in raw_archives.items():
+            if not isinstance(task_id, str) or not isinstance(entry, dict):
+                raise ValueError('Invalid archive entry')
+            reason, archived_at = entry['reason'], entry['archived_at']
+            if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000:
+                raise ValueError('Invalid archive reason')
+            if not isinstance(archived_at, str):
+                raise ValueError('Invalid archive timestamp')
+            observed_archive = dt.datetime.fromisoformat(archived_at.replace('Z', '+00:00'))
+            if observed_archive.utcoffset() is None:
+                raise ValueError('Archive timestamp requires timezone')
+        archives = raw_archives
+    except FileNotFoundError:
+        pass  # Optional operator annotation; no automatic archiving.
+    except (OSError, ValueError, KeyError, TypeError):
+        warnings.append('Archive annotations unavailable or invalid; all queue attempts remain current.')
     native = {'observed_at': None, 'stale': True, 'agents': []}
     try:
         raw = json.loads((state/'native-agents.json').read_text(encoding='utf-8-sig'))
@@ -50,7 +71,7 @@ def snapshot(state, process_probe=processes):
         warnings.append('Native chat observations are unavailable.')
     if native['stale']:
         warnings.append('Native chat activity is unknown until the orchestrator refreshes its snapshot.')
-    dispatcher = {'alive': False, 'agents': [], 'error': None}
+    dispatcher = {'alive': False, 'agents': [], 'history': [], 'error': None}
     try:
         record = json.loads((state/'process.json').read_text(encoding='utf-8-sig'))
         alive, children = process_probe(record)
@@ -64,9 +85,15 @@ def snapshot(state, process_probe=processes):
             spec = json.loads(encoded)
             if spec['task_id'].startswith('dispatcher-live-'):
                 continue  # Historical protocol probes are not product workers.
-            dispatcher['agents'].append({'id': spec['agent_id'], 'role': spec['role'],
+            agent = {'id': spec['agent_id'], 'task_id': spec['task_id'], 'role': spec['role'],
                 'issue': spec['issue'], 'stage': spec['stage'],
-                'state': status if status != 'running' or alive else 'unknown'})
+                'state': status if status != 'running' or alive else 'unknown'}
+            if spec['task_id'] in archives:
+                agent.update(state=status, reason=archives[spec['task_id']]['reason'],
+                             archived_at=archives[spec['task_id']]['archived_at'])
+                dispatcher['history'].append(agent)
+            else:
+                dispatcher['agents'].append(agent)
         running = sum(a['state'] == 'running' for a in dispatcher['agents'])
         confirmed = min(running, children) if alive else 0
         if running != confirmed:
@@ -77,7 +104,7 @@ def snapshot(state, process_probe=processes):
         warnings.append(dispatcher['error'])
     agents = native['agents']+dispatcher['agents']
     counts = {'total': len({('native',a['id']) for a in native['agents']})+
-                       len({('cli',a['id']) for a in dispatcher['agents']}),
+                       len({('cli',a['id']) for a in dispatcher['agents']+dispatcher['history']}),
               'active': confirmed+(0 if native['stale'] else sum(a['state']=='running' for a in native['agents'])),
               'queued': sum(a['state']=='queued' for a in agents),
               'blocked': sum(a['state'] in ('blocked','interrupted') for a in agents)}
