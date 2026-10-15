@@ -122,8 +122,9 @@ synthetic credentials and project-scoped cleanup. Do not silently reuse live DBs
 `scripts/ledger-smoke.py` seeds funds for disposable CI only. Do not set `CI=true`
 locally to bypass its guard or run its funding SQL against the user's data.
 
-Run focused checks first. Runtime/schema changes require the repository's full
-`gradlew check` plus applicable Compose smoke checks. QA records executed tests
+Run focused checks first. Runtime/schema changes require affected module `check` tasks and linked Compose
+acceptance under [affected CI](../affected-ci.md); owner instruction on 2026-10-15
+replaces unconditional full builds. Shared/unknown/build changes retain full checks. QA records executed tests
 separately from proposed cases; unavailable tests remain blocked. The independent
 reviewer reviews the integrated revision after owners finish. Fix findings and
 rerun affected checks. Final delivery needs green required CI on the exact PR

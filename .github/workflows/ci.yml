@@ -2,9 +2,12 @@ name: CI
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      full:
+        description: Run all checks (release validation)
+        type: boolean
+        default: true
 permissions:
   contents: read
 concurrency:
@@ -13,51 +16,159 @@ concurrency:
 env:
   INTERNAL_AUTH_KEY: ci-only-service-key-at-least-32-characters
 jobs:
-  dispatcher:
+  impact:
     if: github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, armoney-local]
-    timeout-minutes: 10
+    timeout-minutes: 5
+    outputs:
+      dispatcher: ${{ steps.select.outputs.dispatcher }}
+      build: ${{ steps.select.outputs.build }}
+      android: ${{ steps.select.outputs.android }}
+      web: ${{ steps.select.outputs.web }}
+      assistant: ${{ steps.select.outputs.assistant }}
+      kafka: ${{ steps.select.outputs.kafka }}
+      sms: ${{ steps.select.outputs.sms }}
+      baseline: ${{ steps.select.outputs.baseline }}
+      bank_smoke: ${{ steps.select.outputs.bank_smoke }}
+      assistant_smoke: ${{ steps.select.outputs.assistant_smoke }}
+      sharding: ${{ steps.select.outputs.sharding }}
+      replication: ${{ steps.select.outputs.replication }}
+      sso: ${{ steps.select.outputs.sso }}
+      modules: ${{ steps.select.outputs.modules }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Select affected components and dependent acceptance
+        id: select
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EVENT_KIND: ${{ github.event_name }}
+          FULL_CHECKS: ${{ inputs.full }}
+        run: |
+          args=(--head "$HEAD_SHA" --output "$GITHUB_OUTPUT")
+          if [[ "$EVENT_KIND" == pull_request ]]; then
+            args+=(--base "$BASE_SHA" --pull-request --reason pull-request)
+          elif [[ "$FULL_CHECKS" != false ]]; then
+            args+=(--full --reason manual)
+          else
+            args+=(--base "$BASE_SHA" --reason manual)
+          fi
+          python3 -B scripts/ci-impact.py "${args[@]}" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Validate selector regressions
+        run: |
+          python3 -B scripts/test-ci-impact.py
+          python3 -B scripts/test-affected-gradle.py
+          python3 -B scripts/test-ci-workflow.py
+  dispatcher:
+    needs: impact
+    if: always() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64, armoney-local]
+    timeout-minutes: 10
+    steps:
+      - name: Require valid component selection
+        env:
+          IMPACT_RESULT: ${{ needs.impact.result }}
+          SELECTION: ${{ toJSON(needs.impact.outputs) }}
+        run: |
+          [[ "$IMPACT_RESULT" == success ]] || { echo 'Impact selection failed; checks cannot be satisfied' >&2; exit 1; }
+          python3 - <<'PY'
+          import json, os
+          value = json.loads(os.environ['SELECTION'])
+          flags = 'dispatcher build android web assistant kafka sms baseline bank_smoke assistant_smoke sharding replication sso'.split()
+          if set(value) != set(flags + ['modules']) or any(value[k] not in ('true', 'false') for k in flags):
+              raise SystemExit('Invalid component selection')
+          modules = json.loads(value['modules'])
+          allowed = {'platform-runtime','app-gateway','auth-service','user-service','wallet-service','payment-service','ledger-service','sms-sandbox'}
+          if not isinstance(modules, list) or any(not isinstance(x, str) or x not in allowed for x in modules) or len(modules) != len(set(modules)):
+              raise SystemExit('Invalid module selection')
+          PY
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Verify local toolchain and isolated daemon
+        if: needs.impact.outputs.dispatcher == 'true'
         run: |
           python3 scripts/test-local-ci-guards.py
           bash scripts/check-local-ci.sh
       - name: Test durable queue, process lifecycle and reporting boundaries
+        if: needs.impact.outputs.dispatcher == 'true'
         run: python3 -B -m unittest infra.dispatcher.test_scheduler infra.dispatcher.test_runner infra.dispatcher.test_cli infra.dispatcher.test_github infra.dispatcher.test_intake infra.dispatcher.test_transport -v
       - name: Test local dashboard observation boundaries
+        if: needs.impact.outputs.dispatcher == 'true'
         run: python3 -B infra/agent-dashboard/test_server.py
+      - name: Record component selection
+        if: always()
+        env:
+          SELECTED: ${{ needs.impact.outputs.dispatcher }}
+        run: |
+          if [[ "$SELECTED" == true ]]; then
+            echo 'dispatcher: affected checks requested.' >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$SELECTED" == false ]]; then
+            echo 'dispatcher: not affected; no component build or tests executed.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Missing selection output' >&2; exit 1
+          fi
   build:
+    needs: impact
     env:
       JAVA_TOOL_OPTIONS: -Dapi.version=1.44
     # GitHub all_external_contributors approval policy is the external-run gate.
-    if: github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: always() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, armoney-local]
     timeout-minutes: 60
     steps:
+      - name: Require valid component selection
+        env:
+          IMPACT_RESULT: ${{ needs.impact.result }}
+          SELECTION: ${{ toJSON(needs.impact.outputs) }}
+        run: |
+          [[ "$IMPACT_RESULT" == success ]] || { echo 'Impact selection failed; checks cannot be satisfied' >&2; exit 1; }
+          python3 - <<'PY'
+          import json, os
+          value = json.loads(os.environ['SELECTION'])
+          flags = 'dispatcher build android web assistant kafka sms baseline bank_smoke assistant_smoke sharding replication sso'.split()
+          if set(value) != set(flags + ['modules']) or any(value[k] not in ('true', 'false') for k in flags):
+              raise SystemExit('Invalid component selection')
+          modules = json.loads(value['modules'])
+          allowed = {'platform-runtime','app-gateway','auth-service','user-service','wallet-service','payment-service','ledger-service','sms-sandbox'}
+          if not isinstance(modules, list) or any(not isinstance(x, str) or x not in allowed for x in modules) or len(modules) != len(set(modules)):
+              raise SystemExit('Invalid module selection')
+          PY
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Verify local toolchain and isolated daemon
+        if: needs.impact.outputs.build == 'true'
         id: isolation
         run: |
           python3 scripts/test-local-ci-guards.py
           bash scripts/check-local-ci.sh
       - name: Compile, Spock, ArchUnit and PostgreSQL Testcontainers
-        run: ./gradlew --no-daemon clean check installDist
+        if: needs.impact.outputs.build == 'true'
+        env:
+          AFFECTED_MODULES: ${{ needs.impact.outputs.modules }}
+          NEED_BANK_IMAGES: ${{ needs.impact.outputs.bank_smoke == 'true' || needs.impact.outputs.sso == 'true' || needs.impact.outputs.sharding == 'true' || needs.impact.outputs.assistant_smoke == 'true' }}
+        run: python3 -B scripts/run-affected-gradle.py
       - name: Validate local baseline tool safety (offline)
+        if: needs.impact.outputs.baseline == 'true'
         run: |
           python3 -B scripts/test-seed-local-users.py
           python3 -B scripts/test-fund-local-users.py
           python3 -B scripts/test-backup-local-baseline.py
           python3 -B scripts/test-verify-local-baseline.py
       - name: Validate Compose
+        if: needs.impact.outputs.build == 'true'
         env:
           LOCAL_DB_PASSWORD: ci-only-password
         run: docker compose config --quiet
       - name: Isolated local SMS sandbox acceptance
+        if: needs.impact.outputs.sms == 'true'
         env:
           SMS_SANDBOX_SEND_TOKEN: ci-only-sms-sender-token-32-characters
           SMS_SANDBOX_READ_TOKEN: ci-only-sms-reader-token-32-characters
@@ -68,7 +179,7 @@ jobs:
           docker compose -p "$project" -f compose.sms.yaml up --build -d
           python3 scripts/sms-sandbox-smoke.py --project "$project" --base-url http://127.0.0.1:18026
       - name: Clean isolated SMS sandbox
-        if: always() && steps.isolation.outcome == 'success' && env.SMS_TEST_PROJECT != ''
+        if: always() && steps.isolation.outcome == 'success' && env.SMS_TEST_PROJECT != '' && needs.impact.outputs.sms == 'true'
         env:
           SMS_SANDBOX_SEND_TOKEN: ci-only-sms-sender-token-32-characters
           SMS_SANDBOX_READ_TOKEN: ci-only-sms-reader-token-32-characters
@@ -76,7 +187,8 @@ jobs:
         run: |
           [[ "$SMS_TEST_PROJECT" =~ ^armoney-sms-test-[a-f0-9]{32}$ ]]
           docker compose -p "$SMS_TEST_PROJECT" -f compose.sms.yaml down --volumes
-      - name: Build and smoke-test all service containers
+      - name: Build fixtures and run affected service acceptance
+        if: needs.impact.outputs.bank_smoke == 'true'
         env:
           LOCAL_DB_PASSWORD: ci-only-password
         run: |
@@ -88,6 +200,7 @@ jobs:
           python3 scripts/ledger-smoke.py
           python3 scripts/p2p-smoke.py
       - name: Assistant delegation and provider-outage Compose acceptance
+        if: needs.impact.outputs.assistant_smoke == 'true'
         env:
           LOCAL_DB_PASSWORD: ci-only-assistant-banking-password
           ASSISTANT_DB_PASSWORD: ci-only-assistant-operator-password
@@ -106,7 +219,7 @@ jobs:
           printf '%s\n' '{"disposable":true,"compose_project":"assistant-qa-ci","gateway_origin":"http://localhost:18083"}' > /tmp/assistant-qa-marker.json
           python3 -B scripts/assistant-smoke.py --base http://localhost:18083 --disposable-marker /tmp/assistant-qa-marker.json
       - name: Assistant Compose cleanup
-        if: always() && steps.isolation.outcome == 'success'
+        if: always() && steps.isolation.outcome == 'success' && needs.impact.outputs.assistant_smoke == 'true'
         env:
           LOCAL_DB_PASSWORD: ci-only-assistant-banking-password
           ASSISTANT_DB_PASSWORD: ci-only-assistant-operator-password
@@ -116,26 +229,29 @@ jobs:
           OPENAI_API_KEY: ci-invalid-key-expect-provider-unavailable
         run: docker compose -p assistant-qa-ci -f compose.yaml -f compose.assistant.yaml -f compose.assistant-qa.yaml down --volumes
       - name: Container diagnostics
-        if: failure() && steps.isolation.outcome == 'success'
+        if: failure() && steps.isolation.outcome == 'success' && needs.impact.outputs.build == 'true'
         run: docker compose logs --no-color
         env:
           LOCAL_DB_PASSWORD: ci-only-password
       - name: Isolated user-profile sharding acceptance
+        if: needs.impact.outputs.sharding == 'true'
         env:
           LOCAL_DB_PASSWORD: ci-only-shard-password
         run: |
           docker compose -p armoney-shards-test-ci -f compose.yaml -f compose.users-sharding.yaml -f compose.users-sharding-smoke.yaml up --build -d
           python3 scripts/users-sharding-smoke.py --project armoney-shards-test-ci
       - name: Sharding diagnostics and cleanup
-        if: always() && steps.isolation.outcome == 'success'
+        if: always() && steps.isolation.outcome == 'success' && needs.impact.outputs.sharding == 'true'
         env:
           LOCAL_DB_PASSWORD: ci-only-shard-password
         run: |
           docker compose -p armoney-shards-test-ci -f compose.yaml -f compose.users-sharding.yaml -f compose.users-sharding-smoke.yaml logs --no-color --tail=80
           docker compose -p armoney-shards-test-ci -f compose.yaml -f compose.users-sharding.yaml -f compose.users-sharding-smoke.yaml down --volumes
       - name: Isolated ledger physical replication acceptance
+        if: needs.impact.outputs.replication == 'true'
         run: python3 scripts/ledger-replication-smoke.py
       - name: Browser SSO against disposable Keycloak and HTTPS edge
+        if: needs.impact.outputs.sso == 'true'
         env:
           COMPOSE_FILE: compose.yaml:compose.sso.yaml:compose.sso-ci.yaml
           LOCAL_DB_PASSWORD: ci-only-password
@@ -153,7 +269,7 @@ jobs:
           done
           python3 scripts/sso-smoke.py
       - name: SSO diagnostics and cleanup
-        if: always() && steps.isolation.outcome == 'success'
+        if: always() && steps.isolation.outcome == 'success' && needs.impact.outputs.sso == 'true'
         env:
           COMPOSE_FILE: compose.yaml:compose.sso.yaml:compose.sso-ci.yaml
           LOCAL_DB_PASSWORD: ci-only-password
@@ -164,27 +280,113 @@ jobs:
           docker compose logs --no-color --tail=100 sso-service edge
           docker compose down --volumes
       - name: Stop containers
-        if: always() && steps.isolation.outcome == 'success'
+        if: always() && steps.isolation.outcome == 'success' && needs.impact.outputs.build == 'true'
         run: docker compose down --volumes
         env:
           LOCAL_DB_PASSWORD: ci-only-password
       - name: Save backend reports locally
-        if: always()
+        if: always() && needs.impact.outputs.build == 'true'
         run: bash scripts/archive-local-ci.sh backend
-  assistant:
-    if: github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      - name: Record component selection
+        if: always()
+        env:
+          SELECTED: ${{ needs.impact.outputs.build }}
+        run: |
+          if [[ "$SELECTED" == true ]]; then
+            echo 'build: affected checks requested.' >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$SELECTED" == false ]]; then
+            echo 'build: not affected; no component build or tests executed.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Missing selection output' >&2; exit 1
+          fi
+  web:
+    needs: impact
+    if: always() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, armoney-local]
     timeout-minutes: 30
     steps:
+      - name: Require valid component selection
+        env:
+          IMPACT_RESULT: ${{ needs.impact.result }}
+          SELECTION: ${{ toJSON(needs.impact.outputs) }}
+        run: |
+          [[ "$IMPACT_RESULT" == success ]] || { echo 'Impact selection failed; checks cannot be satisfied' >&2; exit 1; }
+          python3 - <<'PY'
+          import json, os
+          value = json.loads(os.environ['SELECTION'])
+          flags = 'dispatcher build android web assistant kafka sms baseline bank_smoke assistant_smoke sharding replication sso'.split()
+          if set(value) != set(flags + ['modules']) or any(value[k] not in ('true', 'false') for k in flags):
+              raise SystemExit('Invalid component selection')
+          modules = json.loads(value['modules'])
+          allowed = {'platform-runtime','app-gateway','auth-service','user-service','wallet-service','payment-service','ledger-service','sms-sandbox'}
+          if not isinstance(modules, list) or any(not isinstance(x, str) or x not in allowed for x in modules) or len(modules) != len(set(modules)):
+              raise SystemExit('Invalid module selection')
+          PY
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify isolated runner
+        if: needs.impact.outputs.web == 'true'
+        run: bash scripts/check-local-ci.sh
+      - name: Affected web build, unit and browser fixture checks
+        if: needs.impact.outputs.web == 'true'
+        run: |
+          if [[ ! -f web/package.json ]]; then
+            if [[ -n "$(git ls-files -- web)" ]]; then
+              echo 'Web files exist without an executable package' >&2; exit 1
+            fi
+            echo 'No web component exists at this revision.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          docker run --rm --mount type=bind,source="$PWD/web",target=/app --workdir /app node:24.19.0-bookworm bash -euc 'npm ci; npm audit --audit-level=high; npm run build; npm test; npx playwright install --with-deps chromium; npm run e2e'
+      - name: Record component selection
+        if: always()
+        env:
+          SELECTED: ${{ needs.impact.outputs.web }}
+        run: |
+          if [[ "$SELECTED" == true ]]; then
+            echo 'web: affected checks requested; component absence is recorded separately.' >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$SELECTED" == false ]]; then
+            echo 'web: not affected; no component build or tests executed.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Missing selection output' >&2; exit 1
+          fi
+  assistant:
+    needs: impact
+    if: always() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64, armoney-local]
+    timeout-minutes: 30
+    steps:
+      - name: Require valid component selection
+        env:
+          IMPACT_RESULT: ${{ needs.impact.result }}
+          SELECTION: ${{ toJSON(needs.impact.outputs) }}
+        run: |
+          [[ "$IMPACT_RESULT" == success ]] || { echo 'Impact selection failed; checks cannot be satisfied' >&2; exit 1; }
+          python3 - <<'PY'
+          import json, os
+          value = json.loads(os.environ['SELECTION'])
+          flags = 'dispatcher build android web assistant kafka sms baseline bank_smoke assistant_smoke sharding replication sso'.split()
+          if set(value) != set(flags + ['modules']) or any(value[k] not in ('true', 'false') for k in flags):
+              raise SystemExit('Invalid component selection')
+          modules = json.loads(value['modules'])
+          allowed = {'platform-runtime','app-gateway','auth-service','user-service','wallet-service','payment-service','ledger-service','sms-sandbox'}
+          if not isinstance(modules, list) or any(not isinstance(x, str) or x not in allowed for x in modules) or len(modules) != len(set(modules)):
+              raise SystemExit('Invalid module selection')
+          PY
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Verify isolated daemon before assistant persistence tests
+        if: needs.impact.outputs.assistant == 'true'
         id: isolation
         run: |
           python3 scripts/test-local-ci-guards.py
           bash scripts/check-local-ci.sh
       - name: Assistant deterministic and real PostgreSQL checks
+        if: needs.impact.outputs.assistant == 'true'
         run: |
           docker compose -p armoney-assistant-check -f compose.assistant-tests.yaml up -d --wait
           docker run --rm --network armoney-assistant-check_default \
@@ -197,48 +399,127 @@ jobs:
           python3 -B scripts/test-assistant-ready.py
           docker build -t armoney-assistant-ci ai-assistant-service
       - name: Assistant disposable database cleanup
-        if: always() && steps.isolation.outcome == 'success'
+        if: always() && steps.isolation.outcome == 'success' && needs.impact.outputs.assistant == 'true'
         run: docker compose -p armoney-assistant-check -f compose.assistant-tests.yaml down
+      - name: Record component selection
+        if: always()
+        env:
+          SELECTED: ${{ needs.impact.outputs.assistant }}
+        run: |
+          if [[ "$SELECTED" == true ]]; then
+            echo 'assistant: affected checks requested.' >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$SELECTED" == false ]]; then
+            echo 'assistant: not affected; no component build or tests executed.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Missing selection output' >&2; exit 1
+          fi
   kafka:
+    needs: impact
     # Uses one of the existing isolated runners; never the host Docker socket.
-    if: github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: always() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, armoney-local]
     timeout-minutes: 45
     steps:
+      - name: Require valid component selection
+        env:
+          IMPACT_RESULT: ${{ needs.impact.result }}
+          SELECTION: ${{ toJSON(needs.impact.outputs) }}
+        run: |
+          [[ "$IMPACT_RESULT" == success ]] || { echo 'Impact selection failed; checks cannot be satisfied' >&2; exit 1; }
+          python3 - <<'PY'
+          import json, os
+          value = json.loads(os.environ['SELECTION'])
+          flags = 'dispatcher build android web assistant kafka sms baseline bank_smoke assistant_smoke sharding replication sso'.split()
+          if set(value) != set(flags + ['modules']) or any(value[k] not in ('true', 'false') for k in flags):
+              raise SystemExit('Invalid component selection')
+          modules = json.loads(value['modules'])
+          allowed = {'platform-runtime','app-gateway','auth-service','user-service','wallet-service','payment-service','ledger-service','sms-sandbox'}
+          if not isinstance(modules, list) or any(not isinstance(x, str) or x not in allowed for x in modules) or len(modules) != len(set(modules)):
+              raise SystemExit('Invalid module selection')
+          PY
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Kafka isolation and snapshot guards (offline)
+        if: needs.impact.outputs.kafka == 'true'
         run: |
           python3 -B scripts/test-local-ci-guards.py
           python3 -B scripts/test-kafka-smoke-guards.py
           python3 -B scripts/test-kafka-snapshot.py
           for script in infra/kafka/*.sh; do bash -n "$script"; done
       - name: Verify isolated daemon before Kafka mutations
+        if: needs.impact.outputs.kafka == 'true'
         run: bash scripts/check-local-ci.sh
       - name: Isolated Kafka transport and cold restore acceptance
+        if: needs.impact.outputs.kafka == 'true'
         run: |
           project="armoney-kafka-test-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
           python3 -B scripts/kafka-smoke.py --project "$project"
         # The smoke runner validates owned resources before its finally cleanup.
         # Do not add unconditional Compose cleanup that bypasses its inventory gate.
+      - name: Record component selection
+        if: always()
+        env:
+          SELECTED: ${{ needs.impact.outputs.kafka }}
+        run: |
+          if [[ "$SELECTED" == true ]]; then
+            echo 'kafka: affected checks requested.' >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$SELECTED" == false ]]; then
+            echo 'kafka: not affected; no component build or tests executed.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Missing selection output' >&2; exit 1
+          fi
   android:
+    needs: impact
     # GitHub all_external_contributors approval policy is the external-run gate.
-    if: github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: always() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, armoney-local]
     timeout-minutes: 90
     steps:
+      - name: Require valid component selection
+        env:
+          IMPACT_RESULT: ${{ needs.impact.result }}
+          SELECTION: ${{ toJSON(needs.impact.outputs) }}
+        run: |
+          [[ "$IMPACT_RESULT" == success ]] || { echo 'Impact selection failed; checks cannot be satisfied' >&2; exit 1; }
+          python3 - <<'PY'
+          import json, os
+          value = json.loads(os.environ['SELECTION'])
+          flags = 'dispatcher build android web assistant kafka sms baseline bank_smoke assistant_smoke sharding replication sso'.split()
+          if set(value) != set(flags + ['modules']) or any(value[k] not in ('true', 'false') for k in flags):
+              raise SystemExit('Invalid component selection')
+          modules = json.loads(value['modules'])
+          allowed = {'platform-runtime','app-gateway','auth-service','user-service','wallet-service','payment-service','ledger-service','sms-sandbox'}
+          if not isinstance(modules, list) or any(not isinstance(x, str) or x not in allowed for x in modules) or len(modules) != len(set(modules)):
+              raise SystemExit('Invalid module selection')
+          PY
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Verify local toolchain and isolated daemon
+        if: needs.impact.outputs.android == 'true'
         id: isolation
         run: |
           python3 scripts/test-local-ci-guards.py
           bash scripts/check-local-ci.sh
       - name: Kotlin tests, lint and debug APK
+        if: needs.impact.outputs.android == 'true'
         run: ./gradlew -p android --no-daemon testDebugUnitTest lintDebug assembleDebug
       - name: Save Android APK and reports locally
-        if: always()
+        if: always() && needs.impact.outputs.android == 'true'
         run: bash scripts/archive-local-ci.sh android
 
+      - name: Record component selection
+        if: always()
+        env:
+          SELECTED: ${{ needs.impact.outputs.android }}
+        run: |
+          if [[ "$SELECTED" == true ]]; then
+            echo 'android: affected checks requested.' >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$SELECTED" == false ]]; then
+            echo 'android: not affected; no component build or tests executed.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Missing selection output' >&2; exit 1
+          fi
