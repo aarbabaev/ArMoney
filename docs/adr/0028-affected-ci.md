@@ -11,7 +11,7 @@ runtime expand coverage; test-only changes stay scoped.
 
 Stable job names record an explicit no-op when unaffected. Required checks and
 Docker isolation are preserved. Full validation is available on manual dispatch;
-CI/build/selector changes select it automatically. The redundant main-push suite
+CI/shared-build/selector changes select it automatically; known module-local build files retain the affected module and dependency closure. The redundant main-push suite
 is removed; reviewed PR checks remain mandatory before merge.
 
 ## Consequences

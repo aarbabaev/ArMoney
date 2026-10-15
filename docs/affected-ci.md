@@ -19,7 +19,8 @@ provenance stops selection rather than producing green checks.
 | Dispatcher/dashboard | Queue, process and dashboard checks |
 | Assistant tests | Assistant checks |
 | Assistant runtime | Assistant checks and real gateway/provider-outage acceptance |
-| CI, build tooling, unknown paths | Full suite |
+| CI, shared build tooling, unknown paths | Full suite |
+| Known module-local build files | Affected module checks and dependency-linked acceptance |
 
 Service code has no direct cross-service Java dependency. The shared
 `platform-runtime` is a dependency of the service modules. Acceptance links are

@@ -88,6 +88,19 @@ class Classifications(unittest.TestCase):
         self.assertEqual(set(modules(result)), MODULES)
         self.assertEqual(result['bank_smoke'], 'true')
 
+    def test_payment_local_build_runs_only_payment_checks_and_linked_acceptance(self):
+        result = self.checked(['payment-service/build.gradle'])
+        self.assertEqual(modules(result), ['payment-service'])
+        self.assertEqual({flag for flag in FLAGS if result[flag] == 'true'},
+                         {'build', 'bank_smoke'})
+
+    def test_platform_local_build_expands_java_closure_and_linked_acceptance(self):
+        result = self.checked(['platform-runtime/build.gradle'])
+        self.assertEqual(set(modules(result)), MODULES)
+        self.assertEqual({flag for flag in FLAGS if result[flag] == 'true'},
+                         {'build', 'bank_smoke', 'assistant_smoke', 'sharding',
+                          'replication', 'sso'})
+
     def test_native_web_assistant_scopes_are_separate(self):
         for path, flag in (('android/app/src/main/App.kt','android'), ('web/src/App.tsx','web'),
                            ('ai-assistant-service/src/Program.cs','assistant')):

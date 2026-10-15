@@ -124,7 +124,7 @@ locally to bypass its guard or run its funding SQL against the user's data.
 
 Run focused checks first. Runtime/schema changes require affected module `check` tasks and linked Compose
 acceptance under [affected CI](../affected-ci.md); owner instruction on 2026-10-15
-replaces unconditional full builds. Shared/unknown/build changes retain full checks. QA records executed tests
+replaces unconditional full builds. Shared or unknown changes and shared build tooling retain full checks; known module-local build files follow the affected module and dependency closure. QA records executed tests
 separately from proposed cases; unavailable tests remain blocked. The independent
 reviewer reviews the integrated revision after owners finish. Fix findings and
 rerun affected checks. Final delivery needs green required CI on the exact PR

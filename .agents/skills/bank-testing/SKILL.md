@@ -37,7 +37,7 @@ Use `./gradlew` on POSIX. `test` excludes `*IntegrationSpec`; `integrationTest`
 includes them, and `check` runs both. Do not present `test` alone as integration
 coverage. Runtime or schema changes require affected module `check` tasks and linked Compose
 acceptance under `docs/affected-ci.md` (owner instruction, 2026-10-15). Full checks
-remain required for shared/unknown/build changes and explicit release validation.
+remain required for shared/unknown changes and shared build tooling and explicit release validation.
 An unavailable Docker daemon is a blocked check, never permission
 to skip integration tests or claim success.
 
