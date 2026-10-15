@@ -1,8 +1,8 @@
-# Planned auth login proof contract, revision 1
+# Planned auth login proof contract, revision 3
 
 Status: **PLANNED AUTH CONTRACT; DISABLED PROVIDER SOURCE ONLY; NO AUTH PROOF ROUTES REGISTERED.**
 
-Reconciled against main baseline `83043b9ed3908287f00811dabd73b9b0196cc117`
+Reconciled against main baseline `8b8f8aca9a82f8fc76ae302a748fd61bca91ddd4`
 and separately ported disabled provider source on 2026-10-15. This recovers the
 unpublished login-notice worktree agreement, without importing its auth classes,
 migrations or test evidence. All normative sections below describe the intended
@@ -16,10 +16,22 @@ routes. Verification core and encrypted delivery storage exist; the separately
 opted-in delivery worker defaults false. Both contact receipts deliberately leave
 an enrollment ineligible pending trusted projection. Positive projection/ACTIVE
 authority and all-entry eligibility enforcement are unimplemented. Proof routes
-have no handlers (404), not an implemented unavailable-port 503. Proposed flags
+have no handlers (404); constructed PROOF66 routes instead fail 503 as described
+below. Proposed flags
 cannot expose them through current Main. The provider extension is disabled and
 unregistered; source or synthetic tests do not prove runtime hooks or activation.
 This is a source-baseline statement, not verification of a live deployment.
+
+The PROOF66 source adds V7 proof/event storage, durable shared admission and
+strict private route classes. Main still does not register these routes, so the
+application returns 404. An explicitly constructed enabled route fixture uses
+the actual configuration factory whose production eligibility adapter always
+returns UNAVAILABLE (503); it cannot grant ACTIVE eligibility. Independent local
+focused checks passed 92 cases, including 14 PostgreSQL cases and a populated
+upgrade test. Full affected auth checks and published-head CI remain separate
+delivery gates. No session/notice atomicity, positive projection or provider proof
+registration is implemented by this storage slice. Cleanup is a bounded helper;
+its scheduling and monitoring remain activation prerequisites.
 
 Existing KeycloakTokens validation remains unchanged: exact issuer, Bearer type,
 armoney-api audience, clients armoney-ios/armoney-android/armoney-web, expiry and
@@ -45,6 +57,9 @@ current authentication session only. Failed passwords create neither. The marker
 must never be copied into reusable user/client session notes. No marker means
 `reuse`, not evidence of fresh password entry. Required actions and auth-owned
 ACTIVE eligibility must already have passed before proof creation.
+This rule applies to banking login proof only. The distinct migration-only flow
+specified below authenticates an unmapped subject without claiming ACTIVE,
+without using these banking proof endpoints or issuing banking authority.
 
 ## Code digest, keys and limits
 
@@ -131,6 +146,8 @@ contact receipts, verification epoch, exact projection acknowledgement and
 current provider-contact/session observations. Missing integration or uncertain
 dependencies must reject; never fabricate an ACTIVE identity or infer eligibility
 from provider booleans, `sid`, `auth_time`, email equality or mutable attributes.
+An unmapped migration candidate cannot call this banking proof write endpoint;
+its separate migration proof is never accepted here or at banking exchange.
 
 One auth transaction reserves unique `(issuer, code_digest)`, compares the full
 canonical payload and requester-scoped command hash, and writes its immutable
@@ -239,7 +256,8 @@ outside authentication: provider failure cannot revoke a successful session.
 ## Retention, concurrency and activation gates
 
 Retain proof, command replay and event metadata for seven days; notification
-recipient snapshots are erased after 24 hours. Unexpired access tokens must have
+recipient snapshots logically expire at 24 hours and are physically purged under
+the cadence/outage rules below. Unexpired access tokens must have
 at most a 900-second lifetime before activation, so recipient expiry cannot
 readdress a still-valid first exchange. Keep minimal outbox event tombstones
 through every accepted token/replay lifetime. Exact expired writes/lookups reject
@@ -247,8 +265,7 @@ and never reopen proof. After the seven-day idempotency horizon, original
 requests still fail timestamp bounds; comparison of deliberately reused command
 UUIDs with new payloads is not promised beyond that documented horizon.
 
-Cleanup uses database-time bounded batches, e.g. 100 rows per transaction, without
-removing a referenced in-flight recipient or an unexpired event. Set initial hard
+Cleanup uses database-time bounded batches, e.g. 100 rows per transaction, with the hard recipient deadline and fenced delivery rules in revision 2. Set initial hard
 caps of 100000 retained proofs and 100000 commands, plus a global maximum of 1000
 new proofs/hour; existing exact replay remains readable at capacity. A configured
 trusted-proxy-source budget is an activation gate; arbitrary forwarded headers
@@ -265,21 +282,25 @@ security retesting are required. Pure-JDK fixtures cannot prove these properties
 
 ## Dependency closure and activation gates
 
-The unpublished auth patch has proof domain/application/persistence/configuration
-and route candidates. They are absent from this clean provider slice. A later
-integration needs an exact lease, compatibility review and fresh tests. Do not
-copy old Main, notice lifecycle, migration numbers or test results wholesale.
-Current main owns V6 registration verification; allocate the next unused migration
-against the actual clean lineage and preserve append-only publication semantics.
+The clean PROOF66 slice contains LoginProof, LoginProofStore,
+PostgresLoginProofStore, LoginProofConfiguration and LoginProofRoutes, plus
+V7__sso_login_proofs.sql. It implements disabled storage/transport and shared
+durable admission, not the historical dirty worktree's notice/session integration.
+Main still registers no proof routes. Preserve V6 registration verification and
+this V7 lineage; any later schema extension needs a separately allocated next
+unused append-only migration. Do not copy old Main, notice lifecycle, migration
+numbers or historical test results wholesale.
 
 Required auth closure before positive proof:
 
-- Immutable proof/event storage, requester-command hashes, concurrency constraints,
-  database-time expiry, cleanup, retention and bounded capacity.
-- Directional write/resolve transport, strict bounded JSON, allowlists, generic
-  errors, no-store and lifecycle wiring. A deliberately unavailable eligibility
-  port must return 503 for otherwise valid new writes after wiring; that is
-  future behavior, not today's absent route.
+- PROOF66 supplies immutable proof/event storage, requester-command hashes,
+  concurrency constraints, database-time expiry, bounded cleanup helpers and
+  storage/admission caps. Cleanup scheduling/monitoring remain missing.
+- PROOF66 supplies directional write/resolve configuration, strict bounded JSON,
+  allowlists, generic errors and no-store. An explicitly constructed enabled
+  route uses the actual configuration factory's unavailable eligibility adapter
+  and returns 503 for otherwise valid new writes. Main lifecycle/route wiring
+  remains absent, yielding 404 in the application; positive eligibility is absent.
 - Trusted eligibility authority for issuer/subject, both current contact versions
   and receipts, verification epoch and exact user-projection acknowledgement.
   Provider observations do not certify verification or ACTIVE. Uncertain or
@@ -298,8 +319,7 @@ Required auth closure before positive proof:
 ARMONEY_LOGIN_PROOF_ENABLED names the disabled provider proof opt-in.
 AUTH_LOGIN_PROOF_BRIDGE_ENABLED names the earlier auth transport candidate; it
 is not read or wired by current Main. AUTH_SSO_LOGIN_PROOF_ENABLED remains a
-proposed positive-enforcement gate, also unimplemented here. Final auth flag
-names/ownership require freezing before wiring. No flag supplies missing
+proposed positive-enforcement gate, also unimplemented here. Revision 2 below specifies proposed final flags and budgets. No flag supplies missing
 projection authority. OTP delivery opt-in cannot activate proof or login notices.
 
 Keep provider factories unregistered and every proof/bridge/enforcement gate
@@ -307,21 +327,283 @@ disabled until complete dependency closure, operational bounds, legacy policy,
 real PostgreSQL/pinned-provider/browser acceptance and independent security
 retesting pass on the integrated revision.
 
-## Open agreements for the next auth integration
+## Proposed normative decisions, revision 2
 
-1. Freeze concrete positive EligibilityPort and current provider session/status
-   port: projection ACK/version/epoch representation, contact changes, revocation
-   and unavailable/conflict mapping. Never provide synthetic ACTIVE.
-2. Confirm exact local event lookup signature and session/notice transaction
-   integration against final proof persistence. Retain three signed claims;
-   obtain frozen password time locally without a fourth claim.
-3. Freeze separate transport/positive-enforcement flags, ingress isolation and
-   trusted-proxy capacity budget before registration.
-4. Confirm next migration allocation, recipient-erasure/reference safety and
-   replay/tombstone horizons against the actual clean lineage.
-5. Prove two-instance code/key overlap, refresh and original-token introspection
-   semantics in pinned runtime. Missing proof never downgrades to reuse.
+These replace the earlier open engineering questions. They are proposed
+requirements for the next integration, not implemented behavior or activation
+approval. The current-source boundary above remains unchanged.
 
-These are activation blockers, not authorization to weaken existing password,
-registration, token or session checks. Shared ADR/architecture, CI and deployment
-changes belong to the orchestrator.
+### Projection operation, ACK and epoch authority
+
+Auth owns a monotonically increasing positive 64-bit verification_epoch per
+identity and its issuer/subject mapping. Contact/receipt replacement, suspension,
+migration or a newly observed provider invalidation increments it in the same
+transaction that invalidates banking sessions. Never decrement/reuse an epoch.
+Each contact has an independent positive version. Projection revision is an
+independent positive counter, incremented for every new epoch-bound projection,
+including email-only epoch changes; it is not the phone contact version.
+An email-only change preserves phone_contact_version but advances projection
+revision and epoch. ACTIVE requires both current receipts, enabled local state, an
+unambiguous mapping and an exact durable projection ACK.
+
+Proposed fixed auth-to-user private POST:
+`/v1/internal/verification-projections`, header
+`X-ArMoney-Verification-Projection-Key`, dedicated environment key
+`AUTH_TO_USER_VERIFICATION_PROJECTION_KEY`. Payload:
+
+```text
+operation_id: UUID
+identity_id: UUID
+expected_version: integer >= 0
+version: integer = expected_version + 1
+canonical_phone: canonical UAE phone
+phone_contact_version: positive integer
+verification_epoch: positive 64-bit integer
+payload_hash: 64 lowercase hexadecimal characters
+```
+
+Hash SHA-256 over the four-byte UTF-8 length-prefix format defined above, fields:
+"armoney-verification-projection-v1", operation_id, identity_id,
+expected_version, version, canonical_phone, phone_contact_version,
+verification_epoch; canonical UUIDs
+and decimal integers without leading zero. Exclude the hash itself.
+User transactionally compares expected version and reserves authenticated-writer/
+operation and identity/version uniqueness. Exact retry returns original 200 ACK;
+changed payload or stale/conflicting version returns generic 409.
+ACK fields are operation_id, identity_id, version, verification_epoch,
+phone_contact_version, payload_hash. Auth compares all six with its persisted command; no phone echo
+is needed. Missing/malformed/timeout ACK leaves PROJECTION_PENDING.
+
+Persist command/outbox before remote send, without holding local locks. After
+ACK, lock identity/enrollment and compare current operation, epoch, receipt and
+phone version before acceptance. A superseded successful ACK remains historical
+and cannot activate changed contacts. Retry uses identical operation/bytes across
+restart. expected_version/version refer only to projection revision. For an
+email-only refresh at revision r, send expected_version=r, version=r+1 with
+unchanged phone/version and new epoch. A lost old ACK is resolved by exact retry
+of the old operation before issuing its successor; it can never acknowledge a
+new epoch. expected_version=0 requires no conflicting existing user binding.
+Existing profile registration success cannot substitute for this ACK protocol.
+
+### Provider observation and revocation freshness
+
+Before every proof write, banking token exchange and banking session validation,
+obtain private POST `/realms/armoney/armoney-status` using
+`X-ArMoney-Auth-Status-Key` / `AUTH_TO_SSO_STATUS_KEY`, bound to exact
+issuer/subject/user_session_id. Response username/email/canonical phone,
+enabled/session_active are observations, never receipts/epoch/projection proof.
+No positive cache across requests. Fixed destination, no redirects, two-second
+connect/four-second total exchange-and-body deadline and 12 KiB bound apply.
+Reject duplicate/unknown/wrong-type fields or binding mismatch.
+Migration proof uses the same fresh authenticated subject/session observation,
+but checks its restricted migration command instead of requiring a preexisting
+bank mapping, matching bank contacts or ACTIVE. It grants no banking authority.
+
+Capture database timestamp observation_started_at BEFORE remote I/O (outside the
+transaction), then immutable invocation-local evidence. After all local locks,
+and again at the final application check before COMMIT, database now must be
+within five seconds of observation_started_at, never earlier. Match contacts to
+locked local versions. An expired check aborts without side effects and restarts
+with new observation. This bounds evidence age at the final locked check, not at
+durable commit acknowledgement; COMMIT/fsync/network may take longer.
+Unavailable/uncertain provider yields 503. Disabled/inactive/contact mismatch
+denies generic 409 (401 for banking session), invalidates local eligibility and
+sessions and increments epoch once per newly invalidating state, not per retry.
+Never update/reverify contacts from an observation.
+
+This is bounded freshness, not distributed atomic revocation: a provider change
+after observation may precede durable commit; there is no five-second durable
+commit or revocation guarantee. The next
+protected validation checks fresh status. Local epoch/suspension changes serialize
+with local commits. Zero provider race would need a separately designed provider
+fence/lease protocol; local database locking does not provide it.
+
+### Locked local exchange transaction
+
+Introspection and status precede the local transaction; EligibilityPort performs
+no network I/O. Lock deterministic identity/mapping, enrollment/current receipts/
+projection, then event/dedup/session rows. Re-read database time after locks and
+before commit. Require ACTIVE, exact current epoch, both current receipts,
+matching projection ACK and fresh provider evidence.
+
+Planned application operation:
+`exchangeWithProof(verifiedPrincipal, originalThreeClaims, observation,
+newSessionDigest, sessionExpiry)`. One owning auth transaction performs current
+eligibility, exact issuer/subject/client/user-session/event lookup, frozen
+password-time/recipient/epoch comparison, session digest insertion and notice
+dedup/outbox capture. The proposed resolveForNotice must be transaction-bound or
+internal to this operation; it does not exist in PROOF66. The historical dirty
+candidate's standalone lookup followed by separate session insertion would be
+insufficient and must not be imported.
+
+Malformed/missing required proof, event mismatch, erased recipient or changed
+epoch rolls back session and notice. A valid reuse proof has no event and false
+eligibility; after the same current checks it may create a session without notice.
+After enforcement, local-password sessions lack provider observation and MUST
+fail closed for banking login and validation; they are usable only in the
+restricted migration flow below, never as bank sessions. No provider-less
+fallback is allowed. Session lifetime
+must not exceed its parent provider session or existing configured session bound.
+Dedup issuer/event_id compares complete immutable identity, recipient version/
+digest, epoch and password time; conflicting duplicates roll back. Exact repeated
+exchange may create an allowed new banking session, never another notice.
+SMTP stays outside auth commit; outage does not undo a committed session.
+
+### Erasure, fenced delivery and tombstones
+
+Set recipient_expires_at=database event creation time+24 hours. Never claim/send
+after deadline or extend it by retry. At most eight attempts, 60-second fenced
+leases and a shorter total transport deadline. At expiry, batches of at most 100
+rows mark unsent notices EXPIRED, invalidate fences and erase recipient material
+from event and outbox. Workers check deadline/fence before transport; an already
+started bounded SMTP exchange cannot be unsent. No PENDING/PROCESSING exception
+may postpone erasure eligibility. The 24-hour deadline is hard logical expiry:
+lookup/claim/send deny regardless of cleanup backlog. Physical purge is eventual:
+run 100-row batches every 30 seconds with a healthy-service target of removal
+within five minutes after expiry; alarm when oldest overdue recipient exceeds
+five minutes. During storage/worker outage no physical-purge SLA is promised;
+retain overdue-age monitoring and drain oldest-first on recovery before new
+notice claims. Do not claim bytes are physically erased exactly at 24 hours.
+
+Retain seven-day minimal tombstones with issuer/event ID, opaque identity/binding
+digests, immutable payload hash, epoch/outcome/time bounds, but no recipient/code/
+token. Where recipient equality is needed retain a keyed equality digest using a
+separate retention key, not an enumerable plain email hash. Erased recipients
+cannot be readdressed; a later exchange requiring that event denies.
+Seven-day replay retention never extends code/token validity. Scheduled bounded
+cleanup and aggregate capacity/erasure monitoring are activation prerequisites.
+These rules supersede the earlier draft's unbounded pending-notice retention.
+
+### Explicit dual-proof legacy migration
+
+No link by email/phone equality or mutable attributes. Require fresh existing
+bank-password verification plus fresh validated provider authorization-code
+with a fresh real provider password event, both bound to the same server-created migration session and
+one-time command. Both expire after five minutes and bind exact legacy UUID,
+issuer/subject and command. A banking bearer or provider cookie alone is not fresh
+proof. Never send the legacy password to another service.
+
+Break the bootstrap cycle with a distinct planned migration client
+`armoney-migration`, fixed exact allowlisted callbacks and authorization code+
+S256/state/nonce. It has no armoney-api audience, no banking proof claims and no
+bank token exchange permission. Only its explicit migration required action may
+finish without an existing mapping/ACTIVE; normal banking clients cannot bypass
+their eligibility action. Auth creates a random migration_id and 256-bit opaque
+binding after old-password verification; store only its digest, never accept a
+browser-chosen binding. The provider binds the fresh password event, code and
+server authentication session to that migration command.
+
+Proposed provider-to-auth private endpoints are POST
+`/internal/sso-migration-proofs` and `/internal/sso-migration-proofs/resolve`,
+with distinct `SSO_MIGRATION_PROOF_WRITE_KEY` / `SSO_MIGRATION_PROOF_RESOLVE_KEY`
+and `X-ArMoney-Migration-Proof-Write-Key` / `X-ArMoney-Migration-Proof-Resolve-Key`.
+Apply the same strict wire limits, expiry/idempotency/conflict rules as banking
+proof, adding migration_id and server migration-binding digest to the canonical
+payload/hash. Domain-separate the code tuple with `armoney-migration-code-v1`;
+it cannot resolve as a banking digest. Resolve occurs only after provider code
+validation; bind issuer/subject/client/user-session, migration command and fresh
+password event. It records authentication evidence only: no identity creation,
+ACTIVE, notice eligibility or bank session. An optional migration access token
+has only auth-migration audience, five-minute maximum lifetime and one narrow
+complete-migration purpose. Every banking entry rejects it regardless of claims.
+
+Auth completion consumes the exact local old-password proof and migration
+provider proof once, under the migration command's lock, after both current
+contact receipts and epoch-bound projection ACK. Projection may address the
+already-existing legacy UUID before external mapping is finalized; its ACK
+means only contact projection, never banking eligibility. Thus proof/projection
+can precede mapping while only the final auth transaction grants ACTIVE. All
+new client/required-action/endpoints/credentials remain planned and unregistered.
+
+Require current email and phone receipts in the migration enrollment, canonical
+phone reservation/conflict checks and exact projection ACK. Atomically consume
+both proofs, compare command hash, preserve existing auth UUID, create unique
+external mapping, increment epoch, revoke old sessions and finalize migration.
+Here epoch increment is reserved durably while still migration-pending BEFORE
+issuing the projection command. Finalization uses that exact reserved epoch/ACK,
+not another increment that would invalidate its own ACK. Any intervening change
+invalidates the reserved command and requires a new projection operation.
+Response-loss exact replay returns the original outcome; changed identity/subject/
+payload conflicts. Already mapped subject or another identity's phone blocks;
+never merge/delete identities to bypass constraints. Pending migration retains
+legacy records but grants no banking access after enforcement cutoff. Existing
+sessions cannot bypass cutover.
+
+Recovery for inability to prove old password or control both contacts needs an
+owner-approved recovery policy; no staff override/recovery endpoint is invented.
+Recovery/support policy and timing of legacy cutoff remain product decisions.
+
+### Flags, authenticated writer and budgets
+
+Proposed final gates: AUTH_LOGIN_PROOF_BRIDGE_ENABLED (transport only),
+AUTH_SSO_LOGIN_PROOF_ENABLED (positive auth enforcement),
+ARMONEY_LOGIN_PROOF_ENABLED (provider proof hooks), all false by default with
+strict literal boolean parsing. Positive enforcement requires transport and
+complete production authorities; otherwise startup fails. Transport-only wiring
+uses an unavailable positive eligibility adapter until authority exists.
+Delivery/notices stay independent; factories remain unregistered in this slice.
+
+Map SSO_LOGIN_PROOF_WRITER_ID from authenticated directional credential and server
+configuration, never client body/header identity. At most 16 configured writers;
+current+previous code key only; distinct resolver/write/other credentials.
+Keep transactional global caps 1000 new proofs/hour, 100000 proofs and 100000
+commands across instances. Per authenticated writer: 120 requests/minute, burst
+20, at most 16 concurrent per auth instance. A trusted ingress peer may tighten,
+never increase admission or replace credential identity. Do not maintain unbounded
+attacker-controlled source maps. Global counters are durable, not per process.
+Exact authenticated replay stays readable at storage capacity but obeys transport
+admission. Return generic 429 and Retry-After: 60. No PII/secret/body logging.
+The same writer-wide admission bucket covers banking write AND resolve, migration
+write AND resolve and their retries across auth instances. New banking/migration
+proof writes share the global hourly/storage caps, preventing a second write
+endpoint from bypassing limits. Use durable token-bucket/CAS state for the
+120/minute burst-20 budget, not process-local counters; concurrency 16 is a
+per-instance additional cap. Admit before any provider status fanout, with at
+most one status call per admitted operation and no inline automatic retry.
+Bank exchange/session validation status fanout has its own authenticated ingress
+budget of 120/minute burst20 per bank identity plus global 1000/minute burst100
+across instances; absent/unvalidated identity uses only the global bucket.
+It must not use a browser-supplied identity for accounting. All exhausted budgets
+deny 429 before remote I/O; observation failure never becomes cached success.
+
+### Independent acceptance and feasibility gaps
+
+Require isolated real PostgreSQL/pinned-provider/browser tests and independent
+security retesting for: two instances/restart; projection exact retry/lost ACK,
+stale ACK after contact change and conflicting phone/version; local epoch change
+including email-only epoch advance with unchanged phone version, stale ACK and
+lost-ACK retry across two instances; unmapped legacy UUID bootstrap through the
+migration-only client, dual-proof replay/cross-owner rejection and rejection of
+migration credentials/tokens at every bank/notice endpoint; local epoch change
+during remote call or lock contention; five-second freshness and outages; atomic
+session/event/notice rollback faults; duplicate/conflicting concurrent exchanges;
+recipient deadline under pending/in-flight retry and stale fence; tombstone
+readdress prevention; dual-proof replay/cross-owner binding/already mapped subject;
+all entries and old sessions at cutover; code expiry/key overlap/PKCE/refresh and
+immutable old-token introspection.
+
+Current PROOF66 feasibility: LoginProof.Activation carries independent projection
+revision, explicit projected phone contact version, projection epoch and payload
+hash. It does not equate revision with phone version. Its transaction-bound
+EligibilityPort still has no trusted positive production supplier; the factory
+fails unavailable. No positive projection implementation exists in this slice.
+LoginProofStore/PostgresLoginProofStore have no resolveForNotice, notice outbox
+or banking-session transaction integration. The local event lookup and atomic
+session/notice operation above therefore remain future application ports.
+Current cleanup unconditionally clears expired event recipient and identity
+snapshots in batches of 100 at the 24-hour recipient deadline, independent of
+notice state; it has no pending-notice deferral. Scheduling, monitoring and any
+future outbox fencing/deadline implementation remain activation dependencies.
+
+Historical dirty-candidate comparison only: its VerificationProjection.Command
+lacked epoch/hash; its Activation equated projection version with phone version;
+its standalone resolveForNotice opened a separate transaction; and its notice
+cleanup could defer erasure for pending delivery. Those are historical candidate
+limitations, not defects present in the clean PROOF66 storage/transport code.
+Do not import them. Positive projection, all-entry eligibility and atomic bank
+session/event/notice capture still require separate leases and fresh acceptance.
+
+No generic agreement remains deferred: these engineering choices are proposed
+normative requirements for orchestrator freeze. Only recovery/support policy and
+legacy cutoff timing require owner product decisions. Shared ADR/architecture,
+CI and deployment remain orchestrator-owned.
