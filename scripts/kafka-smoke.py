@@ -4,6 +4,7 @@ Owns a fresh UUID project and its cleanup. No bank services or financial fixture
 """
 import argparse
 from collections import Counter
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -59,6 +60,23 @@ def safe_docker_failure(args, result, phase, env=None):
     errors = [error for error in ERROR_TYPES if re.search(r'\b' + error + r'\b', output)]
     return (f'Docker failure: phase={phase} operation={operation} subcommand={subcommand} '
             f'principal={principal} node={node} exit={code} errors=' + (','.join(errors) or 'unclassified'))
+
+
+@contextmanager
+def preserving_cleanup(cleanup):
+    try:
+        yield
+    except BaseException:
+        try:
+            cleanup()
+        except BaseException as error:
+            category = ('guard-or-command-failure' if isinstance(error, Failed) else
+                        'bounded-timeout' if isinstance(error, subprocess.TimeoutExpired) else 'unclassified')
+            print('Kafka cleanup also failed: category=' + category + '; primary failure preserved', file=sys.stderr)
+        raise
+    else:
+        # Cleanup failure still fails an otherwise successful acceptance run.
+        cleanup()
 
 
 def guard(project, env, root=ROOT):
@@ -556,6 +574,7 @@ exec /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-broker
                    'no-new-privileges', '--user', '1000:1000', '--tmpfs', '/tmp:rw,size=64m,mode=1777',
                    '--tmpfs', '/etc/kafka/secrets:rw,size=1m,uid=1000,gid=1000,mode=0700',
                    '--tmpfs', '/mnt/shared/config:rw,size=1m,uid=1000,gid=1000,mode=0700',
+                   '--tmpfs', '/var/lib/kafka/data:rw,size=1m,uid=1000,gid=1000,mode=0700',
                    '--entrypoint', 'bash']
         for kind, source, destination, writable in mounts:
             command += ['--mount', f'type={kind},source={source},target={destination}' +
@@ -581,7 +600,10 @@ exec /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-broker
             actual = {(m['Type'], m.get('Name') if m['Type'] == 'volume' else m['Source'],
                        m['Destination'], m['RW']) for m in item['Mounts'] if m['Type'] != 'tmpfs'}
             require(actual == set(mounts) and len(actual) == 3, 'Foreign snapshot helper mount')
-        try:
+        def cleanup_helper():
+            validate()
+            self.docker('rm', '--force', cid)
+        with preserving_cleanup(cleanup_helper):
             validate()
             self.stopped()
             result = self.docker('start', '--attach', cid, timeout=180)
@@ -592,9 +614,6 @@ exec /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-broker
             require(re.fullmatch('[0-9a-f]{64}', output) if mode == 'archive' else
                     output == 'RESTORE_VERIFIED', 'Snapshot helper confirmation missing')
             return output
-        finally:
-            validate()
-            self.docker('rm', '--force', cid)
 
     def cold_restore(self, cluster, commands, uncertain):
         self.stage('cold-copy')
@@ -610,7 +629,7 @@ exec /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-broker
         restored = Smoke('armoney-kafka-test-' + uuid.uuid4().hex,
                          dict(self.env, DOCKER_HOST=HOST), self.root)
         started = time.monotonic()
-        try:
+        with preserving_cleanup(restored.cleanup):
             restored.stage('cold-restore')
             restored.prepare(self.secrets)
             restored.compose('create', *NODES)
@@ -625,8 +644,6 @@ exec /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka-broker
             require(restored.offsets() == watermark, 'Cold restore end-offset mismatch')
             restored.consume('ledger', TOPICS[0], 'ledger-transfer-v1', commands, uncertain)
             print(f'Cold restore verified: nine partition offsets and acknowledged IDs; elapsed={time.monotonic() - started:.3f}s')
-        finally:
-            restored.cleanup()
 
     def cleanup(self):
         if not self.owned:
@@ -654,10 +671,8 @@ def main():
     parser.add_argument('--project', required=True)
     args = parser.parse_args()
     smoke = Smoke(args.project)
-    try:
+    with preserving_cleanup(smoke.cleanup):
         smoke.run()
-    finally:
-        smoke.cleanup()
     print('PASS: isolated Kafka publish/consume, retained restart, one-broker survival, '
           'two-broker ISR refusal, controller re-election/recovery, missing-client and wrong-CA TLS rejection, '
           'storage identity rejection/recovery, principal ACL isolation, cold restore and cleanup')

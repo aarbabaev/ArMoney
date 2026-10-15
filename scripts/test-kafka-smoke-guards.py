@@ -387,6 +387,9 @@ class Guards(unittest.TestCase):
         helper = {}
         foreign = False
         exit_code = 0
+        confirmation = 'unconfirmed'
+        missing_mask = False
+        unexpected_mount = False
         def docker(*args, **kwargs):
             calls.append(args)
             if args[0] == 'create':
@@ -401,13 +404,27 @@ class Guards(unittest.TestCase):
                         {'Type': 'bind', 'Source': str(ROOT / 'infra/kafka'), 'Destination': '/opt/armoney', 'RW': False},
                         {'Type': 'bind', 'Source': str(archive), 'Destination': '/archive', 'RW': True},
                         {'Type': 'volume', 'Name': PROJECT + '_kafka-broker-1-data', 'Destination': '/source', 'RW': False}]})
+                # Model Docker's pinned-image VOLUME declarations: uncovered
+                # destinations create anonymous persistent mounts automatically.
+                tmpfs = {args[n + 1].split(':', 1)[0] for n, value in enumerate(args) if value == '--tmpfs'}
+                declared = {'/etc/kafka/secrets', '/mnt/shared/config', '/var/lib/kafka/data'}
+                self.assertTrue(declared <= tmpfs)
+                self.assertIn('/var/lib/kafka/data:rw,size=1m,uid=1000,gid=1000,mode=0700', args)
+                if missing_mask:
+                    tmpfs.remove('/var/lib/kafka/data')
+                for destination in declared - tmpfs:
+                    helper['Mounts'].append({'Type': 'volume', 'Name': 'anonymous-image-volume',
+                                             'Destination': destination, 'RW': True})
+                if unexpected_mount:
+                    helper['Mounts'].append({'Type': 'volume', 'Name': 'foreign-volume',
+                                             'Destination': '/unexpected', 'RW': True})
                 return subprocess.CompletedProcess(args, 0, cid, '')
             if args[0] == 'inspect' and args[1] == cid:
                 if foreign:
                     helper['Mounts'][2]['Name'] = 'persistent-bank-volume'
                 return subprocess.CompletedProcess(args, 0, json.dumps([helper]), '')
             if args[0] == 'start':
-                return subprocess.CompletedProcess(args, 0, 'e' * 64 if exit_code else 'unconfirmed', '')
+                return subprocess.CompletedProcess(args, 0, 'e' * 64 if exit_code else confirmation, '')
             if args[0] == 'rm':
                 return subprocess.CompletedProcess(args, 0, '', '')
             return fixture.docker(*args, **kwargs)
@@ -427,6 +444,45 @@ class Guards(unittest.TestCase):
         with self.assertRaisesRegex(kafka.Failed, 'did not complete successfully'):
             fixture.smoke.snapshot('archive', 'kafka-broker-1', 'synthetic-cluster', archive, image)
         self.assertIn(('rm', '--force', cid), calls)
+
+        exit_code = 0
+        confirmation = 'e' * 64
+        calls.clear()
+        self.assertEqual('e' * 64, fixture.smoke.snapshot('archive', 'kafka-broker-1',
+                                                       'synthetic-cluster', archive, image))
+        self.assertIn(('rm', '--force', cid), calls)
+        for remove_mask in (True, False):
+            missing_mask, unexpected_mount = remove_mask, not remove_mask
+            calls.clear()
+            with self.subTest(missing_mask=remove_mask), self.assertRaisesRegex(kafka.Failed, 'Foreign snapshot helper mount'):
+                fixture.smoke.snapshot('archive', 'kafka-broker-1', 'synthetic-cluster', archive, image)
+            self.assertFalse(any(call[0] in ('start', 'rm') for call in calls))
+
+    def test_cleanup_failure_preserves_primary_exception_without_exposing_cleanup_details(self):
+        primary = kafka.Failed('Foreign snapshot helper mount')
+        secret = 'synthetic-secret-command-path-and-credentials'
+        def cleanup():
+            raise RuntimeError(secret)
+        with patch('builtins.print') as output, self.assertRaises(kafka.Failed) as failure:
+            with kafka.preserving_cleanup(cleanup):
+                raise primary
+        self.assertIs(primary, failure.exception)
+        output.assert_called_once_with('Kafka cleanup also failed: category=unclassified; primary failure preserved',
+                                       file=sys.stderr)
+        self.assertNotIn(secret, str(output.call_args))
+
+    def test_cleanup_failure_after_success_still_fails_and_success_cleans_once(self):
+        failure = kafka.Failed('synthetic cleanup refusal')
+        def cleanup():
+            raise failure
+        with self.assertRaises(kafka.Failed) as caught:
+            with kafka.preserving_cleanup(cleanup):
+                pass
+        self.assertIs(failure, caught.exception)
+        calls = []
+        with kafka.preserving_cleanup(lambda: calls.append('cleanup')):
+            calls.append('body')
+        self.assertEqual(['body', 'cleanup'], calls)
 
     def test_storage_probe_refuses_live_volume_and_unconfirmed_restore(self):
         for running in (True, False):
