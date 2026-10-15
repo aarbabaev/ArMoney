@@ -125,6 +125,9 @@ public final class PostgresProfiles implements ProfileStore {
         if (operator == null || !operator.matches("[A-Za-z0-9._-]{1,100}") || evidence == null || !evidence.matches("[A-Za-z0-9._:/-]{1,200}"))
             throw new IllegalArgumentException("Operator and evidence references required");
         database.transaction(sql -> {
+            lockRegistration(sql);
+            if (sql.fetchOne("select identity_id from verification_projection_current where identity_id = ?", identity) != null)
+                throw new IllegalStateException("Projected identity requires current authority");
             Placement placed = placement(sql.fetchOne("select * from profile_directory where identity_id = ? for update", identity));
             if (placed == null || !placed.initialized() || !expectedPhone.equals(placed.phone()) || placed.verified())
                 throw new IllegalStateException("Expected pending phone no longer matches");

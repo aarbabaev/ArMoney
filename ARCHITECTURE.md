@@ -1017,6 +1017,42 @@ notification completion. Bounded cleanup needs scheduling and monitoring before
 activation. See [ADR 0033](docs/adr/0033-disabled-login-proof-storage.md) and the
 [planned proof contract](auth-service/LOGIN-PROOF-CONTRACT.md).
 
+## Disabled verification projection plumbing
+
+Auth V8 contains durable verification-projection commands, fenced ACK/retry state
+and keyed identity recovery barriers. User V6 contains projection CAS state,
+immutable operation replay, durable expired-operation tombstones and shared writer
+admission. Projection revision is independent of contact version; new operations
+require increasing epoch and appropriate same/replacement-phone contact versions.
+User atomically synchronizes central phone ownership, existing directory and
+PRIMARY physical phone/verification flags without shard I/O or placement changes.
+Projected identities cannot use the legacy phone-only operator attestation.
+
+The dedicated auth-to-user private POST uses a separate credential, six-field
+hash-bound ACK and strict bounded transport. InternalHttp supports an exact
+server-configured method/path exemption for independently authenticated dedicated
+handlers; ordinary business route checks remain in force. Composed-service wiring
+acceptance is separate from the runtime helper's focused tests.
+
+Main source wiring now constructs projection configuration with false defaults.
+Enabled user configuration pairs the dedicated route with its exact exemption;
+enabled auth configuration constructs a worker, starts it after HTTP runtime and
+closes it on shutdown/error. These flags have not been enabled for deployment.
+Auth's production authority is UNAVAILABLE: no positive identity/
+contact-version/epoch supplier, ACTIVE eligibility, session/notice capture, legacy
+migration or provider activation is supplied. Issues #28/#36/#37 remain partial.
+Bounded cleanup helpers exist; the auth worker runs cleanup ticks only if
+explicitly enabled and started. User cleanup scheduling and operational
+monitoring remain absent. No deployment or runtime erasure result is claimed.
+
+Independent focused QA has passed the populated auth V7-to-V8/user V5-to-V6
+upgrades and combined synthetic user wiring. These are focused checks, not full
+affected-check, linked CI/Compose or deployment completion. Full affected checks,
+remaining real isolated PostgreSQL concurrency acceptance, actual
+handler compatibility, linked disposable smoke tests and independent review
+remain delivery gates. See [ADR 0034](docs/adr/0034-verification-projection.md)
+and the [projection contract](docs/verification-projection-contract.md).
+
 ## Disabled Keycloak provider package
 
 The standalone `sso-service/provider` Java 21 module packages verification
