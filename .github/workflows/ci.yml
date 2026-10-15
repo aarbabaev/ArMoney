@@ -27,6 +27,8 @@ jobs:
           bash scripts/check-local-ci.sh
       - name: Test durable queue, process lifecycle and reporting boundaries
         run: python3 -B -m unittest infra.dispatcher.test_scheduler infra.dispatcher.test_runner infra.dispatcher.test_cli infra.dispatcher.test_github infra.dispatcher.test_intake infra.dispatcher.test_transport -v
+      - name: Test local dashboard observation boundaries
+        run: python3 -B infra/agent-dashboard/test_server.py
   build:
     env:
       JAVA_TOOL_OPTIONS: -Dapi.version=1.44

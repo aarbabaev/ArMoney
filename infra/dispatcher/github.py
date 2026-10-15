@@ -69,7 +69,9 @@ class GitHubSink:
         if not re.fullmatch(r"[1-9][0-9]*", issue):
             return  # Local proof assignments never mutate GitHub.
         status = "Review" if task["stage"] in {"qa", "review"} or event == "completed" else "In Progress"
-        if event == "completed" and task.get("state") != "succeeded":
+        if event == 'preflight_blocked':
+            status = 'Blocked'
+        elif event == "completed" and task.get("state") != "succeeded":
             status = "In Progress" if (result or {}).get("status") == "request_changes" else "Blocked"
         # Never map agent approve to Done/Awaiting merge: required CI and verified merge are external gates.
         key = f"{task['task_id']}:{task['attempt']}:{event}"

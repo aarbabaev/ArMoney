@@ -9,6 +9,14 @@ STAGES = {'implement', 'qa', 'review', 'awaiting_merge', 'awaiting_deployment', 
 SUCCESS = {'implement': 'ready', 'qa': 'ready', 'review': 'approve'}
 
 
+def usable_evidence(value):
+    return isinstance(value, list) and bool(value) and all(isinstance(item, str) and bool(item.strip()) for item in value)
+
+
+def same_pipeline(first, second):
+    return first['issue'] == second['issue'] and first.get('pipeline_id', first['issue']) == second.get('pipeline_id', second['issue'])
+
+
 class Store:
     def __init__(self, db_path):
         self.db_path = str(db_path)
@@ -70,6 +78,10 @@ class Store:
                 raise ValueError('missing ' + key)
         if spec['stage'] not in SUCCESS:
             raise ValueError('only executable stages can be enqueued')
+        pipeline = spec.get('pipeline_id', spec['issue'])
+        if not isinstance(pipeline, str) or not pipeline.strip() or len(pipeline) > 120:
+            raise ValueError('invalid pipeline_id')
+        spec['pipeline_id'] = pipeline
         cwd = Path(spec['cwd'])
         if not cwd.is_absolute() or not cwd.is_dir():
             raise ValueError('cwd must be an existing absolute local directory')
@@ -115,11 +127,23 @@ class Store:
         results = []
         with self._connect() as db:
             db.execute('BEGIN IMMEDIATE')
+            all_specs = {r['id']: json.loads(r['spec']) for r in db.execute('SELECT id,spec FROM tasks')}
+            all_specs.update({spec['task_id']: spec for spec in normalized})
+            incoming_ids = {spec['task_id'] for spec in normalized}
+            for task in all_specs.values():
+                if task['task_id'] not in incoming_ids and not incoming_ids.intersection(task.get('dependencies', [])):
+                    continue
+                for dependency in task.get('dependencies', []):
+                    prior = all_specs.get(dependency)
+                    if prior is not None and not same_pipeline(task, prior):
+                        raise ValueError('dependency crosses issue or pipeline')
             for spec in normalized:
                 old = db.execute('SELECT spec FROM tasks WHERE id=?', (spec['task_id'],)).fetchone()
                 encoded = json.dumps(spec, sort_keys=True)
                 if old:
-                    if old['spec'] != encoded:
+                    old_spec = json.loads(old['spec'])
+                    old_spec.setdefault('pipeline_id', old_spec['issue'])
+                    if json.dumps(old_spec, sort_keys=True) != encoded:
                         raise ValueError('task ID already exists with different payload')
                     results.append(False)
                 else:
@@ -130,6 +154,7 @@ class Store:
     @staticmethod
     def _row(row):
         value = json.loads(row['spec'])
+        value.setdefault('pipeline_id', value['issue'])
         value.update(state=row['state'], attempt=row['attempt'], result=json.loads(row['result']) if row['result'] else None)
         return value
 
@@ -158,12 +183,12 @@ class Store:
                 if task['state'] != 'queued' or task['attempt'] >= int(task.get('max_attempts', 3)):
                     continue
                 dependencies = [index.get(d) for d in task['dependencies']]
-                if any(d is None or d['state'] != 'succeeded' for d in dependencies):
+                if any(d is None or d['state'] != 'succeeded' or not same_pipeline(task, d) for d in dependencies):
                     continue
-                earlier = [t for t in tasks if t['issue'] == task['issue'] and t['stage'] == 'implement']
+                earlier = [t for t in tasks if same_pipeline(t, task) and t['stage'] == 'implement']
                 if task['stage'] in ('qa', 'review') and (not earlier or any(t['state'] != 'succeeded' or t['agent_id'] == task['agent_id'] for t in earlier)):
                     continue
-                if task['stage'] == 'review' and not any(t['issue'] == task['issue'] and t['stage'] == 'qa' and t['state'] == 'succeeded' and t['agent_id'] != task['agent_id'] for t in tasks):
+                if task['stage'] == 'review' and not any(same_pipeline(t, task) and t['stage'] == 'qa' and t['state'] == 'succeeded' and t['agent_id'] != task['agent_id'] for t in tasks):
                     continue
                 if task['heavy'] and heavy <= 0:
                     continue
@@ -189,38 +214,53 @@ class Store:
             status = result.get('status')
             if status not in ('ready', 'blocked', 'request_changes', 'approve'):
                 raise ValueError('invalid result status')
-            success = status == SUCCESS[task['stage']] and bool(result.get('evidence'))
-            if success and task['stage'] in ('qa', 'review'):
+            evidenced = usable_evidence(result.get('evidence'))
+            success = status == SUCCESS[task['stage']] and evidenced
+            finding = status == 'request_changes' and evidenced
+            provenance_matches = True
+            if (success or finding) and task['stage'] in ('qa', 'review'):
                 prior_tasks = [self._row(r) for r in db.execute('SELECT * FROM tasks')]
                 required_stages = ('implement',) if task['stage'] == 'qa' else ('implement', 'qa')
                 for stage in required_stages:
-                    prior = [p for p in prior_tasks if p['issue'] == task['issue'] and p['stage'] == stage and p['state'] == 'succeeded']
+                    prior = [p for p in prior_tasks if same_pipeline(p, task) and p['stage'] == stage and p['state'] == 'succeeded']
                     if not prior or any(not p['result'].get('head_sha') or not p['result'].get('tree_sha') or p['result']['head_sha'] != result.get('head_sha') or p['result']['tree_sha'] != result.get('tree_sha') for p in prior):
                         success = False
+                        provenance_matches = False
                         result = dict(result, reason='revision or tree fingerprint does not match independent prerequisites')
             state = 'succeeded' if success else 'blocked'
             result = dict(result)
             if not success and status in ('ready', 'approve'):
                 result['reported_status'] = status
                 result['status'] = 'blocked'
-            result['next_stage'] = {'implement': 'qa', 'qa': 'review', 'review': 'awaiting_merge'}[task['stage']] if success else 'implement'
+            if status == 'request_changes' and not evidenced:
+                result.update(status='blocked', reported_status=status, error_code='FINDING_EVIDENCE_MISSING')
+            if finding and not provenance_matches:
+                result.update(status='blocked', reported_status=status, error_code='FINDING_REVISION_MISMATCH')
+            actionable = not success and status == 'request_changes' and 'reported_status' not in result
+            result['next_stage'] = {'implement': 'qa', 'qa': 'review', 'review': 'awaiting_merge'}[task['stage']] if success else ('implement' if actionable else task['stage'])
             if not success:
-                result['route_to'] = 'implementation_owner'
+                result['route_to'] = 'implementation_owner' if actionable else 'operator'
                 # Only returned failures may be retried. Rejected success claims
                 # (revision/evidence fencing) remain blocked for inspection.
-                result['auto_remediation'] = 'reported_status' not in result
-                if task['stage'] in ('qa', 'review'):
+                result['auto_remediation'] = actionable
+                if actionable and task['stage'] in ('qa', 'review'):
                     for candidate in db.execute('SELECT * FROM tasks').fetchall():
                         prior = self._row(candidate)
-                        if prior['issue'] == task['issue'] and prior['stage'] == 'implement' and prior['state'] == 'succeeded':
+                        if same_pipeline(prior, task) and prior['stage'] == 'implement' and prior['state'] == 'succeeded':
                             db.execute("UPDATE tasks SET state='blocked',result=? WHERE id=?", (json.dumps({'status': 'request_changes', 'finding_task': task_id, 'finding': result, 'auto_remediation': result['auto_remediation'], 'next_stage': 'implement'}), prior['task_id']))
             if success and task['stage'] == 'implement' and attempt > 1:
                 for candidate in db.execute('SELECT * FROM tasks').fetchall():
                     prior = self._row(candidate)
-                    if prior['issue'] == task['issue'] and prior['stage'] in ('qa', 'review') and prior['state'] == 'succeeded':
-                        db.execute("UPDATE tasks SET state='blocked',result=? WHERE id=?", (json.dumps({'status': 'blocked', 'auto_remediation': True, 'reason': 'implementation retried; independent verification must be resumed'}), prior['task_id']))
+                    if same_pipeline(prior, task) and prior['stage'] in ('qa', 'review') and prior['state'] == 'succeeded':
+                        db.execute("UPDATE tasks SET state='blocked',result=? WHERE id=?", (json.dumps({'status': 'blocked', 'auto_remediation': True, 'verification_invalidated': True, 'reason': 'implementation retried; independent verification must be resumed'}), prior['task_id']))
             db.execute('UPDATE tasks SET state=?,result=? WHERE id=?', (state, json.dumps(result), task_id))
         return True
+
+    def block_preflight(self, task_id, result):
+        """Quarantine an unsupported queued assignment without consuming an attempt."""
+        with self._connect() as db:
+            return db.execute("UPDATE tasks SET state='blocked',result=? WHERE id=? AND state='queued'",
+                              (json.dumps(dict(result, auto_remediation=False, route_to='operator')), task_id)).rowcount
 
     def route_remediation(self):
         """Requeue only completed failures within the authorized attempt budget.
@@ -234,10 +274,16 @@ class Store:
             for task in tasks:
                 if (task['state'] != 'blocked' or not task['result']
                         or task['result'].get('auto_remediation') is not True
+                        or (task['result'].get('status') != 'request_changes' and task['result'].get('verification_invalidated') is not True)
+                        or (task['stage'] == 'implement' and 'finding' in task['result'] and task['result']['finding'].get('status') != 'request_changes')
                         or task['attempt'] >= task['max_attempts']):
                     continue
-                owners = [p for p in tasks if p['issue'] == task['issue'] and p['stage'] == 'implement']
-                if any(p['state'] == 'interrupted' for p in tasks if p['issue'] == task['issue']):
+                owners = [p for p in tasks if same_pipeline(p, task) and p['stage'] == 'implement']
+                if task['result'].get('status') == 'request_changes':
+                    finding = task['result'].get('finding', task['result'])
+                    if not isinstance(finding, dict) or not usable_evidence(finding.get('evidence')):
+                        continue
+                if any(p['state'] == 'interrupted' for p in tasks if same_pipeline(p, task)):
                     continue
                 if task['stage'] != 'implement' and (not owners or any(p['state'] != 'succeeded' for p in owners)):
                     continue

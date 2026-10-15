@@ -10,7 +10,7 @@ import sys
 
 from .store import Store
 from .scheduler import Scheduler
-from .runner import CodexRunner
+from .runner import CodexRunner, PreflightError
 from .github import GitHubSink
 from .intake import import_project
 
@@ -92,6 +92,9 @@ def main(argv=None):
     run.add_argument("--external-heavy", type=int, choices=range(3), default=2)
     run.add_argument("--timeout", type=int, default=3600)
     sub.add_parser("status")
+    preflight = sub.add_parser('preflight', help='Read-only queued/blocked assignment diagnostics; no claims or child launch')
+    preflight.add_argument('--repository', required=True)
+    preflight.add_argument('--codex', required=True)
     intake = sub.add_parser('import-project', help='One Project snapshot filtered by an operator-approved local catalog; does not run tasks')
     intake.add_argument('--catalog', required=True)
     resume = sub.add_parser("resume")
@@ -120,6 +123,21 @@ def main(argv=None):
         return 0
     if args.command == 'import-project':
         print(json.dumps(import_project(args.catalog, store, GitHubSink(state), state), indent=2))
+        return 0
+    if args.command == 'preflight':
+        runner = CodexRunner(args.codex, args.repository)
+        diagnostics = []
+        for task in store.snapshot():
+            if task['state'] not in {'queued', 'blocked'}:
+                continue
+            diagnostic = {'task_id': task['task_id']}
+            try:
+                runner.preflight(task)
+                diagnostic['preflight'] = 'supported'
+            except PreflightError as exc:
+                diagnostic.update(preflight='blocked', error_code=exc.code, summary=str(exc))
+            diagnostics.append(diagnostic)
+        print(json.dumps({'assignments': diagnostics, 'execution': 'not_started'}, indent=2))
         return 0
     if args.command == "resume":
         store.resume(args.task_id)
@@ -167,6 +185,10 @@ def main(argv=None):
     # Do not expose prompts, profile data, raw model messages or tokens in status.
     rows = [{k: task.get(k) for k in ("task_id", "issue", "role", "agent_id", "stage", "state", "attempt")}
             for task in store.snapshot()]
+    for row, task in zip(rows, store.snapshot()):
+        code = (task.get('result') or {}).get('error_code')
+        if isinstance(code, str) and re.fullmatch(r'[A-Z_]{1,64}', code):
+            row['error_code'] = code
     report = {"tasks": rows, "transition_failures": store.event_failures()}
     if args.command == 'run' and sink:
         report['pending_github_deliveries'] = sink.pending()
@@ -177,6 +199,9 @@ def main(argv=None):
 if __name__ == "__main__":
     try:
         sys.exit(main())
+    except PreflightError as error:
+        print(json.dumps(error.result()), file=sys.stderr)
+        sys.exit(1)
     except Exception as error:
         print("Dispatcher stopped: " + type(error).__name__ + ". Queue retained for inspection.", file=sys.stderr)
         sys.exit(1)

@@ -51,14 +51,49 @@ one to ten (default three). QA/review require `read_only: true`, empty writable
 paths and an eligible independent role. Review depends on successful independent
 QA. Running and interrupted tasks reserve overlapping cwd trees and path leases.
 
+An optional nonblank `pipeline_id` of at most 120 characters identifies an
+explicit generation within an issue. Omitting it preserves the legacy issue-wide
+group. Owner prerequisites, independent validation, findings, source fingerprints
+and remediation are scoped to the same issue and pipeline. A new approved
+generation uses new task and runtime identities; existing task IDs cannot be
+reused with changed payloads. Known dependency edges must stay within that issue
+and pipeline; a manifest containing a crossing edge is rejected atomically.
+Unknown dependencies remain queued until an explicitly compatible prerequisite
+is supplied. Historical failed generations do not block a distinct approved
+generation. Existing queue history is preserved; pipeline migration is a separate
+operator reconciliation step, not an automatic relabeling or replay.
+
+Before claiming any queued assignment, the scheduler verifies its directory,
+Git common-directory identity and role file. Unsupported assignments become
+Blocked without consuming an attempt or launching Codex. Independent clones
+are rejected even if they contain the same commits; use a worktree of the
+configured repository. Diagnostic codes include `REPOSITORY_MISMATCH`,
+`ROLE_UNAVAILABLE` and `ASSIGNMENT_CWD_UNAVAILABLE`; messages contain no raw
+Git output, paths, tokens or model text. This preflight does not prove Codex
+authentication, available capacity or sandbox permission to execute a test.
+
+Inspect queued/blocked assignments without claiming or running them:
+
+```powershell
+python -B -m infra.dispatcher.cli --state C:\ArMoneyDispatcherState preflight --repository C:\src\arman-bank --codex C:\tools\codex.exe
+```
+
 The runner returns structured `ready`, `blocked`, `request_changes` or `approve`
 results. Exit code zero alone is insufficient. Successful evidence includes the
 actual Git `head_sha` and `tree_sha` fingerprint; QA/review must match the
 implementation revision and tree, and review must also match QA. Findings route
-back to the original authorized implementation assignment. Completed failures
-and `request_changes` can automatically retry within the existing `max_attempts`;
+only when their HEAD/tree match those same successful pipeline prerequisites;
+missing or stale finding fingerprints remain blocked for operator reconciliation
+without invalidating owners. Actionable findings route back to the original
+authorized implementation assignment. Only `request_changes`
+with reproduction evidence can automatically retry within the existing `max_attempts`;
 repaired implementation is followed by fresh QA and review. Rejected success
 claims, stale evidence and interrupted workers remain blocked for inspection.
+`blocked` represents unavailable dependencies, capacity or test infrastructure,
+including read-only sandbox denial of TEMP/build writes. It never invalidates a
+successful owner result or automatically retries the owner. An operator resolves
+the dependency and explicitly resumes that same blocked validation assignment.
+Read-only validation stays read-only; no write exception is granted to make tests pass.
 Retries invalidate older successful validation.
 Approval records local `next_stage: awaiting_merge`; the hosted board stays in
 Review while CI and externally verified merge gates remain unresolved. Only
@@ -85,7 +120,7 @@ means its child stopped. No automatic replay occurs.
 `Scheduler(store, runner, limits=None, transition=None).run()` acquires the
 queue's exclusive OS leader lock and awaits completions without an idle polling
 loop. An optional async transition callback receives `(event, task, result)` for
-started/completed events. Callback failures persist in `event_failures()` and do
+started/completed/preflight_blocked events. Callback failures persist in `event_failures()` and do
 not discard claims or completion evidence. A leader crash releases the OS lock
 but does not release interrupted task leases. Do not delete the leader lock file.
 
