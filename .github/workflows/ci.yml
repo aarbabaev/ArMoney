@@ -63,6 +63,7 @@ jobs:
           python3 -B scripts/test-ci-impact.py
           python3 -B scripts/test-affected-gradle.py
           python3 -B scripts/test-ci-workflow.py
+          python3 -B scripts/test-local-ci-guards.py
   dispatcher:
     needs: impact
     if: always() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)

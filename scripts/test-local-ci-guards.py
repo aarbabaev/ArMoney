@@ -24,6 +24,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 BASH = shutil.which("bash")
+IMPACT_FLAGS = frozenset(('dispatcher', 'build', 'android', 'web', 'assistant', 'kafka',
+                          'sms', 'baseline', 'bank_smoke', 'assistant_smoke', 'sharding',
+                          'replication', 'sso'))
 
 
 def workflow_steps():
@@ -53,19 +56,27 @@ def workflow_steps():
     return result
 
 
-def evaluate_cleanup_condition(condition, isolation, failure, sms_project=""):
+def evaluate_cleanup_condition(condition, isolation, failure, sms_project="", impact=None):
     if condition is None:
         raise AssertionError("Docker finalizer must explicitly gate isolation")
     expression = condition.removeprefix("${{").removesuffix("}}").strip()
     match = re.fullmatch(
         r"(always|failure)\(\)\s*&&\s*steps\.isolation\.outcome\s*==\s*'success'"
-        r"(\s*&&\s*env\.SMS_TEST_PROJECT\s*!=\s*'')?",
+        r"(\s*&&\s*env\.SMS_TEST_PROJECT\s*!=\s*'')?"
+        r"(?:\s*&&\s*needs\.impact\.outputs\.([a-z_]+)\s*==\s*'true')?",
         expression,
     )
     if not match:
         raise AssertionError(f"Unrecognized or unsafe cleanup gate: {condition}")
+    selected = True  # Original isolation-only grammar remains supported.
+    flag = match.group(3)
+    if flag is not None:
+        if (flag not in IMPACT_FLAGS or not isinstance(impact, dict)
+                or impact.get(flag) not in ('true', 'false')):
+            raise AssertionError('Missing or invalid known component selection')
+        selected = impact[flag] == 'true'
     return (isolation == "success" and (match.group(1) == "always" or failure)
-            and (match.group(2) is None or sms_project != ""))
+            and (match.group(2) is None or sms_project != "") and selected)
 
 
 class LocalCiGuards(unittest.TestCase):
@@ -76,6 +87,7 @@ class LocalCiGuards(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.calls = self.root / "docker-calls"
+        self.impact = {flag: 'true' for flag in IMPACT_FLAGS}
         self.env = {
             "PATH": str(self.bin) + ":/usr/bin:/bin",
             "HOME": str(self.root),
@@ -121,7 +133,7 @@ class LocalCiGuards(unittest.TestCase):
     def run_finalizers(self, isolation, failure):
         for _, condition, body in self.finalizers():
             if evaluate_cleanup_condition(condition, isolation, failure,
-                                          self.env.get("SMS_TEST_PROJECT", "")):
+                                          self.env.get("SMS_TEST_PROJECT", ""), self.impact):
                 result = self.run_shell(body)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -180,7 +192,7 @@ class LocalCiGuards(unittest.TestCase):
                         self.env["SMS_TEST_PROJECT"] = sms_project
                         if self.calls.exists():
                             self.calls.unlink()
-                        allowed = evaluate_cleanup_condition(condition, isolation, failure, sms_project)
+                        allowed = evaluate_cleanup_condition(condition, isolation, failure, sms_project, self.impact)
                         self.assertEqual(allowed, isolation == "success" and sms_project != "")
                         if allowed:
                             result = self.run_shell(body)
@@ -193,7 +205,7 @@ class LocalCiGuards(unittest.TestCase):
         for project in ("arman-bank", "armoney-ci-buildmachine", "armoney-sms-test-123", "armoney-sms-test-" + "a" * 32 + ";echo unsafe"):
             with self.subTest(project=project):
                 self.env["SMS_TEST_PROJECT"] = project
-                self.assertTrue(evaluate_cleanup_condition(condition, "success", True, project))
+                self.assertTrue(evaluate_cleanup_condition(condition, "success", True, project, self.impact))
                 result = self.run_shell(body)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(self.docker_calls(), [])
@@ -201,10 +213,38 @@ class LocalCiGuards(unittest.TestCase):
     def test_unknown_or_unsafe_cleanup_conditions_fail_closed(self):
         for condition in (None, "always()", "always() && env.SMS_TEST_PROJECT != ''",
                           "always() || steps.isolation.outcome == 'success'",
-                          "always() && steps.isolation.outcome == 'success' || env.SMS_TEST_PROJECT != ''"):
+                          "always() && steps.isolation.outcome == 'success' || env.SMS_TEST_PROJECT != ''",
+                          "always() && steps.isolation.outcome == 'success' && needs.impact.outputs.unknown == 'true'",
+                          "always() && steps.isolation.outcome == 'success' && needs.impact.outputs.sms == 'false'",
+                          "always() && steps.isolation.outcome == 'success' || needs.impact.outputs.sms == 'true'",
+                          "always() && needs.impact.outputs.sms == 'true'"):
             with self.subTest(condition=condition):
                 with self.assertRaises(AssertionError):
-                    evaluate_cleanup_condition(condition, "success", True, self.env["SMS_TEST_PROJECT"])
+                    evaluate_cleanup_condition(condition, "success", True, self.env["SMS_TEST_PROJECT"], self.impact)
+
+    def test_unselected_components_never_run_actual_cleanup_bodies(self):
+        self.impact = {flag:'false' for flag in IMPACT_FLAGS}
+        self.run_finalizers('success', True)
+        self.assertEqual(self.docker_calls(), [])
+
+    def test_selected_components_cannot_cleanup_after_rejected_guard(self):
+        self.env['DOCKER_HOST'] = 'unix:///var/run/docker.sock'
+        result = self.run_shell('bash ' + shlex.quote(str(ROOT/'scripts/check-local-ci.sh')))
+        self.assertNotEqual(result.returncode, 0)
+        self.run_finalizers('failure', True)
+        self.assertEqual(self.docker_calls(), [])
+
+    def test_component_flag_values_are_exact_strings_and_fail_closed(self):
+        condition, _ = self.sms_finalizer()
+        for impact in (None, {}, {'sms':True}, {'sms':'TRUE'}, {'sms':1}, {'sms':'$(touch injected)'}):
+            with self.subTest(impact=impact):
+                with self.assertRaises(AssertionError):
+                    evaluate_cleanup_condition(condition, 'success', True, self.env['SMS_TEST_PROJECT'], impact)
+        for flag in ('true','false'):
+            for isolation in ('success','failure','skipped','cancelled'):
+                with self.subTest(flag=flag,isolation=isolation):
+                    allowed=evaluate_cleanup_condition(condition,isolation,True,self.env['SMS_TEST_PROJECT'],{'sms':flag})
+                    self.assertEqual(allowed,flag=='true' and isolation=='success')
 
     def prepare_entrypoint(self):
         runner = self.root / "runner"
