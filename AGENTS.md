@@ -4,7 +4,7 @@
 - Start Android emulators or emulator instrumentation only after an explicit owner request. Routine CI runs APK assembly, JVM unit tests and lint without an emulator.
 - Target main for this integration PR and all subsequent PRs. Start future feature branches from the latest main unless the user explicitly specifies another starting point. Do not use bootstrap/m1-p2p-backend as an ongoing integration branch. Never push directly to main or merge without explicit owner authorization.
 - Keep the change minimal and describe limitations honestly.
-- Run ./gradlew check and the Compose smoke test for runtime/schema changes.
+- Run affected module `check` tasks and linked Compose acceptance for runtime/schema changes under `docs/affected-ci.md`. Owner instruction (2026-10-15) replaces unconditional full checks; shared/unknown changes and shared build tooling and explicit release runs retain the full suite.
 - Do not report completion while required CI is failing or pending. Report blocked checks explicitly.
 - Do not weaken tests, skip Docker tests, or introduce mock financial success to obtain green CI.
 - Do not commit secrets, .env, production data, tokens, or generated build output.
