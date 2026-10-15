@@ -1,0 +1,12 @@
+{
+  "/v1": {
+    "target": "https://localhost:8443",
+    "secure": true,
+    "changeOrigin": false
+  },
+  "/sso": {
+    "target": "https://localhost:8443",
+    "secure": true,
+    "changeOrigin": false
+  }
+}

@@ -237,6 +237,8 @@ See [local administration](docs/sso-and-ios.md#optional-host-only-administration
 flowchart LR
     I["ArMoney SwiftUI / iPhone"] --> E["HTTPS edge :8443"]
     AND["ArMoney Kotlin / Android"] --> E
+    WEB["ArMoney Angular / Browser"] --> E
+    E -->|"Optional web overlay: SPA assets"| STATIC["Web static host"]
     B["System authentication browser"] --> E
     OP["Operator on Docker host"] -.-> ADM["Optional loopback TLS :9443"]
     ADM -.->|"Admin / master realm only"| K
@@ -287,10 +289,60 @@ from JVM contrast checks and successful compilation.
 The Android public client uses its own exact callback; both native clients map the
 same issuer/subject to one bank identity. No new financial service is introduced.
 
+## Browser client
+
+The Angular project lives in web/. Its source and acceptance are tracked in
+[issue #44](https://github.com/aarbabaev/ArMoney/issues/44), [web guide](docs/web-client.md)
+and [ADR 0021](docs/adr/0021-browser-spa-session.md). Browser source is implemented;
+this map does not claim deployment or completed end-to-end acceptance.
+
+The optional web overlay routes SPA assets through the existing HTTPS edge;
+/v1 and allowlisted Keycloak paths remain on that same origin. Browser tokens are
+transient memory-only; a new SSO flow is required after reload. The armoney-web
+public client uses code/S256 and exact local HTTPS callbacks. Auth requires matching
+web client_id/azp and API audience; issuer/subject still map to the existing bank
+identity. Native callbacks and absent-azp compatibility are preserved.
+
+```mermaid
+flowchart LR
+    U["Browser user"] --> SPA["Angular SPA: transient bank session"]
+    SPA -->|"Code / S256 / exact state callback"| K["Keycloak via HTTPS edge"]
+    SPA -->|"Bearer / same-origin /v1"| G["Gateway: revalidate session"]
+    G --> A["Auth: issuer and subject mapping"]
+    G --> B["Owner-scoped banking APIs"]
+    SPA --> D[("Origin / verified owner local data")]
+    D --> P["Immutable unresolved command and original key"]
+    D --> C["Demo cards only: no payment credentials"]
+    G -->|"Protected stateless message"| AI["Read-only banking assistant"]
+```
+
+Browser assistant turns use the protected POST /v1/assistant/messages contract with
+current session authorization, a 40-second timeout and no automatic retry. Questions
+and answers remain in memory; logout/expiry clears them and late responses cannot
+cross sessions. Exact financial facts, citations and provenance are validated before
+display. Successful response fixtures establish client behavior; real unavailable-service
+acceptance is exercised in disposable SSO CI. This does not claim a browser turn
+against the deployed model. Web hosting removes Caddy's unneeded low-port file
+capability while retaining a read-only root filesystem and dropped capabilities.
+
+Balances and payment amounts use lossless int64 JSON with integer fils in the
+browser; JavaScript floating-point numbers cannot preserve the full wire range.
+Uncertain transfer commands are durable before submission and isolated by verified
+owner with cross-tab coordination. Logout/expiry never convert uncertainty into
+success or authorize a replacement key. Browser storage is not Keystore-equivalent
+and clearing/eviction can destroy recovery evidence. Demo card state is browser-local;
+no issuing, delivery or cross-device synchronization is implemented.
+
+Current main Android includes signed cursor pages. The preserved local Android
+snapshot also includes account details and demo cards absent from that main source;
+the browser audit covers both explicitly. Legacy newest-100 routes remain bounded.
+The AI service belongs to separate issue #43; no invented assistant gateway route,
+policy answer or live financial response is represented as implemented.
+
 ## API and authentication
 
 Contracts are in each service's `src/main/resources/openapi.yaml`.
-`/openapi.yaml` serves YAML, not Swagger UI. `/` is not a user interface.
+`/openapi.yaml` serves YAML, not Swagger UI. Gateway `/` is not a user interface; the optional web overlay serves the browser SPA at the HTTPS edge.
 
 | Access | Method and path | Purpose |
 | --- | --- | --- |
@@ -683,6 +735,7 @@ flowchart LR
     O --> A["auth_owner"]
     O --> IOS["ios_owner"]
     O --> ANDROID["android_owner"]
+    O --> WEBOWNER["web_owner"]
     O --> SSO["sso_owner"]
     O --> U["user_owner"]
     O --> W["wallet_owner"]
@@ -707,6 +760,7 @@ flowchart LR
 | gateway_owner | app-gateway: routes, public contract, identity |
 | auth_owner | auth-service: credentials, sessions, limits |
 | android_owner | android: native Kotlin/Compose client, browser SSO, gateway contracts and secure recovery |
+| web_owner | web: Angular browser client, dedicated browser SSO, exact money, owner-scoped local recovery and tests |
 | ios_owner | ios: native SwiftUI client, gateway integration, browser authentication and tests |
 | sso_owner | sso-service: Keycloak/OIDC configuration; auth SSO adapter files only under an explicitly transferred lease |
 | user_owner | user-service: profiles, immutable phone claims, recipient lookup and attestation |
@@ -820,7 +874,8 @@ flowchart LR
 | Ledger smoke in CI | Private posting with synthetic funds |
 | `scripts/p2p-smoke.py` in disposable CI | Phone resolution, public P2P, duplicate/concurrent spending, outages, post-commit recovery, notification isolation and journal reconciliation |
 | Android CI | Debug APK, lint and JVM tests; emulator checks only on explicit owner request |
-| SSO browser smoke in CI | Disposable Keycloak authorization code/PKCE and gateway exchange for iOS and Android |
+| Angular CI | Production build, unit/client contracts, browser fixtures and dependency audit; real backend acceptance in the disposable SSO job |
+| SSO browser smoke in CI | Disposable Keycloak authorization code/PKCE and gateway exchange for iOS, Android and web; real Angular gateway smoke |
 | Kafka offline guards and snapshot fixtures | Isolation/parser gates and real Bash operations on synthetic files; no broker durability evidence |
 | Separate Kafka CI acceptance job | Required isolated cluster publish/consume, ACL/TLS denial, outages, retained restart and cold restore; real-cluster execution remains pending |
 | iOS validation | Paused by owner; existing script requires Mac/Xcode when resumed |
@@ -833,7 +888,7 @@ available. The duplicate main-push build is disabled. See [affected CI](docs/aff
 and [ADR 0028](docs/adr/0028-affected-ci.md) for the selection and fixture limits.
 
 
-GitHub Actions schedules backend and Android work on disposable Linux Docker runners
+GitHub Actions schedules backend, Android and Angular work on disposable Linux Docker runners
 labelled `armoney-local`. Up to two allowlisted slots run in separate Windows controller
 processes. Each slot registers one job at a time, then removes that job's runner,
 workspace and dedicated Docker daemon storage. Slot 1 preserves the original project

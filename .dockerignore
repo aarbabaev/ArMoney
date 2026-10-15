@@ -13,3 +13,4 @@ android/
 local-certs/
 compose.override.yaml
 
+web/

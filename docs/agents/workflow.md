@@ -52,6 +52,7 @@ Format reference: [official OpenAI documentation](https://learn.chatgpt.com/docs
 | auth_owner | auth-service/ | Credentials, sessions and revocation |
 | sso_owner | sso-service/; explicitly leased auth adapter files | Keycloak/OIDC and identity mapping |
 | android_owner | android/ | Native Kotlin/Compose app, gateway integration, browser authentication and secure local recovery |
+| web_owner | web/ | Angular browser client, dedicated browser SSO and durable command recovery |
 | ios_owner | ios/ | Native SwiftUI app, browser authentication and secure session storage |
 | user_owner | user-service/ | Owner-scoped profiles |
 | wallet_owner | wallet-service/ | Wallet lifecycle and provisioning |
@@ -179,3 +180,7 @@ This is an on-demand agent workflow, not an always-running service. Do not claim
 
 Use [assistant mission](missions/ai-assistant.md) and [proposed ADR](../adr/0020-banking-ai-assistant-proposal.md) before assistant work. ai_assistant_owner is a Codex development role with service/test ownership only, not a deployed assistant or a background process. The orchestrator owns shared runtime/CI/Compose/docs and freezes delegation and message contracts before gateway/Android/service implementation. C# is a proposed service-local stack exception, not a rewrite of Java services. Dispatch independent security design review and later integrated QA/security/reviewer validation. Until evidence exists, record proposed behavior and waiting dependencies honestly.
 
+
+## Execution continuity
+
+Owner instruction, 2026-10-14: while authorized actionable tasks remain, continue dispatch, implementation, independent review and delivery. A failed check or dependency requires active diagnosis and remediation; it must not silently end execution. If progress requires owner input or unavailable access, promptly report the blocker, attempted recovery and exact next action. Continue independent work during CI/deployment waits, preserving file/build leases and serialized persistent-stack operations. If no actionable work remains, report idle state truthfully. This rule does not create background execution after a session ends or authorize periodic polling.

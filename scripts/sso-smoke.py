@@ -19,6 +19,7 @@ if os.environ.get("CI") != "true":
     raise SystemExit("SSO acceptance requires disposable CI, never the persistent stack")
 
 from playwright.sync_api import sync_playwright
+from sso_browser_callback import BrowserCallbackCapture
 
 PUBLIC = "https://localhost:8443"
 ADMIN = "http://127.0.0.1:9090/sso"
@@ -68,6 +69,7 @@ admin = expect(200, request("POST", ADMIN + "/realms/master/protocol/openid-conn
     "client_id": "admin-cli", "grant_type": "password", "username": "admin",
     "password": os.environ["SSO_ADMIN_PASSWORD"]}, form=True))["access_token"]
 NATIVE_CLIENTS = ("armoney-ios", "armoney-android")
+PUBLIC_CLIENTS = (*NATIVE_CLIENTS, "armoney-web")
 callbacks = {client_id: "http://127.0.0.1:18765/callback/" + client_id for client_id in NATIVE_CLIENTS}
 for client_id in NATIVE_CLIENTS:
     clients = expect(200, request("GET", ADMIN + "/admin/realms/armoney/clients?clientId=" + client_id, token=admin))
@@ -82,6 +84,30 @@ for client_id in NATIVE_CLIENTS:
     # Exact loopback redirects exist only in this disposable realm, not the shipped native clients.
     client["redirectUris"].append(callbacks[client_id])
     expect(204, request("PUT", ADMIN + "/admin/realms/armoney/clients/" + client["id"], client, admin))
+# Browser callbacks remain exact shipped HTTPS callbacks; never add a loopback wildcard.
+callbacks["armoney-web"] = PUBLIC + "/oauth/callback"
+web_clients = expect(200, request("GET", ADMIN + "/admin/realms/armoney/clients?clientId=armoney-web", token=admin))
+assert len(web_clients) == 1
+web_client = web_clients[0]
+assert web_client["publicClient"] and web_client["standardFlowEnabled"]
+assert not web_client["directAccessGrantsEnabled"] and not web_client["implicitFlowEnabled"]
+assert not web_client["serviceAccountsEnabled"]
+assert set(web_client["webOrigins"]) == {PUBLIC, "https://localhost:4200"}
+assert set(web_client["redirectUris"]) == {PUBLIC + "/oauth/callback", "https://localhost:4200/oauth/callback"}
+assert web_client["attributes"]["pkce.code.challenge.method"] == "S256"
+assert set(web_client["attributes"]["post.logout.redirect.uris"].split("##")) == {PUBLIC + "/oauth/logout", "https://localhost:4200/oauth/logout"}
+
+web_mappers = {m["name"]: m for m in web_client["protocolMappers"]}
+for name, audience in (("armoney-api-audience", "armoney-api"), ("armoney-auth-introspection-audience", "armoney-auth")):
+    mapper = web_mappers[name]
+    assert mapper["protocolMapper"] == "oidc-audience-mapper"
+    assert mapper["config"]["included.custom.audience"] == audience
+    assert mapper["config"]["id.token.claim"] == "false"
+    assert mapper["config"]["access.token.claim"] == mapper["config"]["introspection.token.claim"] == "true"
+phone = web_mappers["armoney-phone"]["config"]
+assert phone["claim.name"] == "phone_number" and phone["user.attribute"] == "username"
+assert phone["id.token.claim"] == "false" and phone["introspection.token.claim"] == "true"
+
 # Reserved disposable SSO fixture range; other smoke scripts use different numbers.
 username = "+971509990001"
 password = secrets.token_urlsafe(24)
@@ -89,6 +115,7 @@ password = secrets.token_urlsafe(24)
 # Disposable upgrade fixture: a mapped pre-phone user must keep its bank UUID.
 # Temporarily restore only the old username validation to create that historical user.
 subprocess.run([sys.executable, "-B", "sso-service/test_phone_configuration.py"], check=True)
+subprocess.run([sys.executable, "-B", "sso-service/test_web_configuration.py"], check=True)
 old_profile = expect(200, request("GET", ADMIN + "/admin/realms/armoney/users/profile", token=admin))
 old_username_attribute = next(a for a in old_profile["attributes"] if a["name"] == "username")
 old_username_attribute["validations"].pop("pattern", None)
@@ -144,35 +171,38 @@ def authorize(page, client_id, prompt=None, login=None, registration=None, rejec
     if prompt:
         query["prompt"] = prompt
     server.callback_query = None
-    page.goto(discovery["authorization_endpoint"] + "?" + urllib.parse.urlencode(query))
-    if registration is not None:
-        page.locator("#kc-registration a").click()
-        assert page.get_by_label("UAE mobile number (+971)", exact=False).count() == 1
-        assert page.locator("select[name=country], select[name=countryCode]").count() == 0
-        page.locator("#username").fill(registration)
-        page.locator("#email").fill("ci-" + secrets.token_hex(8) + "@example.test")
-        page.locator("#firstName").fill("Synthetic")
-        page.locator("#lastName").fill("Identity")
-        page.locator("#password").fill(password)
-        page.locator("#password-confirm").fill(password)
-        # Bypass browser required/pattern validation to exercise Keycloak itself.
-        page.locator("#kc-register-form").evaluate("form => form.noValidate = true")
-        page.locator("#kc-register-form input[type=submit], #kc-register-form button[type=submit]").click()
-        if reject_registration:
-            page.locator("#input-error-username").wait_for(state="visible")
-            assert server.callback_query is None, "Invalid registration must not authorize a user"
-            return None
-    elif page.locator("#username").count():
-        assert prompt != "none", "SSO session was not reused"
-        page.locator("#username").fill(login[0] if login else username)
-        page.locator("#password").fill(login[1] if login else password)
-        page.locator("#kc-login").click()
-    if page.locator("#kc-update-profile-form").count():
-        page.locator("#kc-update-profile-form input[type=submit], #kc-update-profile-form button[type=submit]").click()
-    page.wait_for_url(callback + "**", timeout=30000)
-    received = server.callback_query
-    assert received and received.get("state") == [state] and "error" not in received
-    return received["code"][0], verifier
+    with BrowserCallbackCapture(page, callback) as captured:
+        page.goto(discovery["authorization_endpoint"] + "?" + urllib.parse.urlencode(query))
+        if registration is not None:
+            page.locator("#kc-registration a").click()
+            assert page.get_by_label("UAE mobile number (+971)", exact=False).count() == 1
+            assert page.locator("select[name=country], select[name=countryCode]").count() == 0
+            page.locator("#username").fill(registration)
+            page.locator("#email").fill("ci-" + secrets.token_hex(8) + "@example.test")
+            page.locator("#firstName").fill("Synthetic")
+            page.locator("#lastName").fill("Identity")
+            page.locator("#password").fill(password)
+            page.locator("#password-confirm").fill(password)
+            # Bypass browser required/pattern validation to exercise Keycloak itself.
+            page.locator("#kc-register-form").evaluate("form => form.noValidate = true")
+            page.locator("#kc-register-form input[type=submit], #kc-register-form button[type=submit]").click()
+            if reject_registration:
+                page.locator("#input-error-username").wait_for(state="visible")
+                assert server.callback_query is None and captured.query is None, "Invalid registration must not authorize a user"
+                return None
+        elif page.locator("#username").count():
+            assert prompt != "none", "SSO session was not reused"
+            page.locator("#username").fill(login[0] if login else username)
+            page.locator("#password").fill(login[1] if login else password)
+            page.locator("#kc-login").click()
+        if page.locator("#kc-update-profile-form").count():
+            page.locator("#kc-update-profile-form input[type=submit], #kc-update-profile-form button[type=submit]").click()
+        received = captured.wait()
+        if client_id != "armoney-web":
+            page.wait_for_url(callback + "**", timeout=30000)
+            assert received == server.callback_query, "Loopback server and browser callback must agree"
+        assert received and received.get("state") == [state] and "error" not in received
+        return received["code"][0], verifier
 
 
 def redeem(code, verifier, client_id, redirect_uri=None):
@@ -184,21 +214,21 @@ def redeem(code, verifier, client_id, redirect_uri=None):
 try:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        legacy_context = browser.new_context(ignore_https_errors=True)
+        legacy_context = browser.new_context(ignore_https_errors=False)
         legacy_code, legacy_verifier = authorize(legacy_context.new_page(), "armoney-android", login=(old_username, old_password))
         legacy_oidc = expect(200, redeem(legacy_code, legacy_verifier, "armoney-android"))
         legacy_token = expect(200, request("POST", PUBLIC + "/v1/auth/sso", {"access_token": legacy_oidc["access_token"]}))["access_token"]
         assert expect(200, request("GET", PUBLIC + "/v1/auth/me", token=legacy_token))["id"] == old_bank_id
         expect(204, request("POST", PUBLIC + "/v1/auth/logout", token=legacy_token))
         legacy_context.close()
-        # Only this disposable browser bypasses trust installation. HTTP assertions use the exported CA.
-        context = browser.new_context(ignore_https_errors=True)
+        # The disposable browser trusts the exported CA through its isolated NSS database.
+        context = browser.new_context(ignore_https_errors=False)
         page = context.new_page()
         for invalid_phone in ("", "+971511234567", "+12025550123", "0501234567", "+97150123456"):
             authorize(page, "armoney-ios", registration=invalid_phone, reject_registration=True)
         registration_code, registration_verifier = authorize(page, "armoney-ios", registration=username)
         expect(200, redeem(registration_code, registration_verifier, "armoney-ios"))
-        duplicates = browser.new_context(ignore_https_errors=True)
+        duplicates = browser.new_context(ignore_https_errors=False)
         authorize(duplicates.new_page(), "armoney-ios", registration=username, reject_registration=True)
         duplicates.close()
         registered = expect(200, request("GET", ADMIN + "/admin/realms/armoney/users?" +
@@ -206,14 +236,45 @@ try:
         assert len(registered) == 1, "Duplicate phone registration must not create another provider identity"
         # auth-smoke reserved this number in legacy auth. A provider registration
         # cannot link to or create a second active bank identity for that phone.
-        collision_context = browser.new_context(ignore_https_errors=True)
+        collision_context = browser.new_context(ignore_https_errors=False)
         collision_code, collision_verifier = authorize(collision_context.new_page(), "armoney-android", registration="+971580000001")
         collision_oidc = expect(200, redeem(collision_code, collision_verifier, "armoney-android"))
         expect(409, request("POST", PUBLIC + "/v1/auth/sso", {"access_token": collision_oidc["access_token"]}))
         collision_context.close()
+        # Web must reject unregistered redirects and missing/plain PKCE without issuing code.
+        negative_page = context.new_page()
+        for mutation in (
+            {"redirect_uri": PUBLIC + "/oauth/callback/extra"},
+            {"redirect_uri": "http://localhost:8443/oauth/callback"},
+            {"redirect_uri": "https://attacker.invalid/oauth/callback"},
+            {"code_challenge_method": "plain"},
+            {"code_challenge": None, "code_challenge_method": None},
+        ):
+            verifier = secrets.token_urlsafe(32)
+            query = {"client_id": "armoney-web", "response_type": "code", "scope": "openid",
+                     "redirect_uri": callbacks["armoney-web"], "state": secrets.token_urlsafe(32),
+                     "code_challenge_method": "S256", "code_challenge": base64.urlsafe_b64encode(
+                         hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()}
+            for key, value in mutation.items():
+                if value is None:
+                    query.pop(key, None)
+                else:
+                    query[key] = value
+            with BrowserCallbackCapture(negative_page, query["redirect_uri"]) as captured:
+                response = negative_page.goto(discovery["authorization_endpoint"] + "?" + urllib.parse.urlencode(query))
+                if "redirect_uri" in mutation:
+                    negative_page.locator("#kc-error-message").wait_for(state="visible")
+                    assert response.status == 400, "Invalid redirect must produce provider HTTP 400"
+                    assert captured.query is None, "Invalid redirect must never be followed"
+                else:
+                    received = captured.wait()
+                    assert received.get("error") == ["invalid_request"] and "code" not in received
+                    assert received.get("state") == [query["state"]], "PKCE rejection must preserve state"
+        negative_page.close()
+
         sessions = {}
         principal_id = None
-        for client_id in NATIVE_CLIENTS:
+        for client_id in PUBLIC_CLIENTS:
             # Android reuses the browser session established by iOS without another login.
             code, verifier = authorize(page, client_id, prompt="none" if sessions else None)
             expect(400, redeem(code, secrets.token_urlsafe(32), client_id))
@@ -223,6 +284,9 @@ try:
                 "client_id": "armoney-auth", "client_secret": os.environ["SSO_CLIENT_SECRET"],
                 "token": oidc["access_token"], "token_type_hint": "access_token"}, form=True))
             assert introspection["active"] and introspection["phone_number"] == username
+            assert introspection["client_id"] == client_id
+            if client_id == "armoney-web":
+                assert introspection["azp"] == client_id
             assert introspection.get("phone_number_verified") is not True
             assert isinstance(introspection.get("email"), str) and "@" in introspection["email"]
             assert introspection.get("email_verified") is False
@@ -240,7 +304,7 @@ try:
             assert contact == "t", "SSO must capture a separate unverified notification contact"
             if principal_id is None:
                 principal_id = principal["id"]
-            assert principal["id"] == principal_id, "Native clients must map one provider subject to one bank identity"
+            assert principal["id"] == principal_id, "Public clients must map one provider subject to one bank identity"
             again = expect(200, request("POST", PUBLIC + "/v1/auth/sso", {"access_token": oidc["access_token"]}))
             assert expect(200, request("GET", PUBLIC + "/v1/auth/me", token=again["access_token"]))["id"] == principal_id
             expect(401, request("POST", PUBLIC + "/v1/auth/sso", {"access_token": oidc["id_token"]}))
@@ -256,10 +320,10 @@ try:
             "username": second_name, "email": "ci-" + secrets.token_hex(8) + "@example.test", "emailVerified": True,
             "firstName": "Second", "lastName": "Identity", "enabled": True,
             "credentials": [{"type": "password", "value": second_password, "temporary": False}]}, admin))
-        second_context = browser.new_context(ignore_https_errors=True)
+        second_context = browser.new_context(ignore_https_errors=False)
         second_page = second_context.new_page()
         second_id = None
-        for client_id in NATIVE_CLIENTS:
+        for client_id in PUBLIC_CLIENTS:
             second_code, second_verifier = authorize(second_page, client_id,
                 prompt="none" if second_id else None, login=(second_name, second_password))
             second_oidc = expect(200, redeem(second_code, second_verifier, client_id))
@@ -284,8 +348,8 @@ try:
             expect(400, redeem(code, verifier, client_id))
             expect(401, request("POST", PUBLIC + "/v1/auth/sso", {"access_token": oidc["access_token"]}))
 
-        for client_id in NATIVE_CLIENTS:
-            other_client = next(candidate for candidate in NATIVE_CLIENTS if candidate != client_id)
+        for client_id in PUBLIC_CLIENTS:
+            other_client = next(candidate for candidate in PUBLIC_CLIENTS if candidate != client_id)
             code, verifier = authorize(page, client_id)
             # Even the correct verifier/redirect cannot redeem a code under another public client.
             expect(400, redeem(code, verifier, other_client, callbacks[client_id]))
@@ -297,4 +361,4 @@ finally:
     server.shutdown()
     server.server_close()
 
-print("Real Keycloak required/invalid/duplicate UAE phone registration, openid-only phone introspection, iOS/Android SSO, PKCE, client/redirect binding, replay rejection, shared identity, owner isolation and local logout passed")
+print("Real Keycloak required/invalid/duplicate UAE phone registration, openid-only phone introspection, iOS/Android/web SSO, PKCE, client/redirect binding, replay rejection, shared identity, owner isolation and local logout passed")

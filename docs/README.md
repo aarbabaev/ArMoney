@@ -18,6 +18,7 @@ results take precedence over historical ADR scope and previous deployment eviden
 | [SSO and iOS runbook](sso-and-ios.md) | Windows LAN HTTPS, Keycloak, CA trust and validation boundaries |
 | [Native Android README](../android/README.md) | Android Studio, SDK, local HTTPS and native app acceptance |
 | [Android contract](android-contract.md) | Android build, identity and financial recovery boundaries |
+| [Browser client](web-client.md) | Angular setup, parity, browser session/recovery and verification limits |
 | [Native iOS README](../ios/README.md) | Xcode, local configuration, simulator/device setup and app behavior |
 | [SSO service README](../sso-service/README.md) | Realm, clients, identity mapping and introspection |
 
@@ -43,6 +44,7 @@ extends the original metadata-only scope in ADR 0004.
 | [0013](adr/0013-ledger-replication.md) | Direct physical ledger replication and fenced balance reads |
 | [0014](adr/0014-uae-registration-phone.md) | Mandatory unique UAE registration phones and transfers without SMS verification |
 | [0015](adr/0015-transactional-email-outbox.md) | Atomic email enqueue, asynchronous Mailtrap delivery and contact trust |
+| [0021](adr/0021-browser-spa-session.md) | Same-origin Angular SPA, transient credentials and durable command separation |
 
 ## Agent workflow
 
@@ -54,6 +56,7 @@ extends the original metadata-only scope in ADR 0004.
 | [Skill routing](agents/skills.md) | Task-specific skills and role ownership |
 | [Context map](agents/context-map.md) | Source/reference lookup by task |
 | [Context audit](agents/context-efficiency.md) | Historical instruction-size measurements and routing guidance |
+| [Browser mission](agents/missions/angular-web.md) | Authorized browser parity and independent delivery gates |
 | [Wallet provisioning mission](agents/missions/wallet-ledger.md) | Implemented slice's original acceptance scope |
 
 Role TOMLs live under `.codex/agents/`; executable skill instructions live under

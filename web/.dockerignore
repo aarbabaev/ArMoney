@@ -1,0 +1,9 @@
+node_modules
+node_modules-pnpm
+dist
+.angular
+test-results
+playwright-report
+audit-local.json
+tests
+e2e
