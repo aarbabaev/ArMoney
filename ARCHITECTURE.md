@@ -1066,6 +1066,12 @@ source/security clearance and passing focused unit/PostgreSQL evidence, includin
 the trusted timing-anchor regression. Full auth check passed 513 tests without failures, errors or skips;
 published-head CI and runtime acceptance remain separate gates.
 
+The [disposable observer acceptance harness](docs/sso-observer-acceptance.md)
+adds a separate test-only session-control JAR and two-node Keycloak topology.
+Production packaging excludes this fixture. Its cross-node committed-state,
+session-removal and expiry assertions remain unrun; the existing SSO smoke
+does not establish these guarantees or authorize verification activation.
+
 The assigned timing adjustment makes admission return an auth DB timestamp
 after its locks, which the service passes unchanged to remote observation.
 Final database age/future/expiry checks follow all authority row locks; provider
