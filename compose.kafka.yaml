@@ -1,0 +1,230 @@
+# Optional standalone local cluster. Always select an explicit project and this file.
+# No banking networks, databases, host ports or existing volumes are reused.
+x-common: &common
+  image: apache/kafka:4.3.1@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837
+  user: "1000:1000"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 256
+  networks: [kafka]
+  tmpfs:
+    - /tmp:uid=1000,gid=1000,mode=1770,size=268435456
+    - /etc/kafka/secrets:uid=1000,gid=1000,mode=0700,size=1048576
+    - /mnt/shared/config:uid=1000,gid=1000,mode=0700,size=1048576
+  stop_grace_period: 45s
+
+x-node: &node
+  <<: *common
+  entrypoint: []
+  command: [bash, /opt/armoney/start.sh]
+  restart: unless-stopped
+  healthcheck:
+    test: [CMD, bash, /opt/armoney/health.sh]
+    interval: 15s
+    timeout: 12s
+    retries: 12
+    start_period: 60s
+
+services:
+  kafka-controller-1:
+    <<: *node
+    hostname: kafka-controller-1
+    mem_limit: 768m
+    cpus: 1.0
+    environment:
+      KAFKA_NODE_ROLE: controller
+      KAFKA_NODE_ID: "1"
+      KAFKA_NODE_NAME: kafka-controller-1
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx256m"
+      LOG_DIR: /tmp/kafka-logs
+    volumes:
+      - type: bind
+        source: ./infra/kafka
+        target: /opt/armoney
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${KAFKA_SECRETS_DIR:?Set an absolute external Kafka credentials directory}/kafka-controller-1
+        target: /run/kafka-secrets
+        read_only: true
+        bind: {create_host_path: false}
+      - kafka-controller-1-data:/var/lib/kafka/data
+
+  kafka-controller-2:
+    <<: *node
+    hostname: kafka-controller-2
+    mem_limit: 768m
+    cpus: 1.0
+    environment:
+      KAFKA_NODE_ROLE: controller
+      KAFKA_NODE_ID: "2"
+      KAFKA_NODE_NAME: kafka-controller-2
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx256m"
+      LOG_DIR: /tmp/kafka-logs
+    volumes:
+      - type: bind
+        source: ./infra/kafka
+        target: /opt/armoney
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${KAFKA_SECRETS_DIR:?Set an absolute external Kafka credentials directory}/kafka-controller-2
+        target: /run/kafka-secrets
+        read_only: true
+        bind: {create_host_path: false}
+      - kafka-controller-2-data:/var/lib/kafka/data
+
+  kafka-controller-3:
+    <<: *node
+    hostname: kafka-controller-3
+    mem_limit: 768m
+    cpus: 1.0
+    environment:
+      KAFKA_NODE_ROLE: controller
+      KAFKA_NODE_ID: "3"
+      KAFKA_NODE_NAME: kafka-controller-3
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx256m"
+      LOG_DIR: /tmp/kafka-logs
+    volumes:
+      - type: bind
+        source: ./infra/kafka
+        target: /opt/armoney
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${KAFKA_SECRETS_DIR:?Set an absolute external Kafka credentials directory}/kafka-controller-3
+        target: /run/kafka-secrets
+        read_only: true
+        bind: {create_host_path: false}
+      - kafka-controller-3-data:/var/lib/kafka/data
+
+  kafka-broker-1:
+    <<: *node
+    hostname: kafka-broker-1
+    mem_limit: 1536m
+    cpus: 1.0
+    environment:
+      KAFKA_NODE_ROLE: broker
+      KAFKA_NODE_ID: "101"
+      KAFKA_NODE_NAME: kafka-broker-1
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"
+      LOG_DIR: /tmp/kafka-logs
+    volumes:
+      - type: bind
+        source: ./infra/kafka
+        target: /opt/armoney
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${KAFKA_SECRETS_DIR:?Set an absolute external Kafka credentials directory}/kafka-broker-1
+        target: /run/kafka-secrets
+        read_only: true
+        bind: {create_host_path: false}
+      - kafka-broker-1-data:/var/lib/kafka/data
+
+  kafka-broker-2:
+    <<: *node
+    hostname: kafka-broker-2
+    mem_limit: 1536m
+    cpus: 1.0
+    environment:
+      KAFKA_NODE_ROLE: broker
+      KAFKA_NODE_ID: "102"
+      KAFKA_NODE_NAME: kafka-broker-2
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"
+      LOG_DIR: /tmp/kafka-logs
+    volumes:
+      - type: bind
+        source: ./infra/kafka
+        target: /opt/armoney
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${KAFKA_SECRETS_DIR:?Set an absolute external Kafka credentials directory}/kafka-broker-2
+        target: /run/kafka-secrets
+        read_only: true
+        bind: {create_host_path: false}
+      - kafka-broker-2-data:/var/lib/kafka/data
+
+  kafka-broker-3:
+    <<: *node
+    hostname: kafka-broker-3
+    mem_limit: 1536m
+    cpus: 1.0
+    environment:
+      KAFKA_NODE_ROLE: broker
+      KAFKA_NODE_ID: "103"
+      KAFKA_NODE_NAME: kafka-broker-3
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"
+      LOG_DIR: /tmp/kafka-logs
+    volumes:
+      - type: bind
+        source: ./infra/kafka
+        target: /opt/armoney
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${KAFKA_SECRETS_DIR:?Set an absolute external Kafka credentials directory}/kafka-broker-3
+        target: /run/kafka-secrets
+        read_only: true
+        bind: {create_host_path: false}
+      - kafka-broker-3-data:/var/lib/kafka/data
+
+  kafka-init:
+    <<: *common
+    profiles: [tools]
+    entrypoint: [bash, /opt/armoney/init-topics.sh]
+    mem_limit: 768m
+    environment:
+      KAFKA_HEAP_OPTS: "-Xms128m -Xmx256m"
+      LOG_DIR: /tmp/kafka-logs
+    depends_on:
+      kafka-broker-1: {condition: service_healthy}
+      kafka-broker-2: {condition: service_healthy}
+      kafka-broker-3: {condition: service_healthy}
+    volumes:
+      - type: bind
+        source: ./infra/kafka
+        target: /opt/armoney
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${KAFKA_SECRETS_DIR:?Set an absolute external Kafka credentials directory}/admin
+        target: /run/kafka-secrets
+        read_only: true
+        bind: {create_host_path: false}
+
+  kafka-client:
+    <<: *common
+    profiles: [tools]
+    entrypoint: []
+    command: [bash, /opt/armoney/client.sh, topics]
+    mem_limit: 768m
+    environment:
+      KAFKA_HEAP_OPTS: "-Xms128m -Xmx256m"
+      LOG_DIR: /tmp/kafka-logs
+    volumes:
+      - type: bind
+        source: ./infra/kafka
+        target: /opt/armoney
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${KAFKA_SECRETS_DIR:?Set an absolute external Kafka credentials directory}/${KAFKA_CLIENT_PRINCIPAL:-denied}
+        target: /run/kafka-secrets
+        read_only: true
+        bind: {create_host_path: false}
+
+networks:
+  kafka:
+    internal: true
+
+volumes:
+  kafka-controller-1-data:
+  kafka-controller-2-data:
+  kafka-controller-3-data:
+  kafka-broker-1-data:
+  kafka-broker-2-data:
+  kafka-broker-3-data:
+
