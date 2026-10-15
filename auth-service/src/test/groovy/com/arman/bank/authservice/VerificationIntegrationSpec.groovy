@@ -141,7 +141,7 @@ class VerificationIntegrationSpec extends Specification {
         attempt { service.consume(replay) } == 'CONFLICT'
         count('select count(*) as n from verification_challenges where attempts = 1') == 1
         when:
-        def results = parallel((1..4).collect { { attempt { service.consume(consumeCommand(enrollment, open.challenge.challengeId(), wrong)) } } })
+        def results = parallel((1..4).collect { { -> attempt { service.consume(consumeCommand(enrollment, open.challenge.challengeId(), wrong)) } } })
         then:
         results.every { it == 'CONFLICT' }
         count('select count(*) as n from verification_challenges where attempts = 5 and state = ?', 'LOCKED') == 1
@@ -210,7 +210,7 @@ class VerificationIntegrationSpec extends Specification {
             execute("update verification_challenges set created_at = clock_timestamp() - interval '61 seconds' where enrollment_id = ?", enrollment)
         }
         when:
-        def results = parallel((1..3).collect { { attempt { service.issue(issueCommand(enrollment)) } } })
+        def results = parallel((1..3).collect { { -> attempt { service.issue(issueCommand(enrollment)) } } })
         then:
         results.count { it instanceof Result } == 1
         results.count { it == 'RATE_LIMITED' } == 2
