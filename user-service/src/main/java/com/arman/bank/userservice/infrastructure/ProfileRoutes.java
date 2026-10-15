@@ -11,9 +11,27 @@ import com.arman.bank.userservice.application.RegistrationConflict;
 public final class ProfileRoutes {
     private final ProfileService service;
     private final String key;
-    public ProfileRoutes(ProfileService service, String key) { this.service = service; this.key = key; }
+    private final VerificationProjectionRoutes projection;
+    public ProfileRoutes(ProfileService service, String key) {
+        this(service, key, new VerificationProjectionConfiguration(false, Map.of()), null);
+    }
+    public ProfileRoutes(ProfileService service, String key, VerificationProjectionConfiguration configuration,
+            com.arman.bank.userservice.application.VerificationProjectionStore store) {
+        this.service = java.util.Objects.requireNonNull(service);
+        this.key = key;
+        java.util.Objects.requireNonNull(configuration);
+        if (configuration.enabled() && configuration.writers().containsValue(key))
+            throw new IllegalArgumentException("Projection credential must be distinct");
+        this.projection = configuration.enabled()
+            ? new VerificationProjectionRoutes(java.util.Objects.requireNonNull(store), configuration) : null;
+    }
     public void configure(JavalinConfig config) {
-        InternalHttp.configure(config, key);
+        if (projection == null) InternalHttp.configure(config, key);
+        else {
+            InternalHttp.configure(config, key, java.util.List.of(
+                new InternalHttp.DedicatedRoute("POST", VerificationProjectionRoutes.PATH)));
+            projection.configure(config);
+        }
         config.routes.exception(RegistrationConflict.class, (e, ctx) ->
             InternalHttp.reply(ctx, 409, Map.of("error", "registration_phone_conflict")));
         config.routes.put("/internal/registrations/me", ctx -> {

@@ -41,6 +41,100 @@ paths:
             application/yaml:
               schema:
                 type: string
+  /v1/internal/verification-projections:
+    post:
+      operationId: projectVerificationPhone
+      description: >-
+        Private auth-to-user central projection. Requires literal true
+        USER_VERIFICATION_PROJECTION_ENABLED; default false. When disabled,
+        ordinary business authentication applies: valid X-Service-Key and
+        X-Identity-Id reach an absent handler (404), otherwise 401. When enabled,
+        this exact POST uses only the dedicated projection credential mapped to a
+        server-configured writer, not ServiceKey or VerifiedIdentity. Never
+        expose through public gateway ingress. Does not grant ACTIVE eligibility,
+        create banking sessions, attest operator verification or activate notices.
+        Strict JSON rejects duplicate/unknown fields, nulls and trailing tokens.
+        Raw request maximum is 12288 bytes; oversized requests return 400.
+        Revision CAS and strictly increasing epoch apply to new operations;
+        same phone preserves contact version, replacement increases it.
+        Retained exact replay returns its original ACK without state mutation.
+      security:
+      - VerificationProjectionKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerificationProjectionCommand'
+      responses:
+        '200':
+          description: Projection committed or exact retained replay; ACK grants no banking authority
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/ProjectionNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationProjectionAck'
+        '400':
+          description: Malformed, noncanonical, hash-mismatched or oversized request
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/ProjectionNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationProjectionError'
+        '401':
+          description: Missing, ambiguous or invalid dedicated credential
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/ProjectionNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationProjectionError'
+        '409':
+          description: Payload, revision, epoch, contact-version or phone-ownership conflict
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/ProjectionNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationProjectionError'
+        '410':
+          description: Operation retained only as expired tombstone; never resubmit under a new UUID automatically
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/ProjectionNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationProjectionError'
+        '429':
+          description: Admission or retained-record/tombstone capacity exhausted
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/ProjectionNoStore'
+            Retry-After:
+              schema:
+                type: integer
+                enum: [60]
+              description: Conservative retry delay in seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationProjectionError'
+        '503':
+          description: Storage unavailable or uncertain; retry identical operation
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/ProjectionNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationProjectionError'
   /internal/registrations/me:
     put:
       operationId: registerPhone
@@ -222,6 +316,90 @@ paths:
               description: Seconds until retry (conservative 60)
 components:
   schemas:
+    VerificationProjectionCommand:
+      type: object
+      additionalProperties: false
+      required: [operation_id, identity_id, expected_version, version, canonical_phone, phone_contact_version, verification_epoch, payload_hash]
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+          pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        identity_id:
+          type: string
+          format: uuid
+          pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        expected_version:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 2147483646
+        version:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 2147483647
+          description: Independent projection revision; must equal expected_version plus one.
+        canonical_phone:
+          type: string
+          pattern: '^\+9715[024568][0-9]{7}$'
+        phone_contact_version:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 2147483647
+        verification_epoch:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+        payload_hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: >-
+            Lowercase SHA-256 over four-byte unsigned big-endian UTF-8
+            length-prefixed fields in order: armoney-verification-projection-v1,
+            operation_id, identity_id, expected_version, version, canonical_phone,
+            phone_contact_version, verification_epoch. Canonical lowercase UUIDs
+            and decimal integers without leading zeros; exclude payload_hash.
+    VerificationProjectionAck:
+      type: object
+      additionalProperties: false
+      required: [operation_id, identity_id, version, phone_contact_version, verification_epoch, payload_hash]
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+          pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        identity_id:
+          type: string
+          format: uuid
+          pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        version:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 2147483647
+        phone_contact_version:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 2147483647
+        verification_epoch:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+        payload_hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+    VerificationProjectionError:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
     Health:
       type: object
       required:
@@ -267,7 +445,17 @@ components:
         identity_id: *id008
         display_name: *id009
         phone_number: *id002
+  headers:
+    ProjectionNoStore:
+      schema:
+        type: string
+        enum: [no-store]
   securitySchemes:
+    VerificationProjectionKey:
+      type: apiKey
+      in: header
+      name: X-ArMoney-Verification-Projection-Key
+      description: Independently provisioned auth-to-user credential; server maps it to an allowlisted writer.
     ServiceKey:
       type: apiKey
       in: header

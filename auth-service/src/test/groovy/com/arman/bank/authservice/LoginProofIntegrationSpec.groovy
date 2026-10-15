@@ -82,16 +82,19 @@ class LoginProofIntegrationSpec extends Specification {
 
     def cleanup() { database?.close(); postgres?.stop() }
 
-    def 'populated published V6 migrates to V7 without modifying old rows or checksums'() {
+    def 'populated published V6 migrates through V7 to V8 without modifying old rows or checksums'() {
         expect:
         database.transaction { sql ->
             assert snapshots(sql) == preserved
-            assert sql.fetch('select version,script,checksum from flyway_schema_history where version <> ? order by installed_rank', '7').intoMaps() == history
-            assert sql.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '7'
-            ['sso_login_proofs','sso_login_events','sso_login_proof_commands','sso_login_proof_admission'].each { table ->
+            assert sql.fetch('select version,script,checksum from flyway_schema_history where cast(version as integer) <= ? order by installed_rank', 6).intoMaps() == history
+            assert sql.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '8'
+            assert sql.fetch('select version from flyway_schema_history order by installed_rank').getValues('version', String) == ['1','2','3','4','5','6','7','8']
+            ['sso_login_proofs','sso_login_events','sso_login_proof_commands','sso_login_proof_admission',
+             'auth_verification_projection_commands','auth_verification_projection_tombstones','auth_verification_projection_admission'].each { table ->
                 assert sql.fetchOne('select count(*) as n from ' + table).get('n', Long) == 0
             }
             assert sql.fetchOne('select count(*) as n from sso_login_proof_control where id=1').get('n', Long) == 1
+            assert sql.fetchOne('select count(*) as n from auth_verification_projection_control where id=1').get('n', Long) == 1
             true
         }
     }
