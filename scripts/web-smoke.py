@@ -114,7 +114,11 @@ with sync_playwright() as playwright:
         return sessions[-1]
 
     def navigate(tab, label):
-        tab.get_by_role("navigation").get_by_role("link", name=label, exact=True).click()
+        link = tab.get_by_role("navigation").get_by_role("link", name=label, exact=True)
+        link.click()
+        # RouterLinkActive applies aria-current after completed navigation. A
+        # click returning alone does not establish that the new form is ready.
+        expect(link).to_have_attribute("aria-current", "page")
 
     def open_account(tab, token):
         navigate(tab, "Accounts")
@@ -160,6 +164,7 @@ with sync_playwright() as playwright:
 
     navigate(page, "Profile")
     page.get_by_label("Display name", exact=True).fill("Web acceptance owner")
+    expect(page.get_by_label("Display name", exact=True)).to_have_value("Web acceptance owner")
     profile_events = []
 
     def profile_response(response):
