@@ -414,3 +414,26 @@ describe("cursor and notification contract", () => {
     },
   );
 });
+
+
+describe("recipient directory eligibility", () => {
+  it("keeps an uninitialized recipient unavailable and permits a later confirmed lookup", async () => {
+    // Transport behavior only: profiles/durable registration are verified by real CI smoke.
+    const b = bank();
+    const request = vi.spyOn(b, "request")
+      .mockRejectedValueOnce(new HttpFailure(404, "not_found"))
+      .mockResolvedValueOnce({identity_id: recipient, display_name: "Initialized recipient", phone_number: "+971509990004"});
+    await b.resolve("+971509990004");
+    expect(b.recipient()).toBeNull();
+    expect(b.message()).toContain("HTTP 404");
+    expect(b.pending()).toBeNull();
+    await b.resolve("+971509990004");
+    expect(b.recipient()?.identity_id).toBe(recipient);
+    expect(b.message()).toBe("");
+    expect(request.mock.calls).toEqual([
+      ["/v1/recipients/resolve", "POST", {phone_number: "+971509990004"}],
+      ["/v1/recipients/resolve", "POST", {phone_number: "+971509990004"}],
+    ]);
+    expect(b.pending()).toBeNull();
+  });
+});

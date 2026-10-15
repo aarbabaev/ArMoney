@@ -154,6 +154,17 @@ with sync_playwright() as playwright:
     token_b = signed_in(page, users[1])
     owner_b = status(200, request("GET", "/v1/auth/me", token=token_b))["id"]
     wallet_b = open_account(page, token_b)
+    # SSO claims a phone; a wallet does not initialize the separate profile
+    # directory. Recipient resolution requires an initialized public profile.
+    status(404, request("GET", "/v1/users/me", token=token_b))
+    status(404, request("POST", "/v1/recipients/resolve",
+        {"phone_number": users[1][0]}, token=token_b))
+    recipient_profile = status(200, request("PUT", "/v1/users/me",
+        {"display_name": "Web acceptance recipient"}, token=token_b))
+    require(recipient_profile["identity_id"] == owner_b and recipient_profile["phone_number"] == users[1][0],
+            "Recipient fixture must initialize its own registered profile")
+    require(status(200, request("GET", "/v1/users/me", token=token_b)) == recipient_profile,
+            "Recipient profile must persist before lookup acceptance")
     token_a = signed_in(page, users[0], clear_cookies=True)
     owner_a = status(200, request("GET", "/v1/auth/me", token=token_a))["id"]
     require(owner_a != owner_b, "Synthetic owners must differ")
@@ -231,7 +242,11 @@ with sync_playwright() as playwright:
     page.route(PUBLIC + "/v1/payments", lose_response)
     navigate(page, "Transfers")
     page.get_by_label("Recipient UAE mobile number", exact=True).fill(users[1][0])
-    page.get_by_role("button", name="Find recipient", exact=True).click()
+    with page.expect_response(lambda response: response.url == PUBLIC + "/v1/recipients/resolve"
+                              and response.request.method == "POST") as resolved:
+        page.get_by_role("button", name="Find recipient", exact=True).click()
+    require(resolved.value.status == 200, f"Initialized recipient lookup must succeed; observed HTTP {resolved.value.status}")
+    require(resolved.value.finished() is None, "Recipient lookup response must finish")
     expect(page.locator(".recipient")).to_contain_text(users[1][0])
     page.get_by_label("Amount (AED)", exact=True).fill("0.01")
     page.get_by_role("button", name="Review transfer", exact=True).click()
