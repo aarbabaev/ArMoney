@@ -10,11 +10,11 @@ import org.testcontainers.containers.PostgreSQLContainer
 import spock.lang.Specification
 import java.sql.DriverManager
 
-/** Published V7 -> V8 on synthetic PostgreSQL. Historical rows are fixture data,
+/** Published V7 -> current V9 on synthetic PostgreSQL. Historical rows are fixture data,
  * not proof of provider delivery, ACTIVE authority, banking access or activation.
  */
 class VerificationProjectionUpgradeIntegrationSpec extends Specification {
-    def 'V8 preserves populated V7 identity receipt session and proof rows and introduces empty disabled tracker'() {
+    def 'V8 and V9 preserve populated V7 identity receipt session and proof rows and introduce empty disabled tracker'() {
         given:
         def postgres = new PostgreSQLContainer('postgres:17.6-alpine')
         postgres.start()
@@ -64,8 +64,16 @@ class VerificationProjectionUpgradeIntegrationSpec extends Specification {
         def database = new Database(postgres.jdbcUrl, postgres.username, postgres.password)
         then:
         database.transaction { current ->
-            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '8'
-            assert current.fetch('select * from flyway_schema_history where version<>? order by installed_rank', '8').intoMaps() == history
+            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '9'
+            ['verification_authorities','verification_candidates','verification_authority_phone_claims','verification_flow_barriers','verification_flows','verification_authority_admission','verification_authority_commands'].each { table ->
+                assert current.fetchOne('select count(*) as n from ' + table).get('n', Long) == 0
+            }
+            assert current.fetch('select * from verification_authority_config').intoMaps() == [[id: 1, retention_key_fingerprint: null]]
+            ['verification_challenges','verification_receipts'].each { table ->
+                assert current.fetchOne('select count(*) as n from ' + table + ' where candidate_id is not null').get('n', Long) == 0
+            }
+            assert current.fetch('select * from flyway_schema_history where cast(version as integer) <= ? order by installed_rank', 7).intoMaps() == history
+            assert current.fetch('select version from flyway_schema_history order by installed_rank').getValues('version', String) == ['1','2','3','4','5','6','7','8','9']
             assert snapshots(current) == before
             ['auth_verification_projection_commands','auth_verification_projection_tombstones','auth_verification_projection_admission'].each { table ->
                 assert current.fetchOne('select count(*) as n from ' + table).get('n', Long) == 0
@@ -98,12 +106,13 @@ class VerificationProjectionUpgradeIntegrationSpec extends Specification {
     }
 
     private static Map snapshots(def sql) {
+        // Preserve every published column; only V9 candidate_id is excluded and asserted null above.
         [identities:'id',external_identities:'issuer,subject',sessions:'token_hash',auth_attempts:'subject_hash',
          verification_control:'id',verification_enrollments:'id',verification_challenges:'id',verification_receipts:'id',
          verification_delivery_outbox:'id',verification_commands:'requester_digest,command_id',sso_login_proof_control:'id',
          sso_login_proof_admission:'writer_hash',sso_login_events:'issuer,event_id',sso_login_proofs:'id',
          sso_login_proof_commands:'requester_hash,command_id'].collectEntries { table, order ->
-            [(table):sql.fetch('select row_to_json(t)::text as snapshot from ' + table + ' t order by ' + order).getValues('snapshot', String)]
+            [(table):sql.fetch('select ' + (table in ['verification_challenges','verification_receipts'] ? "(to_jsonb(t) - 'candidate_id')::text" : 'row_to_json(t)::text') + ' as snapshot from ' + table + ' t order by ' + order).getValues('snapshot', String)]
         }
     }
 }

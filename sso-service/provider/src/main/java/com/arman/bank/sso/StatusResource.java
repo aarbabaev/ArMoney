@@ -14,9 +14,34 @@ import java.util.Map;
 public final class StatusResource {
     private final KeycloakSession session;
     private final java.util.function.Supplier<String> statusKey;
+    private final java.util.function.Supplier<String> bindingKey;
+    private final java.util.function.BooleanSupplier enrollmentEnabled;
     StatusResource(KeycloakSession session) { this(session, () -> System.getenv("AUTH_TO_SSO_STATUS_KEY")); }
     StatusResource(KeycloakSession session, java.util.function.Supplier<String> statusKey) {
-        this.session = session; this.statusKey = statusKey;
+        this(session, statusKey, () -> Bridge.required("ARMONEY_PROVIDER_BINDING_KEY"), Bridge::enabled);
+    }
+    StatusResource(KeycloakSession session, java.util.function.Supplier<String> statusKey,
+                   java.util.function.Supplier<String> bindingKey, java.util.function.BooleanSupplier enrollmentEnabled) {
+        this.session = session; this.statusKey = statusKey; this.bindingKey = bindingKey;
+        this.enrollmentEnabled = enrollmentEnabled;
+    }
+
+    @POST @Path("enrollment") @Consumes(MediaType.APPLICATION_JSON) @Produces(MediaType.APPLICATION_JSON)
+    public Response enrollment(@HeaderParam("X-ArMoney-Auth-Status-Key") String supplied, byte[] body) {
+        String configured = statusKey.get();
+        if (configured == null || configured.length() < 32 || configured.length() > 512
+                || configured.chars().anyMatch(c -> c < 33 || c > 126)) return empty(503);
+        if (supplied == null || supplied.length() > 512 || !MessageDigest.isEqual(
+                configured.getBytes(StandardCharsets.UTF_8), supplied.getBytes(StandardCharsets.UTF_8))) return empty(401);
+        if (!enrollmentEnabled.getAsBoolean()) return empty(503);
+        if (body == null || body.length > 12288) return empty(400);
+        final EnrollmentObservation.Binding binding;
+        try { binding = EnrollmentObservation.parse(Bridge.strictJson(body)); }
+        catch (IllegalArgumentException | java.io.IOException invalid) { return empty(400); }
+        try {
+            return Response.ok(EnrollmentObservation.observe(session, binding, bindingKey.get()))
+                    .header("Cache-Control", "no-store").build();
+        } catch (RuntimeException unavailable) { return empty(503); }
     }
 
     @POST @Consumes(MediaType.APPLICATION_JSON) @Produces(MediaType.APPLICATION_JSON)
