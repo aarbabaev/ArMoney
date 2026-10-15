@@ -199,6 +199,29 @@ jobs:
       - name: Assistant disposable database cleanup
         if: always() && steps.isolation.outcome == 'success'
         run: docker compose -p armoney-assistant-check -f compose.assistant-tests.yaml down
+  kafka:
+    # Uses one of the existing isolated runners; never the host Docker socket.
+    if: github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64, armoney-local]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Kafka isolation and snapshot guards (offline)
+        run: |
+          python3 -B scripts/test-local-ci-guards.py
+          python3 -B scripts/test-kafka-smoke-guards.py
+          python3 -B scripts/test-kafka-snapshot.py
+          for script in infra/kafka/*.sh; do bash -n "$script"; done
+      - name: Verify isolated daemon before Kafka mutations
+        run: bash scripts/check-local-ci.sh
+      - name: Isolated Kafka transport and cold restore acceptance
+        run: |
+          project="armoney-kafka-test-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+          python3 -B scripts/kafka-smoke.py --project "$project"
+        # The smoke runner validates owned resources before its finally cleanup.
+        # Do not add unconditional Compose cleanup that bypasses its inventory gate.
   android:
     # GitHub all_external_contributors approval policy is the external-run gate.
     if: github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)

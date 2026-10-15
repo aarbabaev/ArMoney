@@ -4,6 +4,8 @@
 > `ce5175bbf2d4183b16f76977ef6f7627c2ed5ee2`, including the assistant release in PR #46.
 > Exact-head checks and deployment evidence are recorded separately in that PR.
 > Describes the source code, not the guaranteed state of running containers.
+> This revision adds the #30 Saga design and #31 optional Kafka infrastructure
+> source; Kafka cluster acceptance and deployment remain unverified.
 
 ## Navigation
 
@@ -37,13 +39,40 @@ exact-revision CI and independent review; source implementation is not deploymen
 | AI assistant | Implemented read-only C# service, local policy RAG, constrained bank reads and Android screen; local rollout verified on 2026-10-13 | Finite demonstration topics, English extracts, at most six wallets and first-page history of 50; physical-device/live-owner acceptance not run |
 | Gateway | Auth, profile/phone, wallets/balances, P2P and notifications | Further hardening |
 | Local SMS sandbox | Optional authenticated capture API and web inbox, bounded persistent file storage; no carrier delivery | Identity OTP and transaction producers are separate integration tasks |
+| Kafka infrastructure | Optional source-defined three-controller/three-broker KRaft cluster, mutual TLS, exact service ACLs and cold snapshot helper | Real-cluster acceptance and deployment pending; service adapters and financial Saga recovery remain planned |
 
 Java 21, Gradle multi-project, Javalin, PostgreSQL, Flyway, jOOQ, HikariCP;
 Spock, Testcontainers, ArchUnit; REST/OpenAPI; Docker Compose, GitHub Actions.
 Exact versions: [build.gradle](build.gradle), [runtime build](platform-runtime/build.gradle),
 [Gradle wrapper](gradle/wrapper/gradle-wrapper.properties), [Compose](compose.yaml).
-Spring, Kafka, Redis and Kubernetes are not implemented. Native iOS uses SwiftUI; Android uses Kotlin and Jetpack Compose;
+Spring, Redis and Kubernetes are not implemented. Optional Kafka infrastructure
+is defined separately in [compose.kafka.yaml](compose.kafka.yaml); the banking
+services still use their existing HTTP transport. Native iOS uses SwiftUI; Android uses Kotlin and Jetpack Compose;
 Keycloak and Caddy are optional container services, configured by compose.sso.yaml.
+
+### Proposed Kafka and Saga direction
+
+[ADR 0022](docs/adr/0022-kafka-payment-saga.md) and the
+[message and recovery contract](docs/kafka-saga-contract.md) define the future
+messaging direction. The following business flow is **planned, not implemented**;
+the current payment worker still calls Ledger over HTTP. No Kafka service
+adapter, financial inbox/outbox or Saga table is introduced by #31.
+
+```mermaid
+flowchart LR
+    P["Planned Payment Saga and command outbox"] -.-> K["Kafka command topic: infrastructure only"]
+    K -.-> L["Planned Ledger inbox: atomic debit and credit"]
+    L -.-> Q["Planned result outbox: replication confirmation gate"]
+    Q -.-> R["Kafka result topic: infrastructure only"]
+    R -.-> I["Planned Payment inbox and terminal state"]
+    I -.-> N["Existing independent notification delivery"]
+```
+
+Payment and Ledger retain separate local PostgreSQL transactions. Ledger is
+unsharded; its physical standbys replicate one primary, while user profile shards
+are a different data boundary. Stable payment IDs, authoritative confirmation
+and reconciliation remain required. Broker acknowledgements, timeouts and
+notification failures cannot establish completion or initiate refunds.
 
 ## Services and runtime
 
@@ -61,6 +90,45 @@ flowchart LR
 
 No external SMS provider is called. The sandbox does not decide whether an OTP
 is valid and is not a production delivery or multi-instance messaging service.
+
+### Optional private Kafka infrastructure
+
+[ADR 0024](docs/adr/0024-local-kafka-infrastructure.md) and
+[Kafka operations](docs/kafka-operations.md) describe #31's source-defined
+infrastructure. An explicitly selected Compose project has three dedicated KRaft
+controllers, three brokers and six project-scoped storage volumes, using the
+pinned Apache Kafka image. It has a separate internal network, no published host
+ports and no connections to banking networks or databases.
+
+```mermaid
+flowchart LR
+    Tools["Private TLS admin and synthetic test clients"] --> Brokers["Three brokers: mutual TLS 9092"]
+    Brokers --> Controllers["Three dedicated controllers: mutual TLS 9093"]
+    Brokers --> Logs["Three project-scoped broker volumes"]
+    Controllers --> Metadata["Three project-scoped metadata volumes"]
+    Payment["Planned payment adapter: not connected"] -.-> Brokers
+    Ledger["Planned ledger adapter: not connected"] -.-> Brokers
+```
+
+TLS authenticates distinct node/application principals; default-deny ACLs allow
+payment commands and ledger results only for their owning producers/consumer
+groups. Node/admin credentials are cluster-wide authority; applications are not
+superusers. Each container mounts only its credential directory read-only, with
+the signing CA excluded. Explicit formatting and identity-checked startup protect
+storage from automatic reinitialization. Topics use three replicas, minimum ISR
+two and disabled unclean election; this configuration is not measured durability.
+
+The cold snapshot helper checks node/cluster metadata, exact directory/file
+inventory and hashes. Its caller must prove all six nodes stopped, validate
+resource ownership and restore to empty volumes in a separate project. Offline
+synthetic file tests do not establish real Kafka recovery or RTO/RPO. The CI job
+must run the isolated failure and restore suite before runtime acceptance; this
+map makes no deployed-cluster readiness claim.
+
+The orchestrator owns Kafka Compose/CI, storage and security configuration and
+this map. Payment/ledger owners own future service adapters; independent QA and
+the security auditor verify transport/recovery and trust boundaries, followed by
+the independent reviewer of the integrated revision.
 
 **Base backend connections are shown below; the optional native-client SSO edge is described separately.** Wallet provisions accounts through the
 private ledger API. Payment validates user/wallet mappings and posts through ledger.
@@ -753,6 +821,8 @@ flowchart LR
 | `scripts/p2p-smoke.py` in disposable CI | Phone resolution, public P2P, duplicate/concurrent spending, outages, post-commit recovery, notification isolation and journal reconciliation |
 | Android CI | Debug APK, lint and JVM tests; emulator checks only on explicit owner request |
 | SSO browser smoke in CI | Disposable Keycloak authorization code/PKCE and gateway exchange for iOS and Android |
+| Kafka offline guards and snapshot fixtures | Isolation/parser gates and real Bash operations on synthetic files; no broker durability evidence |
+| Separate Kafka CI acceptance job | Required isolated cluster publish/consume, ACL/TLS denial, outages, retained restart and cold restore; real-cluster execution remains pending |
 | iOS validation | Paused by owner; existing script requires Mac/Xcode when resumed |
 
 ### Local build infrastructure
