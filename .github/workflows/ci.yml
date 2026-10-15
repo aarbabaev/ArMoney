@@ -156,6 +156,9 @@ jobs:
           AFFECTED_MODULES: ${{ needs.impact.outputs.modules }}
           NEED_BANK_IMAGES: ${{ needs.impact.outputs.bank_smoke == 'true' || needs.impact.outputs.sso == 'true' || needs.impact.outputs.sharding == 'true' || needs.impact.outputs.assistant_smoke == 'true' }}
         run: python3 -B scripts/run-affected-gradle.py
+      - name: Check and package disabled Keycloak provider
+        if: needs.impact.outputs.sso == 'true'
+        run: bash sso-service/provider/package-provider.sh
       - name: Validate local baseline tool safety (offline)
         if: needs.impact.outputs.baseline == 'true'
         run: |

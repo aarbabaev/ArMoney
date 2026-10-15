@@ -1,6 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 gradlew text eol=lf
+sso-service/provider/** text eol=lf
+sso-service/themes/** text eol=lf
+sso-service/Dockerfile text eol=lf
 
 # Linux runner image entrypoint must also work from Windows checkouts.
 infra/local-ci/entrypoint.sh text eol=lf

@@ -1005,6 +1005,22 @@ and does not bypass email/phone verification requirements. Execution and restore
 are separate delivery gates. See [ADR 0019](docs/adr/0019-local-synthetic-baseline.md)
 and [operations](docs/local-baseline.md).
 
+## Disabled Keycloak provider package
+
+The standalone `sso-service/provider` Java 21 module packages verification
+required actions, a password-validation marker and a keyed status observation
+resource for Keycloak 26.7.4. Its image recipe and themes are source artifacts;
+Compose and realm configuration do not activate them. Exactly three allowlisted
+SPI descriptors are packaged. Proof protocol, token policy and introspection
+factories remain unregistered, and provider observations do not grant eligibility.
+
+Auth owns verification receipts. Positive eligibility/projection authority and
+enforcement across every session/token entry path remain planned, as recorded in
+the [proof contract](auth-service/LOGIN-PROOF-CONTRACT.md). Existing web/native
+OIDC behavior remains unchanged. Standalone checks and package provenance do not
+establish runtime registration or delivery acceptance. See
+[ADR 0032](docs/adr/0032-disabled-keycloak-provider.md).
+
 ## Banking assistant feature slice
 
 [PR #46](https://github.com/aarbabaev/ArMoney/pull/46) merged after independent review and all required [CI #91 checks](https://github.com/aarbabaev/ArMoney/actions/runs/38387669495) passed on head `6a5bcfb6`. Local rollout of merged revision `ce5175bb` was verified on 2026-10-13; [issue #43](https://github.com/aarbabaev/ArMoney/issues/43) records the release checkpoint. This is dated deployment evidence, not a guarantee about future running containers. The [mission](docs/agents/missions/ai-assistant.md), [ADR 0020](docs/adr/0020-banking-ai-assistant-proposal.md), [HTTP/private trust contract](docs/ai-assistant-contract.md), [operations](docs/ai-assistant-operations.md) and [verified learning-outcome matrix](docs/ai-assistant-learning-outcomes.md) define scope and limits.
