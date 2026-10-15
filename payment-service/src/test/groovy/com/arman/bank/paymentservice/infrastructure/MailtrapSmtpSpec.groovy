@@ -131,6 +131,90 @@ class MailtrapSmtpSpec extends Specification {
         fixture?.close()
     }
 
+    def 'failed SMTP attempt emits one finite diagnostic without provider data: #stage'() {
+        given:
+        def capture=new DiagnosticCapture()
+        def reply="${code} ${enhanced} private-address@example.test synthetic-password body-secret\r\n"
+        def fixture=new SmtpFixture(serverTls,stage,code,reply)
+        def delivery=new MailtrapSmtp(new EmailConfiguration(env()),'localhost',fixture.port,clientTls.socketFactory,15000)
+        when:
+        def result=delivery.send('recipient@example.test','private-subject','body-secret')
+        fixture.done.get(5,TimeUnit.SECONDS)
+        then:
+        result==expected
+        capture.records.size()==1
+        def record=capture.records.first()
+        record.thrown==null
+        record.parameters.toList()==[MailtrapSmtp.Stage.valueOf(expectedStage),code,MailtrapSmtp.Enhanced.valueOf(category),expected]
+        def line=java.text.MessageFormat.format(record.message,record.parameters)
+        !line.contains('private-address') && !line.contains('example.test') && !line.contains('synthetic-password')
+        !line.contains('body-secret') && !line.contains('private-subject')
+        fixture.failure==null
+        cleanup:
+        fixture?.close()
+        capture?.close()
+        where:
+        stage | code | enhanced | expectedStage | category | expected
+        'auth' | 535 | '5.7.8' | 'AUTH' | 'SECURITY_POLICY' | EmailDelivery.Result.PERMANENT_FAILURE
+        'mail' | 550 | '5.1.0' | 'MAIL' | 'ADDRESS' | EmailDelivery.Result.PERMANENT_FAILURE
+        'rcpt' | 550 | '5.1.1' | 'RCPT' | 'ADDRESS' | EmailDelivery.Result.PERMANENT_FAILURE
+        'data-start' | 554 | '5.3.0' | 'DATA' | 'MAIL_SYSTEM' | EmailDelivery.Result.PERMANENT_FAILURE
+        'data' | 550 | '5.7.0' | 'DATA_ACK' | 'SECURITY_POLICY' | EmailDelivery.Result.PERMANENT_FAILURE
+        'data' | 451 | '4.3.0' | 'DATA_ACK' | 'MAIL_SYSTEM' | EmailDelivery.Result.TRANSIENT_FAILURE
+    }
+
+    def 'local recipient rejection emits no mailbox or exception text'() {
+        given:
+        def capture=new DiagnosticCapture()
+        def delivery=new MailtrapSmtp(new EmailConfiguration(env()),'localhost',9,clientTls.socketFactory,15000)
+        expect:
+        delivery.send('private-address@example.test,second@example.test','private-subject','body-secret')==EmailDelivery.Result.PERMANENT_FAILURE
+        capture.records.size()==1
+        capture.records.first().parameters.toList()==[MailtrapSmtp.Stage.LOCAL_RECIPIENT,0,MailtrapSmtp.Enhanced.NONE,EmailDelivery.Result.PERMANENT_FAILURE]
+        capture.records.first().thrown==null
+        cleanup:
+        capture?.close()
+    }
+
+    def 'timeout emits once as unknown and successful attempts emit no failure diagnostic'() {
+        given:
+        def capture=new DiagnosticCapture()
+        def fixture=new SmtpFixture(serverTls,stage,250)
+        def delivery=new MailtrapSmtp(new EmailConfiguration(env()),'localhost',fixture.port,clientTls.socketFactory,stage=='stall' ? 200 : 15000)
+        expect:
+        delivery.send('recipient@example.test','subject','body')==expected
+        capture.records.size()==count
+        stage!='stall' || capture.records.first().parameters.toList()==[MailtrapSmtp.Stage.UNKNOWN,0,MailtrapSmtp.Enhanced.NONE,EmailDelivery.Result.TRANSIENT_FAILURE]
+        cleanup:
+        fixture?.close()
+        capture?.close()
+        where:
+        stage | expected | count
+        'stall' | EmailDelivery.Result.TRANSIENT_FAILURE | 1
+        'data' | EmailDelivery.Result.ACCEPTED | 0
+        'lost-ack' | EmailDelivery.Result.TRANSIENT_FAILURE | 1
+    }
+
+    def 'unproven command and malformed status cannot escape finite diagnostic categories'() {
+        given:
+        def failure=new org.eclipse.angus.mail.smtp.SMTPAddressFailedException(
+            new jakarta.mail.internet.InternetAddress('private-address@example.test'),command,code,reply)
+        def diagnostic=MailtrapSmtp.diagnostic(failure,550,'550 5.7.0 unrelated fallback')
+        expect:
+        diagnostic.stage()==MailtrapSmtp.Stage.valueOf(stage)
+        diagnostic.code()==numeric
+        diagnostic.enhanced()==MailtrapSmtp.Enhanced.valueOf(enhanced)
+        !diagnostic.toString().contains('private-address') && !diagnostic.toString().contains('synthetic-password')
+        where:
+        command | code | reply | stage | numeric | enhanced
+        'RCPT TO:<private-address@example.test> synthetic-password' | 550 | '550 5.7.0 private-address@example.test' | 'RCPT' | 550 | 'SECURITY_POLICY'
+        'UNPROVEN synthetic-password' | 550 | '550 5.1.1 private-address@example.test' | 'UNKNOWN' | 550 | 'ADDRESS'
+        'RCPTX private-address@example.test' | -1 | '550 5.7.0 synthetic-password' | 'UNKNOWN' | 0 | 'NONE'
+        'MAIL FROM:<private-address@example.test>' | 999 | '999 5.7.0 synthetic-password' | 'MAIL' | 0 | 'NONE'
+        'RCPT TO:<private-address@example.test>' | 550 | '550 4.7.0 synthetic-password' | 'RCPT' | 550 | 'NONE'
+        'RCPT TO:<private-address@example.test>' | 550 | 'synthetic-password 550 5.7.0' | 'RCPT' | 550 | 'NONE'
+    }
+
     def 'TLS omission or refusal never sends credentials or content'() {
         given:
         def fixture=new SmtpFixture(serverTls,stage,454)
@@ -285,6 +369,25 @@ class MailtrapSmtpSpec extends Specification {
         if (process?.isAlive()) { process.destroyForcibly(); process.waitFor(5,TimeUnit.SECONDS) }
         fixture?.close()
     }
+    static class DiagnosticCapture implements AutoCloseable {
+        final java.util.logging.Logger logger=java.util.logging.Logger.getLogger(MailtrapSmtp.name)
+        final List<java.util.logging.LogRecord> records=[]
+        final java.util.logging.Level previous=logger.level
+        final boolean parents=logger.useParentHandlers
+        final java.util.logging.Handler handler
+        DiagnosticCapture() {
+            def captured=records
+            handler=new java.util.logging.Handler() {
+                void publish(java.util.logging.LogRecord record) { captured.add(record) }
+                void flush() {}
+                void close() {}
+            }
+            logger.useParentHandlers=false
+            logger.level=java.util.logging.Level.ALL
+            logger.addHandler(handler)
+        }
+        void close() { logger.removeHandler(handler); logger.level=previous; logger.useParentHandlers=parents }
+    }
     static class NaturalExitProbe {
         static void main(String[] args) {
             def keys=KeyStore.getInstance('PKCS12')
@@ -338,9 +441,10 @@ class MailtrapSmtpSpec extends Specification {
                                 ['', 'synthetic-user', 'synthetic-password'],
                                 ['synthetic-user', 'synthetic-user', 'synthetic-password']]
                             reply(stage=='auth' ? (failureReply ?: "${code} synthetic auth rejection") : '235 Authenticated')
-                        } else if (line.startsWith('MAIL FROM:')) reply('250 Sender accepted')
+                        } else if (line.startsWith('MAIL FROM:')) reply(stage=='mail' ? (failureReply ?: "${code} synthetic sender rejection") : '250 Sender accepted')
                         else if (line.startsWith('RCPT TO:')) reply(stage=='rcpt' ? (failureReply ?: "${code} recipient@example.test synthetic rejection") : '250 Recipient accepted')
                         else if (line=='DATA') {
+                            if (stage=='data-start') { reply(failureReply ?: "${code} synthetic DATA rejection"); continue }
                             reply('354 Send content')
                             def lines=[]
                             while ((line=reader.readLine())!=null && line!='.') lines.add(line)
