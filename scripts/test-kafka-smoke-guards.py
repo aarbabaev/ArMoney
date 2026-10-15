@@ -654,7 +654,8 @@ class FormatDiagnostics(unittest.TestCase):
             (root / 'cluster.id').write_text(secret if failure == 'cluster' else 'A' * 22, newline='\n')
             (root / 'empty.sh').write_text(
                 "echo 'Storage preparation requires uid/gid 1000' >&2; exit 1\n" if failure == 'ownership' else 'exit 0\n', newline='\n')
-            (root / 'tool.sh').write_text("printf '%s\\n' '" + secret + "' >&2; exit 17\n", newline='\n')
+            (root / 'tool.sh').write_text("#!/bin/bash\nprintf '%s\\n' '" + secret + "' >&2; exit 17\n", newline='\n')
+            (root / 'tool.sh').chmod(0o700)
             if failure == 'nonempty':
                 (data / 'unrecognized').write_text('preserved synthetic data')
             source = (kafka.ROOT / 'infra/kafka/format.sh').read_text()
