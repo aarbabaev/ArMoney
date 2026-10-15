@@ -1,19 +1,19 @@
 import { Component, inject } from "@angular/core";
-import { FormsModule } from "@angular/forms";
+import { FormControl, FormGroup, ReactiveFormsModule } from "@angular/forms";
 import { Bank } from "../core/bank";
 @Component({
   standalone: true,
-  imports: [FormsModule],
+  imports: [ReactiveFormsModule],
   template: `<h1>Profile</h1>
     <section class="panel">
-      <form (ngSubmit)="bank.saveName(name)">
+      <form [formGroup]="form" (ngSubmit)="bank.saveName(form.controls.name.value)">
         <label for="name">Display name</label
         ><input
           id="name"
           name="name"
           maxlength="100"
           autocomplete="name"
-          [(ngModel)]="name"
+          formControlName="name"
         /><button [disabled]="bank.busy()">Save name</button>
       </form>
       <h2>Registered phone</h2>
@@ -38,5 +38,7 @@ import { Bank } from "../core/bank";
 })
 export class Profile {
   bank = inject(Bank);
-  name = this.bank.profile()?.display_name ?? "";
+  readonly form = new FormGroup({
+    name: new FormControl(this.bank.profile()?.display_name ?? "", { nonNullable: true }),
+  });
 }
