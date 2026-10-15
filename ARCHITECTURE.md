@@ -827,6 +827,12 @@ flowchart LR
 
 ### Local build infrastructure
 
+Pull-request CI selects affected components and their dependency/acceptance closure.
+Unchanged components record explicit no-op checks; full release checks are manually
+available. The duplicate main-push build is disabled. See [affected CI](docs/affected-ci.md)
+and [ADR 0028](docs/adr/0028-affected-ci.md) for the selection and fixture limits.
+
+
 GitHub Actions schedules backend and Android work on disposable Linux Docker runners
 labelled `armoney-local`. Up to two allowlisted slots run in separate Windows controller
 processes. Each slot registers one job at a time, then removes that job's runner,
