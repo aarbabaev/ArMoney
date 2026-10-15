@@ -20,22 +20,30 @@ fi
 [[ -z "$owned" ]] || { echo 'Project is not empty' >&2; exit 1; }
 cleanup() {
   result=$?
+  cleanup_ok=true
   trap - EXIT
   # Only this freshly generated project on the already verified CI daemon.
   if ! "${compose[@]}" down --volumes --remove-orphans --timeout 20 >/dev/null 2>&1; then
     echo 'Disposable observer cleanup failed' >&2
     result=1
+    cleanup_ok=false
   fi
   if ! remaining=$(docker ps -aq --filter "label=com.docker.compose.project=$project"); then
     echo 'Cannot verify disposable cleanup' >&2
     result=1
+    cleanup_ok=false
   elif [[ -n "$remaining" ]]; then
     echo 'Disposable observer containers remain' >&2
     result=1
+    cleanup_ok=false
   fi
   if ! docker image rm "$OBSERVER_ACCEPTANCE_IMAGE" >/dev/null 2>&1; then
     echo 'Disposable observer image cleanup failed' >&2
     result=1
+    cleanup_ok=false
+  fi
+  if [[ "$cleanup_ok" == true ]]; then
+    echo 'PASS: observer-owned project absent and unique image removed'
   fi
   exit "$result"
 }

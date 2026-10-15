@@ -14,6 +14,7 @@ import json
 import os
 import secrets
 import ssl
+import sys
 import threading
 import time
 import urllib.error
@@ -34,6 +35,33 @@ TARGETS = {
     "OBSERVER_BRIDGE_URL": "http://auth-service:8090",
     "OBSERVER_ISSUER": "http://sso-a:8080/realms/armoney",
 }
+PHASES = frozenset({"START", "KEY_VALIDATION", "READINESS", "ADMIN_LOGIN", "REALM_SETUP",
+                    "CLIENT_SETUP", "ACTION_SETUP", "USER_SETUP", "BROWSER_RENDER", "SEND_RPC",
+                    "CROSS_NODE", "READ_ONLY", "EXPIRY", "TAB_REMOVAL", "ROOT_REMOVAL",
+                    "DISABLE_DELETE", "CLEANUP", "COMPLETE"})
+BRIDGE_ERRORS = frozenset({"BRIDGE_BODY", "BRIDGE_OBSERVER", "BRIDGE_DTO", "BRIDGE_CONTACTS", "BRIDGE_UNKNOWN"})
+current_phase = "START"
+failure_phase = None
+
+
+def phase(label):
+    global current_phase
+    if label not in PHASES:
+        raise ValueError("invalid diagnostic phase")
+    current_phase = label
+    print("PHASE: OBSERVER69 " + label, flush=True)
+
+
+def remember_failure():
+    global failure_phase
+    if failure_phase is None:
+        failure_phase = current_phase
+
+
+def bridge_error(label):
+    # Never stringify a response, exception, tuple or unvalidated capture value.
+    label = label if isinstance(label, str) and label in BRIDGE_ERRORS else "BRIDGE_UNKNOWN"
+    print("BRIDGE_ERROR: OBSERVER69 " + label, flush=True)
 
 
 def require(condition, label):
@@ -127,6 +155,7 @@ def provision_realm(admin, authorization):
 
 
 def provision_client_and_action(admin, authorization):
+    phase("CLIENT_SETUP")
     target = admin + "/admin/realms/armoney"
     expect(201, request("POST", target + "/clients", {
         "clientId": "armoney-ios", "enabled": True, "protocol": "openid-connect",
@@ -136,6 +165,7 @@ def provision_client_and_action(admin, authorization):
         "redirectUris": ["http://127.0.0.1:18766/observer-callback"],
         "webOrigins": [], "attributes": {"pkce.code.challenge.method": "S256"}},
         authorization), "exact synthetic PKCE client")
+    phase("ACTION_SETUP")
     actions_url = target + "/authentication/required-actions"
     actions = expect(200, request("GET", actions_url, headers=authorization), "registered required actions")
     alias = "armoney-verify-email-code"
@@ -179,7 +209,7 @@ def controls(node, operation, flow):
 
 def serve_bridge():
     """Capture only genuine provider requests; observe B, then ALWAYS deny provider."""
-    state = {"count": 0, "flow": None, "observation": None, "error": False}
+    state = {"count": 0, "flow": None, "observation": None, "error": False, "error_code": None}
     lock = threading.Lock()
     control = env("OBSERVER_FIXTURE_CONTROL_KEY")
     bridge_key = env("SSO_VERIFICATION_BRIDGE_KEY")
@@ -211,17 +241,21 @@ def serve_bridge():
                     self.headers.get("X-ArMoney-SSO-Bridge-Key", ""), bridge_key):
                 self.reply(503)
                 return
+            bridge_phase = "BRIDGE_BODY"
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 require(0 < length <= 12288, "bounded bridge body")
                 body = json.loads(self.rfile.read(length))
                 require(set(body) == FLOW | {"command_id", "phone_number", "email"}, "exact enrollment request")
                 flow = {key: body[key] for key in FLOW}
+                bridge_phase = "BRIDGE_OBSERVER"
                 observed = expect(200, observer(url("OBSERVER_NODE_B_URL"), flow), "bridge observes node B")
+                bridge_phase = "BRIDGE_DTO"
                 require(set(observed) == OBSERVATION, "exact twelve-field observation")
                 require(all(observed[k] == flow[k] for k in FLOW), "exact observed binding")
                 require(observed["enabled"] is True and observed["authentication_session_active"] is True,
                         "literal current flags")
+                bridge_phase = "BRIDGE_CONTACTS"
                 require(observed["username"] == body["phone_number"] == observed["phone_number"]
                         and observed["email"] == body["email"], "current canonical contacts")
                 with lock:
@@ -229,14 +263,24 @@ def serve_bridge():
             except Exception:
                 with lock:
                     state["error"] = True
+                    state["error_code"] = bridge_phase
             self.reply(503)  # Never fabricated receipts, ACTIVE, tokens or banking success.
 
-    server = http.server.ThreadingHTTPServer((env("OBSERVER_BRIDGE_BIND"), int(env("OBSERVER_BRIDGE_PORT"))), Handler)
+    class PrivateServer(http.server.ThreadingHTTPServer):
+        def handle_error(self, request, client_address):
+            # BaseServer normally prints a traceback (including private values).
+            with lock:
+                state["error"] = True
+                state["error_code"] = "BRIDGE_UNKNOWN"
+            bridge_error("BRIDGE_UNKNOWN")
+
+    server = PrivateServer((env("OBSERVER_BRIDGE_BIND"), int(env("OBSERVER_BRIDGE_PORT"))), Handler)
     server.daemon_threads = True
     server.serve_forever(poll_interval=0.2)
 
 
 def acceptance():
+    phase("READINESS")
     from playwright.sync_api import sync_playwright
     a, b = url("OBSERVER_NODE_A_URL"), url("OBSERVER_NODE_B_URL")
     require(urllib.parse.urlsplit(a).netloc != urllib.parse.urlsplit(b).netloc, "distinct direct node addresses")
@@ -250,11 +294,13 @@ def acceptance():
         return expect(200, request("GET", bridge + "/capture", headers=capture_headers), "private capture")
 
     # Only the explicitly isolated fixture's bootstrap admin is used.
+    phase("ADMIN_LOGIN")
     token = expect(200, request("POST", admin + "/realms/master/protocol/openid-connect/token",
                    {"client_id": "admin-cli", "grant_type": "password",
                     "username": os.environ.get("OBSERVER_ADMIN_USERNAME", "admin"),
                     "password": env("SSO_ADMIN_PASSWORD")}, form=True), "fixture admin authentication")
     authorization = {"Authorization": "Bearer " + token["access_token"]}
+    phase("REALM_SETUP")
     provision_realm(admin, authorization)
     users = admin + "/admin/realms/armoney/users"
     phone = "+97150" + str(secrets.randbelow(10**7)).zfill(7)
@@ -267,6 +313,7 @@ def acceptance():
             discovery = expect(200, request("GET", node + "/realms/armoney/.well-known/openid-configuration"),
                                "new realm visible on direct node")
             require(discovery["issuer"] == issuer, "both nodes expose common fixed issuer")
+        phase("USER_SETUP")
         expect(201, request("POST", users, {"username": phone, "email": email, "enabled": True,
                    "emailVerified": False, "requiredActions": ["armoney-verify-email-code"],
                    "credentials": [{"type": "password", "value": password, "temporary": False}]}, authorization), "synthetic user")
@@ -274,6 +321,7 @@ def acceptance():
         require(len(listed) == 1, "unique synthetic user")
         identifier = listed[0]["id"]
 
+        phase("BROWSER_RENDER")
         with sync_playwright() as p:
             browser = p.chromium.launch()
             context = browser.new_context()  # No ignore_https_errors or certificate bypass.
@@ -282,6 +330,7 @@ def acceptance():
                           lambda route: (callback_count.append(True), route.abort()))
 
             def login():
+                phase("BROWSER_RENDER")
                 before = capture()["count"]
                 page = context.new_page()
                 verifier = secrets.token_urlsafe(48)
@@ -296,10 +345,13 @@ def acceptance():
                 page.locator("#kc-login").click()
                 page.locator('button[name="operation"][value="send"]').wait_for()
                 require(capture()["count"] == before and not callback_count, "initial render zero RPC/callback")
+                phase("SEND_RPC")
                 page.locator('button[name="operation"][value="send"]').click()
                 deadline = time.monotonic() + 12
                 while time.monotonic() < deadline:
                     item = capture()
+                    if item["error"]:
+                        bridge_error(item.get("error_code"))
                     require(not item["error"], "bridge observation failed")
                     if item["count"] == before + 1:
                         require(not callback_count, "denied bridge cannot complete login")
@@ -308,12 +360,14 @@ def acceptance():
                 raise AssertionError("bounded genuine bridge request missing")
 
             page, flow, first = login()
+            phase("CROSS_NODE")
             require(flow["issuer"] == issuer and flow["subject"] == identifier, "issuer and synthetic subject")
             left, right = controls(a, "inspect", flow), controls(b, "inspect", flow)
             require(left["root_present"] and left["tab_present"] and right["root_present"]
                     and right["tab_present"] and left["root_timestamp"] == right["root_timestamp"]
                     and left["action"] == right["action"] == "REQUIRED_ACTIONS"
                     and left["authenticated_user_present"] and right["authenticated_user_present"], "committed cross-node cluster proof")
+            phase("READ_ONLY")
             for _ in range(3):
                 current = expect(200, observer(b, flow), "read-only observation")
                 require(current == first and controls(b, "inspect", flow)["root_timestamp"] == right["root_timestamp"], "observer cannot refresh expiry or root timestamp")
@@ -321,16 +375,19 @@ def acceptance():
                 changed = dict(flow, **{field: replacement})
                 expect(503, observer(b, changed), "binding mismatch denial")
             expect(401, observer(b, flow, "invalid-fixture-status-key"), "private credential denial")
+            phase("TAB_REMOVAL")
             controls(a, "delete-tab", flow)
             require(not controls(b, "inspect", flow)["tab_present"], "committed tab removal visible on B")
             expect(503, observer(b, flow), "removed tab denial")
             page.close()
             page, flow, first = login()
+            phase("ROOT_REMOVAL")
             controls(a, "delete-root", flow)
             require(not controls(b, "inspect", flow)["root_present"], "committed root removal visible on B")
             expect(503, observer(b, flow), "removed root denial")
             page.close()
             page, flow, first = login()
+            phase("EXPIRY")
             deadline = datetime.datetime.fromisoformat(first["authentication_session_expires_at"].replace("Z", "+00:00")).timestamp()
             remaining = deadline - controls(b, "inspect", flow)["server_time"]
             require(0 < remaining <= 45, "fixture USER lifespan must permit bounded real expiry")
@@ -341,6 +398,7 @@ def acceptance():
             expect(503, observer(b, flow), "actual USER expiry denial")
             page.close()
             page, flow, first = login()
+            phase("DISABLE_DELETE")
             expect(204, request("PUT", users + "/" + identifier, {"enabled": False}, authorization), "disable synthetic user")
             expect(503, observer(b, flow), "disabled user denial")
             expect(204, request("DELETE", users + "/" + identifier, headers=authorization), "delete synthetic user")
@@ -348,8 +406,10 @@ def acceptance():
             expect(503, observer(b, flow), "deleted user denial")
             context.close()
             browser.close()
-        print("PASS: committed two-node observation, read-only expiry, tuple/key rejection, tab/root removal and user disable/delete; bridge always unavailable")
     finally:
+        if sys.exc_info()[0] is not None:
+            remember_failure()
+        phase("CLEANUP")
         try:
             if identifier is not None:
                 expect(204, request("DELETE", users + "/" + identifier, headers=authorization), "synthetic user cleanup")
@@ -359,17 +419,26 @@ def acceptance():
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("bridge", "acceptance"))
-    args = parser.parse_args()
-    require(os.environ.get("CI") == "true" and os.environ.get("OBSERVER_ACCEPTANCE_ISOLATED") == "true",
-            "explicit disposable acceptance guard")
+    global current_phase, failure_phase
+    current_phase, failure_phase = "START", None
     try:
+        class PrivateArgumentParser(argparse.ArgumentParser):
+            def error(self, message):
+                raise ValueError("invalid private harness arguments")
+        parser = PrivateArgumentParser(description=__doc__)
+        parser.add_argument("mode", choices=("bridge", "acceptance"))
+        args = parser.parse_args()
+        phase("KEY_VALIDATION")
+        require(os.environ.get("CI") == "true" and os.environ.get("OBSERVER_ACCEPTANCE_ISOLATED") == "true",
+                "explicit disposable acceptance guard")
         validate_targets()
         validate_keys()
         serve_bridge() if args.mode == "bridge" else acceptance()
+        phase("COMPLETE")
+        print("PASS: OBSERVER69 COMPLETE", flush=True)
     except Exception:
-        raise SystemExit("FAIL: provider observer acceptance (private details redacted)") from None
+        remember_failure()
+        raise SystemExit("FAIL: OBSERVER69 " + failure_phase) from None
 
 
 if __name__ == "__main__":
