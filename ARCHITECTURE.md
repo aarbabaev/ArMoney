@@ -1063,7 +1063,7 @@ caller-owned preparation/ACK helpers stage existing-mapped projection under the
 global verification-control-first/projection-control-second transaction order.
 ACK can yield PROJECTED only. Final disabled auth source has independent bounded
 source/security clearance and passing focused unit/PostgreSQL evidence, including
-the trusted timing-anchor regression. Full auth check is running without a result;
+the trusted timing-anchor regression. Full auth check passed 513 tests without failures, errors or skips;
 published-head CI and runtime acceptance remain separate gates.
 
 The assigned timing adjustment makes admission return an auth DB timestamp
