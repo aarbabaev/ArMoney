@@ -150,6 +150,7 @@ jobs:
           python3 -m playwright install --with-deps chromium
           python3 -B scripts/test-sso-browser-callback.py
           python3 -B scripts/test-web-node-ca.py
+          python3 -B scripts/test-web-logout.py
           docker compose up --build -d
           for i in $(seq 1 60); do
             if docker compose cp edge:/data/caddy/pki/authorities/local/root.crt "$SSO_CA_FILE"; then break; fi
