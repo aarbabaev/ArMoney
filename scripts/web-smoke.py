@@ -25,7 +25,12 @@ from playwright.sync_api import sync_playwright, expect
 
 PUBLIC = "https://localhost:8443"
 ADMIN = "http://127.0.0.1:9090/sso"
-TLS = ssl.create_default_context(cafile=os.environ["SSO_CA_FILE"])
+TLS_CA_FILE = os.path.abspath(os.environ["SSO_CA_FILE"])
+TLS = ssl.create_default_context(cafile=TLS_CA_FILE)
+# Chromium uses the installed OS CA, but route.fetch uses Playwright's Node
+# driver. Trust the same disposable root before that driver is started; never
+# disable certificate or hostname verification for lost-response injection.
+os.environ["NODE_EXTRA_CA_CERTS"] = TLS_CA_FILE
 
 
 def request(method, path, body=None, token=None, admin=False, form=False, key=None):
