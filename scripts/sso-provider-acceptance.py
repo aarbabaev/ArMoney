@@ -36,7 +36,8 @@ TARGETS = {
     "OBSERVER_ISSUER": "http://sso-a:8080/realms/armoney",
 }
 PHASES = frozenset({"START", "KEY_VALIDATION", "READINESS", "ADMIN_LOGIN", "REALM_SETUP",
-                    "CLIENT_SETUP", "ACTION_SETUP", "USER_SETUP", "BROWSER_RENDER", "SEND_RPC",
+                    "CLIENT_SETUP", "ACTION_SETUP", "ACTION_LIST", "ACTION_AVAILABLE", "ACTION_REGISTER",
+                    "ACTION_CONFIG", "USER_SETUP", "BROWSER_RENDER", "SEND_RPC",
                     "CROSS_NODE", "READ_ONLY", "EXPIRY", "TAB_REMOVAL", "ROOT_REMOVAL",
                     "DISABLE_DELETE", "CLEANUP", "COMPLETE"})
 BRIDGE_ERRORS = frozenset({"BRIDGE_BODY", "BRIDGE_OBSERVER", "BRIDGE_DTO", "BRIDGE_CONTACTS", "BRIDGE_UNKNOWN"})
@@ -167,17 +168,25 @@ def provision_client_and_action(admin, authorization):
         authorization), "exact synthetic PKCE client")
     phase("ACTION_SETUP")
     actions_url = target + "/authentication/required-actions"
+    phase("ACTION_LIST")
     actions = expect(200, request("GET", actions_url, headers=authorization), "registered required actions")
     alias = "armoney-verify-email-code"
     if not any(action["alias"] == alias for action in actions):
+        phase("ACTION_AVAILABLE")
         available = expect(200, request("GET", target + "/authentication/unregistered-required-actions",
                                        headers=authorization), "available required action providers")
         require(any(action["providerId"] == alias for action in available), "actual email action provider installed")
-        expect(201, request("POST", target + "/authentication/register-required-action",
+        phase("ACTION_REGISTER")
+        # Pinned 26.7.4 AuthenticationManagementResource.registerRequiredAction
+        # returns void (204), unlike client creation (201). Available metadata
+        # uses providerId/name; it is not the generic provider metadata id DTO.
+        expect(204, request("POST", target + "/authentication/register-required-action",
                             {"providerId": alias, "name": "Disposable email verification"}, authorization),
                "register actual email action")
+        phase("ACTION_LIST")
         actions = expect(200, request("GET", actions_url, headers=authorization), "registered email action")
     require(any(action["alias"] == alias for action in actions), "email action is registered")
+    phase("ACTION_CONFIG")
     for action in actions:
         action["enabled"] = action["alias"] == alias
         action["defaultAction"] = False
