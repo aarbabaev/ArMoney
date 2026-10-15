@@ -83,6 +83,17 @@ def records(page):
     }""")
 
 
+def complete_provider_logout(page):
+    # Provider tokens are deliberately removed after exchange. Without an
+    # id_token_hint, Keycloak asks the user to confirm its active cookie session.
+    logout_url = PUBLIC + "/sso/realms/armoney/protocol/openid-connect/logout"
+    page.wait_for_url(lambda url: str(url).split("?", 1)[0] == logout_url)
+    expect(page.locator("#kc-logout")).to_be_visible()
+    page.locator("#kc-logout").click()
+    page.wait_for_url(PUBLIC + "/home")
+    expect(page.get_by_role("button", name="Sign in securely", exact=False)).to_be_visible()
+
+
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch()
     # TLS must succeed using the CA installed by the disposable runner.
@@ -335,10 +346,15 @@ with sync_playwright() as playwright:
     require(not any(token in all_durable for token in sessions), "Bank credentials must not persist in browser storage")
     require("access_token" not in all_durable and "refresh_token" not in all_durable, "Provider credentials must not persist")
     navigate(page, "Profile")
-    page.get_by_role("main").get_by_role("button", name="Sign out", exact=True).click()
-    expect(page.get_by_role("button", name="Sign in securely", exact=False)).to_be_visible()
+    with page.expect_response(lambda response: response.url == PUBLIC + "/v1/auth/logout"
+                              and response.request.method == "POST") as logout_response:
+        page.get_by_role("main").get_by_role("button", name="Sign out", exact=True).click()
+    require(logout_response.value.status == 204, "Bank session revocation must succeed")
+    complete_provider_logout(page)
     status(401, request("GET", "/v1/auth/me", token=token_a))
     require(PUBLIC + "|" + owner_a + "|cards" in records(page), "Sign-out must preserve owner-scoped demo records")
+    page.get_by_role("button", name="Sign in securely", exact=False).click()
+    expect(page.locator("#username")).to_be_visible()
     context.close()
     browser.close()
 
