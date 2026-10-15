@@ -1,12 +1,14 @@
 import { Component, inject } from "@angular/core";
 import { FormControl, FormGroup, ReactiveFormsModule } from "@angular/forms";
 import { Bank } from "../core/bank";
+import { FormReadiness } from "../core/form-readiness";
 @Component({
   standalone: true,
-  imports: [ReactiveFormsModule],
+  imports: [ReactiveFormsModule, FormReadiness],
   template: `<h1>Profile</h1>
     <section class="panel">
       <form [formGroup]="form" (ngSubmit)="bank.saveName(form.controls.name.value)">
+        <fieldset disabled armoneyFormReady class="form-fields">
         <label for="name">Display name</label
         ><input
           id="name"
@@ -15,6 +17,7 @@ import { Bank } from "../core/bank";
           autocomplete="name"
           formControlName="name"
         /><button [disabled]="bank.busy()">Save name</button>
+        </fieldset>
       </form>
       <h2>Registered phone</h2>
       <p>

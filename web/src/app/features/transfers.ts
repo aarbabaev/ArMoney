@@ -2,11 +2,12 @@ import { Component, inject } from "@angular/core";
 import { ActivatedRoute } from "@angular/router";
 import { FormsModule } from "@angular/forms";
 import { Bank } from "../core/bank";
+import { FormReadiness } from "../core/form-readiness";
 import { Command, minor, ready } from "../core/contracts";
 import { PaymentList } from "./payment-list";
 @Component({
   standalone: true,
-  imports: [FormsModule, PaymentList],
+  imports: [FormsModule, PaymentList, FormReadiness],
   template: `<h1>Transfers</h1>
     <p>Send AED to a registered UAE mobile number.</p>
     @if (bank.pending(); as p) {
@@ -29,6 +30,7 @@ import { PaymentList } from "./payment-list";
       </section>
     } @else {
       <form class="panel" (ngSubmit)="review()">
+        <fieldset disabled armoneyFormReady class="form-fields">
         <label for="source">Source account</label
         ><select
           id="source"
@@ -82,6 +84,7 @@ import { PaymentList } from "./payment-list";
         >
           Review transfer
         </button>
+        </fieldset>
       </form>
       @if (confirmation; as c) {
         <section class="panel tonal" aria-labelledby="review">

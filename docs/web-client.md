@@ -91,9 +91,13 @@ races and QA pagination, immutable-notification and card-capacity findings have 
 fixes. Independent exact-revision retest remains required. Final PR records exact revision,
 executed commands, outcomes, blocked checks and deployment status. No device acceptance or persistent deployment is implied by a build.
 
-The profile uses synchronous reactive form controls so initial template-driven
-registration cannot overwrite an early edit. Its browser regression enters text
-at input insertion and checks retention and the submitted profile payload.
+The profile uses synchronous reactive form controls. Every new profile,
+assistant, transfer and demo-card form remains natively disabled until its first
+render and Angular stability complete, so controls cannot accept edits before
+their bindings are ready. Browser regressions enter values at the earliest
+natively editable point and check retention, node identity and submitted
+payloads. Arbitrary script writes to disabled controls are outside this user
+interaction guarantee.
 SEC-WEB-002 keeps candidate session expiry local until the callback generation
 and identity checks pass. SEC-WEB-003 distinguishes an absent IndexedDB key from
 a present corrupt record, including a stored `undefined` value, using key and

@@ -1,19 +1,22 @@
 import { Component, inject } from "@angular/core";
 import { FormsModule } from "@angular/forms";
 import { Bank } from "../core/bank";
+import { FormReadiness } from "../core/form-readiness";
 import { assistantTime } from "../core/assistant";
 @Component({
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, FormReadiness],
   template: `<h1>Assistant</h1>
     <section class="panel tonal">
       <h2>Ask about your bank</h2>
       <p>Read-only help with demonstration rules, balances and your last visible transaction. The assistant cannot send money.</p>
       <p>Each question is independent. Only the current answer is kept in memory until sign-out or reload. Minimized questions and policy excerpts may reach the configured OpenAI provider; provider retention may apply. Avoid entering passwords or sensitive personal details.</p>
       <form (ngSubmit)="send()">
+        <fieldset disabled armoneyFormReady class="form-fields">
         <label for="assistant-question">Your question</label>
         <textarea id="assistant-question" name="question" [(ngModel)]="question" rows="3" required [disabled]="bank.assistant().loading"></textarea>
         <button [disabled]="bank.assistant().loading || !question.trim()">{{ bank.assistant().loading ? 'Asking…' : 'Send question' }}</button>
+        </fieldset>
       </form>
       @if (bank.assistant().loading) { <p role="status">Checking available evidence…</p> }
       @if (bank.assistant().error) { <p role="alert">{{ bank.assistant().error }}</p> }

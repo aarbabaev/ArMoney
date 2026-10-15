@@ -1,10 +1,11 @@
 import { Component, inject } from "@angular/core";
 import { FormsModule } from "@angular/forms";
 import { Bank } from "../core/bank";
+import { FormReadiness } from "../core/form-readiness";
 import { ready } from "../core/contracts";
 @Component({
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, FormReadiness],
   template: `<h1>Demonstration cards</h1>
     <p>
       Local demonstrations only. These are not payment cards, have no PAN or
@@ -14,6 +15,7 @@ import { ready } from "../core/contracts";
       <p role="alert">{{ bank.cardError() }}</p>
     }
     <form class="panel" (ngSubmit)="issue()">
+      <fieldset disabled armoneyFormReady class="form-fields">
       <label for="card-wallet">Account</label
       ><select id="card-wallet" name="wallet" [(ngModel)]="walletId">
         @for (w of bank.wallets(); track w.id) {
@@ -28,6 +30,7 @@ import { ready } from "../core/contracts";
       ><button [disabled]="bank.busy() || !!bank.cardError()">
         Create demonstration card
       </button>
+      </fieldset>
     </form>
     <div class="grid">
       @for (c of bank.cards(); track c.id) {

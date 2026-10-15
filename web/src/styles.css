@@ -247,6 +247,12 @@ p {
 .recovery {
   border: 2px solid var(--primary);
 }
+.form-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
 label {
   display: block;
   margin: 20px 0 8px;
