@@ -19,14 +19,20 @@ import javax.crypto.spec.SecretKeySpec;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 
-/** Unwired staging repository. It creates neither banking identities nor positive eligibility. */
+/** Staging by default; explicit completion materializes permanently denied principals, never positive eligibility. */
 public final class PostgresIdentityVerificationStore implements IdentityVerificationStore {
     private final Database database;
     private final VerificationCrypto crypto;
     private final byte[] retentionKey,fingerprint;
     private final Policy policy;
     private final PostgresVerificationProjectionStore projections;
+    private final String completionWriter;
     public PostgresIdentityVerificationStore(Database database,VerificationCrypto crypto,byte[] retentionKey,Policy policy,PostgresVerificationProjectionStore projections){
+        this(database,crypto,retentionKey,policy,projections,null);
+    }
+    public PostgresIdentityVerificationStore(Database database,VerificationCrypto crypto,byte[] retentionKey,Policy policy,PostgresVerificationProjectionStore projections,String completionWriter){
+        if(completionWriter!=null&&(projections==null||!completionWriter.matches("[A-Za-z0-9_-]{1,64}")))throw new IllegalArgumentException("Invalid completion writer" );
+        this.completionWriter=completionWriter;
         this.database=Objects.requireNonNull(database);this.crypto=Objects.requireNonNull(crypto);this.policy=Objects.requireNonNull(policy);this.projections=projections;
         if(retentionKey==null||retentionKey.length!=32)throw new IllegalArgumentException("Invalid authority retention key");
         this.retentionKey=retentionKey.clone();this.fingerprint=IdentityVerification.hash("armoney-authority-key-v1",Base64.getEncoder().encodeToString(retentionKey));
@@ -169,6 +175,7 @@ public final class PostgresIdentityVerificationStore implements IdentityVerifica
                 var result=new PostgresVerificationStore(database,crypto,sql).consume(new ConsumeCommand(coreCommand(writer,input.flow(),input.commandId()),input.enrollmentId(),input.challengeId(),binding(input.flow()),input.purpose(),input.contactVersion(),input.code()));
                 if(result.error()!=null)return result;
                 advance(sql,input.enrollmentId());
+                if(completionWriter!=null)completeInTransaction(sql,enrollment(sql,input.enrollmentId()),authority(sql,input.enrollmentId()),input.flow(),input.commandId());
                 return response(sql,enrollment(sql,input.enrollmentId()),result);
             });});
     }
@@ -193,6 +200,11 @@ public final class PostgresIdentityVerificationStore implements IdentityVerifica
     @Override public VerificationProjection.Status prepare(String writer,UUID commandId,UUID id,Flow flow,Observation observation,Instant startedAt){
         validate(writer,flow);if(commandId==null||id==null)fail(Error.BAD_INPUT);
         return observed(flow,observation,startedAt,(sql,now)->{var e=enrollment(sql,id);authorize(sql,e,flow,observation,now,false);var a=authority(sql,id);
+            if(completionWriter!=null){
+                UUID operation=completeInTransaction(sql,e,a,flow,commandId);
+                if(operation==null)fail(Error.CONFLICT);
+                return projections.statusInTransaction(sql,completionWriter,operation);
+            }
             if(projections==null||a.get("mapped_identity_id")==null)fail(Error.UNAVAILABLE);
             String[] payload={"prepare",id.toString()};var replay=replay(sql,now,writer,flow,commandId,payload);
             if(replay!=null){
@@ -216,7 +228,42 @@ public final class PostgresIdentityVerificationStore implements IdentityVerifica
             return status;
         });
     }
-    /** Caller-owned authority fixture seam. Production configuration never invokes this supplier. */
+    /** Caller holds the complete control prefix; no nested transaction or remote/profile I/O. */
+    private UUID completeInTransaction(DSLContext sql,Record e,Record a,Flow flow,UUID commandId){
+        PostgresVerificationProjectionStore.requireLocked(sql);
+        if(completionWriter==null||projections==null)fail(Error.UNAVAILABLE);
+        UUID enrollment=e.get("id",UUID.class),identity=a.get("pending_identity_id",UUID.class);
+        var email=candidate(sql,a,Purpose.REGISTRATION_EMAIL);var phone=candidate(sql,a,Purpose.REGISTRATION_PHONE);
+        UUID emailReceipt=receipt(sql,email),phoneReceipt=receipt(sql,phone);
+        if(emailReceipt==null||phoneReceipt==null)return null;
+        byte[] business=IdentityVerification.hash("armoney-registration-completion-v1",enrollment.toString(),identity.toString(),
+                e.get("issuer",String.class),e.get("subject",String.class),email.get("id",UUID.class).toString(),phone.get("id",UUID.class).toString(),emailReceipt.toString(),phoneReceipt.toString());
+        var original=sql.fetchOne("select operation_id from registration_completion_intents where enrollment_id=? and business_key=?",enrollment,business);
+        if(original!=null)return original.get("operation_id",UUID.class);
+        if(Set.of("SUSPENDED","BLOCKED_MIGRATION").contains(a.get("state",String.class))||!mappingCurrent(sql,e,a))fail(Error.CONFLICT);
+        if(phoneConflict(sql,phone.get("canonical_value",String.class),a.get("mapped_identity_id",UUID.class),enrollment))fail(Error.CONFLICT);
+        var emailOwner=sql.fetchOne("select id from identities where email=?",email.get("canonical_value",String.class));
+        if(emailOwner!=null&&!identity.equals(emailOwner.get("id",UUID.class)))fail(Error.CONFLICT);
+        var marker=sql.fetchOne("select identity_id from managed_registration_principals where enrollment_id=?",enrollment);
+        if(a.get("mapped_identity_id")!=null&&marker==null)fail(Error.CONFLICT); // Existing owners need separate dual-proof migration.
+        UUID prior=a.get("projection_operation_id",UUID.class);
+        if(prior!=null){var tomb=sql.fetchOne("select recovery_barrier,state from auth_verification_projection_tombstones where operation_id=?",prior);
+            if(tomb==null||tomb.get("recovery_barrier",Boolean.class)||"PENDING".equals(tomb.get("state")))fail(Error.CONFLICT);}
+        if(marker==null){
+            if(sql.fetchOne("select id from identities where id=?",identity)!=null)fail(Error.CONFLICT);
+            sql.execute("insert into identities(id) values (?)",identity);
+            sql.execute("insert into managed_registration_principals(identity_id,enrollment_id) values (?,?)",identity,enrollment);
+            sql.execute("insert into external_identities(issuer,subject,identity_id) values (?,?,?)",e.get("issuer",String.class),e.get("subject",String.class),identity);
+            sql.execute("update verification_authorities set mapped_identity_id=? where enrollment_id=?",identity,enrollment);
+        }else if(!identity.equals(marker.get("identity_id",UUID.class)))fail(Error.CONFLICT);
+        int previous=a.get("projection_revision",Integer.class);long epoch=Math.addExact(a.get("verification_epoch",Long.class),1);
+        UUID operation=UUID.randomUUID();var projected=VerificationProjection.create(operation,identity,previous,Math.addExact(previous,1),phone.get("canonical_value",String.class),phone.get("version",Integer.class),epoch);
+        sql.execute("update verification_authorities set verification_epoch=?,projection_revision=?,projection_operation_id=?,projection_command_id=?,projection_flow_digest=?,projection_writer=?,state='PROJECTION_PENDING' where enrollment_id=?",epoch,projected.version(),operation,commandId,tuple(flow),completionWriter,enrollment);
+        projections.allocateInTransaction(sql,completionWriter,projected);
+        sql.execute("insert into registration_completion_intents(enrollment_id,business_key,operation_id,identity_id,verification_epoch,projection_revision) values (?,?,?,?,?,?)",enrollment,business,operation,identity,epoch,projected.version());
+        return operation;
+    }
+    /** Caller-owned current receipt authority; completion configuration supplies it only to projection. */
     public VerificationProjection.Authority projectionAuthorityInTransaction(DSLContext sql,UUID identity,Instant now){
         PostgresVerificationProjectionStore.requireLocked(sql);
         var a=sql.fetchOne("select * from verification_authorities where mapped_identity_id=? for update",identity);
@@ -232,7 +279,7 @@ public final class PostgresIdentityVerificationStore implements IdentityVerifica
         return new VerificationProjection.Authority(identity,e.get("id",UUID.class),phone.get("canonical_value",String.class),phone.get("version",Integer.class),email.get("version",Integer.class),a.get("verification_epoch",Long.class),emailReceipt,phoneReceipt);
     }
     @Override public boolean attach(String writer,VerificationProjection.Claim claim,VerificationProjection.Result result){
-        if(writer==null||!policy.writers().contains(writer)||claim==null||!writer.equals(claim.writer())||result==null)fail(Error.BAD_INPUT);
+        if(writer==null||!(policy.writers().contains(writer)||writer.equals(completionWriter))||claim==null||!writer.equals(claim.writer())||result==null)fail(Error.BAD_INPUT);
         if(projections==null)fail(Error.UNAVAILABLE);
         return transaction((sql,now)->{
             var a=sql.fetchOne("select * from verification_authorities where mapped_identity_id=? for update",claim.command().identityId());

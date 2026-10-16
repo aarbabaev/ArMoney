@@ -64,7 +64,7 @@ class VerificationProjectionUpgradeIntegrationSpec extends Specification {
         def database = new Database(postgres.jdbcUrl, postgres.username, postgres.password)
         then:
         database.transaction { current ->
-            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '9'
+            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '10'
             ['verification_authorities','verification_candidates','verification_authority_phone_claims','verification_flow_barriers','verification_flows','verification_authority_admission','verification_authority_commands'].each { table ->
                 assert current.fetchOne('select count(*) as n from ' + table).get('n', Long) == 0
             }
@@ -73,7 +73,7 @@ class VerificationProjectionUpgradeIntegrationSpec extends Specification {
                 assert current.fetchOne('select count(*) as n from ' + table + ' where candidate_id is not null').get('n', Long) == 0
             }
             assert current.fetch('select * from flyway_schema_history where cast(version as integer) <= ? order by installed_rank', 7).intoMaps() == history
-            assert current.fetch('select version from flyway_schema_history order by installed_rank').getValues('version', String) == ['1','2','3','4','5','6','7','8','9']
+            assert current.fetch('select version from flyway_schema_history order by installed_rank').getValues('version', String) == ['1','2','3','4','5','6','7','8','9','10']
             assert snapshots(current) == before
             ['auth_verification_projection_commands','auth_verification_projection_tombstones','auth_verification_projection_admission'].each { table ->
                 assert current.fetchOne('select count(*) as n from ' + table).get('n', Long) == 0

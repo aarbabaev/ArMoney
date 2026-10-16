@@ -32,7 +32,8 @@ public final class PostgresLoginProofStore implements LoginProofStore {
     }
     private <T> T transaction(BiFunction<DSLContext, Instant, T> action) {
         return database.transaction(sql -> {
-            if (sql.fetchOne("select id from sso_login_proof_control where id = 1 for update") == null) throw new Failure(Error.UNAVAILABLE);
+            try { PostgresVerificationProjectionStore.lockControls(sql); }
+            catch (com.arman.bank.authservice.domain.VerificationProjection.Failure unavailable) { throw new Failure(Error.UNAVAILABLE); }
             return action.apply(sql, now(sql));
         });
     }
