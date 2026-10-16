@@ -83,6 +83,21 @@ final class EnrollmentObservationTest {
         return new EnrollmentObservation.Binding(ISSUER,"subject","armoney-web","root","tab",
                 SessionBinding.derive(KEY,"realm-internal","root","tab","client-internal"));
     }
+    @Test void enrollmentResourceReturnsEmptyUncacheable503ForCanonicalWrongHmac() throws Exception {
+        Fixture fixture = new Fixture();
+        var resource = new StatusResource(fixture.session(), () -> KEY, () -> KEY, () -> true);
+        var request = binding().fields();
+        // The real CI negative uses a canonical 32-byte all-zero digest. It must
+        // pass syntax parsing, fail server HMAC comparison, and reach the HTTP
+        // boundary's RuntimeException catch rather than escape to Keycloak.
+        request.put("authentication_session_id", "A".repeat(43));
+        assertFalse(SessionBinding.matches(binding().digest(), (String) request.get("authentication_session_id")));
+        try (var response = resource.enrollment(KEY, org.keycloak.util.JsonSerialization.writeValueAsBytes(request))) {
+            assertEquals(503, response.getStatus());
+            assertNull(response.getEntity());
+            assertEquals("no-store", response.getHeaderString("Cache-Control"));
+        }
+    }
     private static com.fasterxml.jackson.databind.JsonNode json(String input) throws java.io.IOException {
         return Bridge.strictJson(input.getBytes(StandardCharsets.UTF_8));
     }

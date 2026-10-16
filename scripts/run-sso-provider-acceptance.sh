@@ -22,6 +22,36 @@ cleanup() {
   result=$?
   cleanup_ok=true
   trap - EXIT
+  if [[ "$result" -ne 0 ]]; then
+    # Private Docker text is consumed only by this bounded allowlist classifier.
+    if ! timeout 10 "${compose[@]}" logs --no-color --tail 80 sso-b 2>&1 | python3 -c '
+import sys
+blob = sys.stdin.buffer.read(65537)
+known = (
+ (b"java.lang.IllegalAccessError", "ILLEGAL_ACCESS"),
+ (b"java.lang.NoClassDefFoundError", "CLASS_MISSING"),
+ (b"java.lang.ExceptionInInitializerError", "CLASS_INITIALIZATION"),
+ (b"java.lang.LinkageError", "LINKAGE"),
+ (b"java.lang.ClassCastException", "CLASS_CAST"),
+ (b"java.lang.NullPointerException", "NULL_POINTER"),
+ (b"java.lang.IllegalStateException", "ILLEGAL_STATE"),
+ (b"java.lang.IllegalArgumentException", "ILLEGAL_ARGUMENT"),
+ (b"java.lang.SecurityException", "SECURITY"),
+ (b"java.lang.reflect.InaccessibleObjectException", "REFLECTION_ACCESS"),
+ (b"jakarta.ws.rs.InternalServerErrorException", "REST_INTERNAL_ERROR"),
+ (b"jakarta.ws.rs.WebApplicationException", "REST_APPLICATION_ERROR"),
+ (b"com.arman.bank.sso.Bridge$Unavailable", "PROVIDER_UNAVAILABLE"),
+)
+if len(blob) > 65536:
+    print("SERVER_FAILURE: OBSERVER69 LOG_TRUNCATED", flush=True)
+else:
+    found = [label for token, label in known if token in blob]
+    for label in found or ["UNKNOWN"]:
+        print("SERVER_FAILURE: OBSERVER69 " + label, flush=True)
+'; then
+      echo 'SERVER_FAILURE: OBSERVER69 LOG_UNAVAILABLE'
+    fi
+  fi
   # Only this freshly generated project on the already verified CI daemon.
   if ! "${compose[@]}" down --volumes --remove-orphans --timeout 20 >/dev/null 2>&1; then
     echo 'Disposable observer cleanup failed' >&2

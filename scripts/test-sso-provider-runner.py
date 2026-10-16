@@ -39,8 +39,21 @@ elif args[0] == 'compose':
             'AUTH_TO_SSO_STATUS_KEY', 'OBSERVER_FIXTURE_CONTROL_KEY')]
         assert len(set(keys)) == 6 and all(len(k) == 64 for k in keys)
         assert 'COMPOSE_FILE' not in os.environ
-        if mode == 'run-failure':
+        if mode in ('run-failure', 'run-unknown', 'run-log-failure', 'run-log-oversize'):
             sys.exit(17)
+    if 'logs' in args:
+        assert args[-5:] == ['logs', '--no-color', '--tail', '80', 'sso-b']
+        private = 'SYNTHETIC_PRIVATE_password@example.invalid_http://private.invalid/identifier'
+        if mode == 'run-log-failure':
+            print(private, file=sys.stderr)
+            sys.exit(27)
+        if mode == 'run-log-oversize':
+            print(private * 2000)
+        elif mode == 'run-unknown':
+            print(private)
+        else:
+            print('java.lang.IllegalAccessError: ' + private)
+            print('at com.arman.bank.sso.Bridge$Unavailable: ' + private)
     if 'down' in args and mode == 'down-failure':
         sys.exit(24)
 elif args[0] == 'image':
@@ -126,6 +139,25 @@ class RunnerBoundaries(unittest.TestCase):
         result, calls = self.run_fixture('run-failure')
         self.assertEqual(result.returncode, 17)
         self.assertTrue(any('down' in call for call in calls))
+        diagnostics = [call for call in calls if 'logs' in call]
+        self.assertEqual(len(diagnostics),1)
+        self.assertLess(calls.index(diagnostics[0]),next(i for i,call in enumerate(calls) if 'down' in call))
+        self.assertIn('SERVER_FAILURE: OBSERVER69 ILLEGAL_ACCESS',result.stdout)
+        self.assertIn('SERVER_FAILURE: OBSERVER69 PROVIDER_UNAVAILABLE',result.stdout)
+        self.assertNotIn('SYNTHETIC_PRIVATE',result.stdout+result.stderr)
+        self.assertIn('PASS: observer-owned project absent and unique image removed',result.stdout)
+
+    def test_server_diagnostics_unknown_unavailable_and_oversize_are_private_and_never_replace_failure(self):
+        for mode, expected in (('run-unknown','UNKNOWN'),('run-log-failure','LOG_UNAVAILABLE'),
+                               ('run-log-oversize','LOG_TRUNCATED')):
+            with self.subTest(mode=mode):
+                result,calls = self.run_fixture(mode)
+                self.assertEqual(result.returncode,17)
+                self.assertIn('SERVER_FAILURE: OBSERVER69 '+expected,result.stdout)
+                self.assertNotIn('SYNTHETIC_PRIVATE',result.stdout+result.stderr)
+                self.assertNotIn('private.invalid',result.stdout+result.stderr)
+                self.assertTrue(any('down' in call for call in calls))
+                self.assertTrue(any(call[0]=='image' for call in calls))
 
     def test_image_cleanup_failure_cannot_report_success(self):
         result, calls = self.run_fixture('image-failure')
@@ -144,6 +176,7 @@ class RunnerBoundaries(unittest.TestCase):
     def test_success_uses_one_fresh_128_bit_project_and_fixed_compose_scoped_cleanup(self):
         result, calls = self.run_fixture('success')
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any('logs' in call for call in calls))
         operations = [call for call in calls if '--project-name' in call]
         self.assertEqual(len(operations), 4)
         projects = {call[call.index('--project-name') + 1] for call in operations}
