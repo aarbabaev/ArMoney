@@ -36,10 +36,12 @@ Both provider JARs require an empty `META-INF/beans.xml` archive marker and
 Packaging prerequisite tests cover the markers and endpoint annotations; actual
 routing still requires the rebuilt two-node acceptance image.
 
-Validation: provider and fixture checks passed after the discovery correction.
-The previous exact-head CI lifecycle attempt failed at SEND_RPC with HTTP 405
-and a cache-policy mismatch; owned project and image cleanup passed. Cross-node,
-removal and expiry guarantees remain **UNVERIFIED** until the corrected image
-passes the full acceptance. Existing SSO smoke does not establish these guarantees.
-Auth observation transport and default-off authority wiring are deployed through
-PR #70; ACTIVE transitions and broader registration integration remain separate gates.
+Validation (2026-10-16): exact source `86c42d511e7a5fee95d9e0087bd3b436a03acd20`
+passed all seven checks in [CI run 38877887316](https://github.com/aarbabaev/ArMoney/actions/runs/38877887316).
+Independent review of build job `116904320077` verified cross-node observation,
+read-only timestamp/expiry checks, wrong HMAC/subject/key rejection, committed tab
+and root removal with observer 503 denials, real USER expiry, and user disable/delete.
+The lifecycle reached COMPLETE at 10:12:38 UTC; owned-project absence and unique-image
+removal passed at 10:13:03 UTC. Earlier HTTP 405 and removal failures are historical
+and are superseded by this exact-source acceptance evidence. This disposable proof
+does not activate registration or establish production deployment or mailbox delivery.

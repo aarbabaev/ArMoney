@@ -1068,9 +1068,10 @@ published-head CI and runtime acceptance remain separate gates.
 
 The [disposable observer acceptance harness](docs/sso-observer-acceptance.md)
 adds a separate test-only session-control JAR and two-node Keycloak topology.
-Production packaging excludes this fixture. Its cross-node committed-state,
-session-removal and expiry assertions remain unrun; the existing SSO smoke
-does not establish these guarantees or authorize verification activation.
+Production packaging excludes this fixture. Cross-node committed-state visibility,
+session-removal and expiry assertions passed disposable CI run 38877887316 on
+2026-10-16 at source `86c42d5`; see the linked acceptance receipt. This proof
+does not establish production deployment or authorize verification activation.
 
 The assigned timing adjustment makes admission return an auth DB timestamp
 after its locks, which the service passes unchanged to remote observation.
@@ -1083,8 +1084,9 @@ six exact server-context fields, seven-field enrollment results and twelve-field
 observations. Internal-ID HMAC, required-action/USER expiry and render-first
 sequencing are implemented source boundaries. Independent provider checks passed;
 two-instance committed-state visibility, session/tab/user removal and pinned
-browser/runtime behavior remain unrun mandatory gates. No new SPI or realm
-activation is introduced, and the final action still requires ACTIVE.
+browser/runtime behavior passed disposable CI run 38877887316 at source
+`86c42d5` on 2026-10-16. No new SPI or realm activation is introduced; production
+activation remains a separate gate, and the final action still requires ACTIVE.
 
 Auth Main/routes/configuration do not wire this authority or a trusted production
 observation supplier. Positive proof/projection eligibility remains UNAVAILABLE;
