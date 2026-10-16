@@ -3,6 +3,7 @@ package com.arman.bank.sso;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.keycloak.models.*;
+import org.keycloak.models.session.UserSessionPersisterProvider;
 import org.keycloak.models.utils.SessionExpirationUtils;
 import org.keycloak.services.Urls;
 import org.keycloak.services.managers.AuthenticationManager;
@@ -41,7 +42,7 @@ final class CodeSessionObservation {
                 || !realm.getId().equals(us.getRealm().getId()) || !binding.sessionId().equals(us.getId())
                 || us.getUser()==null || !binding.subject().equals(us.getUser().getId())
                 || us.isOffline() || us.getState()!=UserSessionModel.State.LOGGED_IN
-                || us.getPersistenceState()!=UserSessionModel.SessionPersistenceState.PERSISTENT) throw new Bridge.Unavailable();
+                || !persistent(session,realm,us,binding)) throw new Bridge.Unavailable();
         AuthenticatedClientSessionModel cs=us.getAuthenticatedClientSessionByClient(client.getId());
         if(cs==null || cs.getClient()==null || !client.getId().equals(cs.getClient().getId())
                 || cs.getUserSession()==null || !us.getId().equals(cs.getUserSession().getId())
@@ -59,6 +60,22 @@ final class CodeSessionObservation {
         out.put("enabled",user.isEnabled()); out.put("user_session_active",true); out.put("client_session_active",true);
         out.put("observed_at",Instant.ofEpochSecond(captured.getEpochSecond()).toString()); out.put("valid_until",until.toString());
         return out;
+    }
+    private static boolean persistent(KeycloakSession session,RealmModel realm,UserSessionModel live,Binding binding) {
+        var state=live.getPersistenceState();
+        if(state==UserSessionModel.SessionPersistenceState.TRANSIENT) return false;
+        if(state==UserSessionModel.SessionPersistenceState.PERSISTENT) return true;
+        // Pinned persistent-provider reload adapters leave this local field null.
+        // Null alone is not provenance: require the exact durable online tuple.
+        try {
+            var persister=session.getProvider(UserSessionPersisterProvider.class);
+            if(persister==null) return false;
+            var durable=persister.loadUserSession(realm,binding.sessionId(),false);
+            return durable!=null && durable.getRealm()!=null && realm.getId().equals(durable.getRealm().getId())
+                    && binding.sessionId().equals(durable.getId()) && durable.getUser()!=null
+                    && binding.subject().equals(durable.getUser().getId()) && !durable.isOffline()
+                    && durable.getState()==UserSessionModel.State.LOGGED_IN;
+        } catch(RuntimeException unavailable) { return false; }
     }
     static Instant deadline(Instant captured,RealmModel realm,ClientModel client,UserSessionModel us,AuthenticatedClientSessionModel cs) {
         boolean remember=us.isRememberMe();
