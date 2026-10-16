@@ -59,7 +59,27 @@ public final class PostgresLoginProofStore implements LoginProofStore {
         });
         if (!allowed) throw new Failure(Error.RATE_LIMITED);
     }
+    private record Admitted(PostgresLoginProofStore owner,String writer,Binding binding,Instant startedAt,byte[] payload) implements Admission {
+        private Admitted{payload=payload.clone();}
+        @Override public String toString(){return "LoginProofAdmission[redacted]";}
+    }
+    @Override public Admission admitCreate(String writer,Write input){
+        admit(writer);
+        LoginProof.validate(input,writer,policy);
+        return transaction((sql,now)->new Admitted(this,writer,input.binding(),now(sql),LoginProof.payloadHash(input)));
+    }
+    @Override public Snapshot writeObserved(String writer,Write input,Admission admission,Observation observation){
+        LoginProof.validate(input,writer,policy);
+        // This staged consumer supports interactive CREATE/replay only. Legacy reuse remains unchanged.
+        if(input.kind()!=Kind.INTERACTIVE)throw new Failure(Error.CONFLICT);
+        if(!(admission instanceof Admitted value)||value.owner()!=this||!writer.equals(value.writer())
+                ||!input.binding().equals(value.binding())||!MessageDigest.isEqual(value.payload(),LoginProof.payloadHash(input)))throw new Failure(Error.UNAVAILABLE);
+        return writeInternal(writer,input,admission,observation);
+    }
     @Override public Snapshot write(String writer, Write input) {
+        return writeInternal(writer,input,null,null);
+    }
+    private Snapshot writeInternal(String writer,Write input,Admission admission,Observation observation){
         LoginProof.validate(input, writer, policy);
         return transaction((sql, now) -> {
             LoginProof.unexpired(input.expiresAt(), now);
@@ -71,19 +91,19 @@ public final class PostgresLoginProofStore implements LoginProofStore {
                 var original = sql.fetchOne("select * from sso_login_proofs where id = ?", command.get("proof_id", UUID.class));
                 if (original == null) throw new Failure(Error.UNAVAILABLE);
                 LoginProof.unexpired(time(original, "expires_at"), now);
-                Activation active = active(sql, input.binding(), now);
+                Authority active = authority(sql, input.binding(), now,admission,observation);
                 if (input.kind() == Kind.INTERACTIVE) event(sql, input, active, now, false);
-                finalCheck(sql, input, active);
+                finalCheck(sql, input, active,admission,observation);
                 return snapshot(original);
             }
             var code = sql.fetchOne("select * from sso_login_proofs where issuer = ? and code_digest = ?", input.issuer(), input.codeDigest());
             if (code != null) {
                 same(code.get("payload_hash", byte[].class), payload);
                 LoginProof.unexpired(time(code, "expires_at"), now);
-                Activation active = active(sql, input.binding(), now);
+                Authority active = authority(sql, input.binding(), now,admission,observation);
                 if (input.kind() == Kind.INTERACTIVE) event(sql, input, active, now, false);
                 reserveCommand(sql, requester, input.commandId(), payload, code.get("id", UUID.class), now);
-                finalCheck(sql, input, active);
+                finalCheck(sql, input, active,admission,observation);
                 return snapshot(code);
             }
             LoginProof.fresh(input, now);
@@ -91,7 +111,7 @@ public final class PostgresLoginProofStore implements LoginProofStore {
                     || count(sql, "select count(*) as n from sso_login_proof_commands") >= policy.maxCommands()
                     || count(sql, "select count(*) as n from sso_login_proofs where created_at > cast(? as timestamptz)", at(now.minusSeconds(3600))) >= policy.maxHourly())
                 throw new Failure(Error.RATE_LIMITED);
-            Activation active = active(sql, input.binding(), now);
+            Authority active = authority(sql, input.binding(), now,admission,observation);
             if (input.kind() == Kind.INTERACTIVE) event(sql, input, active, now, true);
             UUID proof = UUID.randomUUID();
             sql.execute("""
@@ -101,11 +121,11 @@ public final class PostgresLoginProofStore implements LoginProofStore {
                 """, proof, input.issuer(), input.codeDigest(), input.codeKeyId(), LoginProof.bindingHash(input.binding()), payload,
                 input.kind().wire(), input.eventId(), input.kind() == Kind.INTERACTIVE, at(input.issuedAt()), at(input.expiresAt()), at(now), at(now.plusSeconds(604800)));
             reserveCommand(sql, requester, input.commandId(), payload, proof, now);
-            finalCheck(sql, input, active);
+            finalCheck(sql, input, active,admission,observation);
             return new Snapshot(proof, input.codeKeyId(), input.eventId(), input.kind(), input.kind() == Kind.INTERACTIVE, input.issuedAt(), input.expiresAt());
         });
     }
-    private void event(DSLContext sql, Write input, Activation active, Instant now, boolean mayCreate) {
+    private void event(DSLContext sql, Write input, Authority active, Instant now, boolean mayCreate) {
         var event = sql.fetchOne("select * from sso_login_events where issuer = ? and event_id = ?", input.issuer(), input.eventId());
         if (event != null) {
             same(event.get("binding_hash", byte[].class), LoginProof.bindingHash(input.binding()));
@@ -139,6 +159,24 @@ public final class PostgresLoginProofStore implements LoginProofStore {
             values (?, ?, ?, ?, cast(? as timestamptz), cast(? as timestamptz))
             """, requester, command, payload, proof, at(now), at(now.plusSeconds(604800)));
     }
+    private record Authority(Activation legacy,CurrentEvidence current) {
+        UUID identityId(){return current==null?legacy.identityId():current.grant().identityId();}
+        int emailContactVersion(){return current==null?legacy.emailContactVersion():current.grant().emailContactVersion();}
+        int phoneContactVersion(){return current==null?legacy.phoneContactVersion():current.grant().phoneContactVersion();}
+        long verificationEpoch(){return current==null?legacy.verificationEpoch():current.grant().verificationEpoch();}
+        int projectionRevision(){return current==null?legacy.projectionRevision():current.grant().projectionRevision();}
+        String verifiedEmail(){return current==null?legacy.verifiedEmail():current.verifiedEmail();}
+        boolean completeFor(Binding binding,Instant now){return current==null?legacy.completeFor(binding,now):current.completeFor(binding,now);}
+    }
+    private Authority authority(DSLContext sql,Binding binding,Instant now,Admission admission,Observation observation){
+        if(admission==null)return new Authority(active(sql,binding,now),null);
+        try{
+            var current=new PostgresBankingEligibilityStore(sql).requireForProof(binding,observation,admission.startedAt());
+            return new Authority(null,current);
+        }catch(com.arman.bank.authservice.domain.Verification.Failure rejected){
+            throw new Failure(rejected.error()==com.arman.bank.authservice.domain.Verification.Error.CONFLICT?Error.CONFLICT:Error.UNAVAILABLE);
+        }
+    }
     private Activation active(DSLContext sql, Binding binding, Instant now) {
         Activation active;
         try {
@@ -155,10 +193,14 @@ public final class PostgresLoginProofStore implements LoginProofStore {
                 """, active.identityId(), binding.issuer(), binding.subject()) == null) throw new Failure(Error.CONFLICT);
         return active;
     }
-    private static void finalCheck(DSLContext sql, Write input, Activation active) {
-        Instant now = now(sql);
-        LoginProof.unexpired(input.expiresAt(), now);
-        if (!active.completeFor(input.binding(), now)) throw new Failure(Error.CONFLICT);
+    private void finalCheck(DSLContext sql,Write input,Authority active,Admission admission,Observation observation){
+        if(admission!=null){
+            var finalAuthority=authority(sql,input.binding(),now(sql),admission,observation);
+            if(!active.current().equals(finalAuthority.current()))throw new Failure(Error.CONFLICT);
+        }
+        Instant checked=now(sql);
+        LoginProof.unexpired(input.expiresAt(),checked);
+        if(!active.completeFor(input.binding(),checked))throw new Failure(Error.CONFLICT);
     }
     @Override public Snapshot resolve(String writer, Resolve input) {
         LoginProof.writer(writer, policy); LoginProof.validate(input, policy);
