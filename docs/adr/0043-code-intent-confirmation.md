@@ -17,7 +17,10 @@ notice eligibility; it must not be repurposed as non-authoritative pending state
 
 ## Proposed decision
 
-Use separate immutable code-intent storage. Stage the existing strict Write
+Initially restrict the new operations to explicitly classified managed INTERACTIVE
+login. New-flow reuse/legacy inputs deny without manufacturing an interactive
+event; existing legacy/reuse paths remain unchanged. Use separate immutable
+code-intent storage. Stage the existing strict Write
 payload before redirect without creating a proof, event, recipient, notice,
 banking session, projection acknowledgement or ACTIVE authority. An explicit,
 separately authenticated confirmation operation runs only after Keycloak validates
@@ -28,7 +31,12 @@ observations outside the local transaction. One owning Auth transaction locks
 verification, projection and proof state in order, rechecks all owned evidence
 and deadlines, and atomically records the V7 proof/event and confirmation.
 Historical resolve remains read-only. No nested transaction or hidden remote
-fanout is introduced by resolve. V7 is unchanged; future migrations are append-only.
+fanout is introduced by resolve. A historical snapshot readable after suspension
+cannot substitute for successful current confirmation or permit token release.
+Original fresh stage admission (issued_at plus 30 seconds) is distinct from the
+unchanged code expiry (at most 120 seconds); confirmation uses the original timely
+admission without creating or extending a CREATE window. V7 is unchanged; future
+migrations are append-only.
 
 The exact draft DTOs, credentials, invalidation/replay rules, timeouts and
 acceptance cases are in

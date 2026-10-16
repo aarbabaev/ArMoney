@@ -9,6 +9,19 @@ the orchestrator jointly freezes this draft with Auth/SSO and independent QA and
 security. No existing wire DTO, route, schema or production factory changes here.
 See [ADR 0043](../docs/adr/0043-code-intent-confirmation.md).
 
+## Initial per-kind scope
+
+The new stage/confirm flow initially supports ONLY managed INTERACTIVE login for
+the explicitly configured managed issuer/client scope. A syntactically valid
+13-field Write with kind=reuse is rejected by these new operations; preserving
+the existing Write shape does not authorize every kind. Every supported
+confirmation requires the owned grant, both receipts and exact projection ACK.
+No interactive event is created or reused to accommodate cookie reuse. Existing
+legacy/reuse paths and their read-only historical metadata remain unchanged;
+supporting them through intent confirmation needs a separate explicit policy
+freeze and acceptance. Missing classification or ambiguous managed scope denies.
+OIDC_CONTINUATION remains distinct from ACTIVE and cannot bypass banking denial.
+
 ## Operations and directional authentication
 
 | Operation | Proposed private path | Credential/header | Capability |
@@ -67,6 +80,25 @@ The staged event UUID is an untrusted candidate identifier, not a created event.
 No contact/recipient snapshot is captured. Exact replay cannot renew a lifetime,
 replace a candidate, or open a new CREATE admission window at redemption.
 
+### Original admission cutoff versus code expiry
+
+For the first stage commit, Auth DB time must satisfy
+issued_at - 30s <= stage_db_now <= issued_at + 30s and stage_db_now < expires_at.
+Persist the original successful stage/admission anchor and
+fresh_admission_cutoff = issued_at + 30s with the immutable intent. No first stage
+or replacement intent is allowed after that cutoff, even if the code remains
+unexpired. Exact stage replay after the cutoff may acknowledge the same existing
+intent before its original expiry, subject to authentication, exact comparison
+and current invalidation; it cannot create a new admission or renew any bound.
+
+Confirmation may occur after fresh_admission_cutoff when the original stage was
+timely and the original code, owned grant/receipt/ACK and observation deadlines
+are still valid. It consumes the existing admission anchor, never reopens CREATE
+or re-applies the first-stage issued_at tolerance as a fresh admission. Code
+validity remains at most 120 seconds from the original issued_at. The final
+transaction rechecks every applicable original deadline; no 30-second admission
+rule extends the code or any shorter authority/evidence deadline.
+
 ## Exact confirmation request and response
 
 The request is exactly CodeBinding, retaining the current resolve binding:
@@ -96,11 +128,18 @@ issued_at, expires_at: original immutable RFC3339 UTC integer-second timestamps
 ```
 
 Interactive confirmation can become eligible only after every owned gate passes;
-reuse has null event and false eligibility. Confirmation never emits access
+reuse remains unsupported by the new operations and cannot produce this new
+confirmation response. Existing historical reuse metadata still has null event
+and false eligibility. Confirmation never emits access
 tokens, starts a banking session or enqueues/sends a notice. Notice eligibility is
 historical metadata consumed only by a separately validated banking session/notice
 transaction. Resolve returns only an already-confirmed snapshot and remains
 read-only, with no confirmation, observation fanout, recipient changes or writes.
+After suspension or other current invalidation, resolve may still return an
+unexpired historical snapshot under its existing read-only contract. Such a
+response cannot satisfy current confirmation or authorize token release: the
+grant hook must obtain a successful current confirmation before using historical
+metadata, and fails closed even if a subsequent/independent resolve is readable.
 
 ## Replacement provider observation: exact draft v2
 
@@ -209,11 +248,16 @@ REUSE event claim is absent (not explicit null), kind is "reuse", eligibility fa
 | Callback abort or hook 503 | No rollback assumption; no authority from persisted sessions or orphan intent |
 | Confirmation commit then response loss | One immutable result; no token/code resurrection, fresh flow if code consumed |
 | Stage/confirm exact replay and changed payload | Original time/result retained; conflict cannot overwrite or renew |
-| Concurrent redemption/confirmation | One code redemption and one local immutable result/event; no duplicate notice |
+| First stage after issued_at+30s, code still valid | Reject new admission; do not stage merely because code expiry is later |
+| Timely stage, confirmation after admission cutoff but before all original deadlines | Use original admission without reset; succeed only if all current gates still pass |
+| New-flow reuse, legacy or ambiguous classification | Reject without creating an interactive event; existing legacy/reuse paths unchanged |
+| Concurrent redemption/confirmation, including lost commit acknowledgement | One code redemption and one immutable result/event; no duplicate notice or token resurrection |
 | Disabled/deleted user; missing/foreign/expired client membership | Fail closed; existing invalidation independently verified |
 | Stale status, clock skew, missing/expired deadline, old eight-field DTO | Deny without mutation/authority; no fallback |
-| Epoch/contact/receipt/any six-field ACK/recovery mismatch | Atomic denial/rollback; no stale snapshot acceptance |
-| Locks cross original expiry or observation budget | Final DB-time check rolls back every new local effect |
+| Each receipt/contact version/epoch, each of six ACK fields, recovery mismatch | Independently exercise each mismatch; atomic denial/rollback, no stale snapshot acceptance |
+| Successful confirmation followed by suspension, then exact replay and historical resolve | Replay/current token release deny; historical metadata cannot bypass invalidation |
+| Negative provider observation becomes stale during a blocked lock | No stale positive authorization or uncontrolled repeated invalidation; preserve owned epoch semantics |
+| Locks cross code/grant/receipt/ACK expiry or observation budget | Exercise each boundary; final DB-time check rolls back every new local effect |
 | Wrong directional credential/public ingress/oversize/duplicate JSON | Reject before unauthorized capability/fanout; no sensitive logs |
 | Refresh, introspection, cookie reuse | No new interactive event/confirmation; original-claim and reuse rules preserved |
 | Intent cleanup, Auth restart, provider-node change, missing integration | Bounded retention/idempotency preserved; unavailable never grants access |
