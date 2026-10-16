@@ -1263,6 +1263,11 @@ current-main CI, Compose acceptance and deployment remain pending. See
 The test-only SSO-VIS-001 topology uses two disposable Keycloak nodes to inspect
 user and authenticated client-session visibility before and after a bounded
 login redirect barrier. It is not a production service or proof authority.
-Production positive-proof hooks remain unregistered; the first-login commit
-boundary is an unresolved activation gate pending actual acceptance evidence.
+The isolated experiment at `05bff8e96182d48c0fb2bd13c5aa2d4004d12c21`
+passed on 2026-10-17 (Asia/Dubai): the session pair was not visible on node B while
+the login hook was held and visible after the completed response in all four
+cases, including hook HTTP 503. That failure therefore does not guarantee
+rollback. Independent QA and security bound the result to the fixture artifacts
+and verified cleanup. Production positive-proof hooks remain unregistered;
+the precommit recording/postcommit authority contract remains an activation gate.
 See [the proof design](sso-service/provider/LOGIN-PROOF-DESIGN.md#first-login-transaction-visibility-gate-sso-vis-001).
