@@ -74,3 +74,47 @@ are frozen design choices, not deployed guarantees. Independent Auth/SSO source
 assessment and QA/security contract review do not establish the runtime clock
 assumption or implemented retention/privacy guarantees. Implementation needs
 exact-head full checks, disposable multi-node acceptance and independent review.
+## Frozen amendment: encrypted short-lived opaque binding
+
+The grant seam cannot reconstruct the original authentication-session HMAC from
+the frozen six-field code binding. A separately frozen amendment in the linked contract
+proposes AES-256-GCM encryption of ONLY that opaque value in short-lived detail,
+with row-bound AAD, independent versioned keys and original expiry+five-minute
+deletion. It explicitly changes the frozen no-recoverable-binding rule and is
+NOT approved by the original 0302cd freeze. Independent QA/security GO and joint
+orchestrator approval at `9ffd447b21a0614b8988b2fe4d4231ed2f340195` on 2026-10-17
+freeze this exception separately. The six-field confirmation DTO
+stays unchanged; no browser identity or mutable note may supply missing metadata.
+Scoped implementation leases and independent actual checks remain required.
+Long-lived tombstones remain keyed pseudonyms.
+Nonce uniqueness uses a separate non-personal lifetime registry: commit a
+reservation before encryption, burn failed reservations, cap100,000/key and eight
+active/retained keys. Delete registry rows only after explicit retirement and
+actual final detail purge. A persistent key catalog (cap1,024) uniquely retains
+key IDs and fingerprints of random key material to prohibit ID/material reuse
+after registry erasure; no person/intent links or catalog deletion. Admission
+budget precedes nonce reservation. This frozen amendment is not implemented.
+Final detail insertion and retirement lock the same original catalog row:
+insertion rechecks ACTIVE plus key generation in its owning transaction;
+retirement fences pending/new writers before last-detail check and registry
+deletion. A paused reserved worker cannot resurrect retired-key detail. Ambiguous
+reservation commit prohibits encryption until original durability is known.
+
+## Frozen amendment: global authorized in-flight admission
+
+A separately frozen amendment specifies 16 PostgreSQL session-advisory slots shared
+by stage, explicit confirmation (including remote-work replay) and legacy proof
+operations. One Auth-owned connection spans bounded
+HTTP outside a transaction and the final business transaction, preserving the
+pool-five local bound without nested-connection deadlock. The guarantee covers
+authorized operations, not orphan physical HTTP workers after disconnect. TTL
+leases and process-local semaphores cannot substitute for that global boundary.
+Shared burst credits/time survive key migration. The 9ffd447 joint contract GO
+does not authorize implementation/runtime changes without a separate exact
+connection/transaction-seam lease or close the source security findings.
+Session locks survive SQL commit/rollback and logical pooled close: explicitly
+unlock and verify zero owned admission locks before pool return, or evict the
+physical connection on uncertainty. COMMIT disconnect can leave a durable result;
+withhold token release, preserve identity and reconcile exact results/current
+gates rather than claim rollback or resurrect a code. Tests must exercise those
+failure boundaries and enough independent sessions to saturate all 16 slots.
