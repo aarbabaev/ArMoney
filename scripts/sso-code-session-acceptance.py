@@ -2,11 +2,14 @@
 import datetime
 import http.client
 import importlib.util
+import ipaddress
 import json
 import os
 from pathlib import Path
 import re
 import secrets
+import socket
+import subprocess
 import sys
 import threading
 import time
@@ -26,6 +29,39 @@ current = "CONFIGURATION"
 failure = None
 stop = None
 case_stop = None
+STAGES = frozenset({"START", "SESSION_ARM", "SESSION_HELD", "SESSION_RELEASE", "SESSION_BROWSER", "SESSION_CANCEL",
+    "SESSION_JOIN", "HTTP_DNS", "HTTP_SEND", "HTTP_HEADERS", "HTTP_BODY", "HTTP_JSON", "STATUS", "CACHE", "CONTENT_TYPE",
+    "DTO_FIELDS", "UTF8", "BINDING", "USERNAME", "CONTACTS", "FLAGS", "TIMESTAMP", "TIME_DELTA", "BASELINE_CONTACT"})
+stage = "START"
+expected_status = "HTTP_NONE"
+observed_status = "HTTP_NONE"
+failure_diagnostic = None
+
+
+def checkpoint(label):
+    global stage
+    V.require(type(label) is str and label in STAGES)
+    stage = label
+
+
+def status_label(status):
+    return "HTTP_"+str(status) if type(status) is int and status in {200,400,401,403,404,429,500,503} else "HTTP_OTHER"
+
+
+def error_kind(error):
+    return ("ASSERT" if isinstance(error,AssertionError) else "JSON" if isinstance(error,(json.JSONDecodeError,UnicodeError))
+        else "TIMEOUT" if isinstance(error,TimeoutError) else "TRANSPORT" if isinstance(error,(OSError,http.client.HTTPException)) else "OTHER")
+
+
+def remember_error(error):
+    global failure_diagnostic
+    if failure_diagnostic is None:
+        failure_diagnostic = (stage,expected_status,observed_status,error_kind(error))
+
+
+def diagnostic(error):
+    location, expected, observed, kind = failure_diagnostic or (stage,expected_status,observed_status,error_kind(error))
+    print("BOUNDARY: CODE_SESSION "+location+" "+expected+" "+observed+" "+kind,flush=True)
 
 
 def case(value):
@@ -39,6 +75,7 @@ def case(value):
 
 
 def timestamp(value):
+    checkpoint("TIMESTAMP")
     V.require(type(value) is str and value.endswith("Z") and "." not in value)
     parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
     V.require(parsed.isoformat().replace("+00:00", "Z") == value)
@@ -46,20 +83,28 @@ def timestamp(value):
 
 
 def validate(value, binding, enabled=True):
+    checkpoint("DTO_FIELDS")
     V.require(type(value) is dict and set(value) == FIELDS)
+    checkpoint("UTF8")
     for item in value.values():
         if type(item) is str: item.encode("utf-8", errors="strict")
+    checkpoint("BINDING")
     V.require(all(type(value[k]) is str and value[k] == binding[k] for k in binding))
+    checkpoint("USERNAME")
     V.require(type(value["username"]) is str and 0 < len(value["username"]) <= 255)
     V.require(not any(ord(c)<32 or ord(c)==127 for c in value["username"]))
+    checkpoint("CONTACTS")
     V.require(all(value[k] is None or type(value[k]) is str for k in ("email", "phone_number")))
     email = value["email"]
     V.require(email is None or (0<len(email)<=254 and email==email.strip()==email.lower()
         and re.fullmatch(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+", email) is not None))
     V.require(value["phone_number"] is None or re.fullmatch(r"\+9715[024568][0-9]{7}", value["phone_number"]) is not None)
+    checkpoint("FLAGS")
     V.require(type(value["enabled"]) is bool and value["enabled"] is enabled)
     V.require(value["user_session_active"] is True and value["client_session_active"] is True)
-    V.require(1 <= timestamp(value["valid_until"]) - timestamp(value["observed_at"]) <= 5)
+    delta = timestamp(value["valid_until"]) - timestamp(value["observed_at"])
+    checkpoint("TIME_DELTA")
+    V.require(1 <= delta <= 5)
     return value
 
 
@@ -71,63 +116,214 @@ def strict_object(pairs):
     return result
 
 
+RESOLVER = """import socket,json,sys
+result=[]
+for family,kind,protocol,name,address in socket.getaddrinfo(sys.argv[1],8080,type=socket.SOCK_STREAM):
+ if family in (socket.AF_INET,socket.AF_INET6) and address[0] not in result: result.append(address[0])
+ if len(result)==8: break
+raw=json.dumps(result,separators=(',',':')).encode('ascii')
+if len(raw)>1024: sys.exit(1)
+sys.stdout.buffer.write(raw)
+"""
+FIXTURE_RANGES = tuple(ipaddress.ip_network(value) for value in
+    ("10.0.0.0/8","172.16.0.0/12","192.168.0.0/16","fc00::/7"))
+
+
+def fixture_address(address):
+    if (address.is_loopback or address.is_unspecified or address.is_link_local
+            or address.is_multicast or address.is_reserved):
+        return False
+    return any(address.version==network.version and address in network for network in FIXTURE_RANGES)
+
+
+class Deadline:
+    def __init__(self, end):
+        self.end, self.physical, self.child = end, None, None
+        self.lock = threading.Lock()
+        self.expired = threading.Event()
+        self.timer = threading.Timer(max(0,end-time.monotonic()),self.expire)
+        self.timer.start()
+
+    def remaining(self):
+        left = self.end-time.monotonic()
+        if self.expired.is_set() or left<=0: raise TimeoutError("bounded exchange")
+        return left
+
+    @staticmethod
+    def dispose(physical):
+        if physical is not None:
+            try: physical.shutdown(socket.SHUT_RDWR)
+            except OSError: pass
+            physical.close()
+
+    def expire(self):
+        self.expired.set()
+        with self.lock:
+            physical, child = self.physical,self.child
+        self.dispose(physical)
+        if child is not None:
+            try: child.kill()
+            except OSError: pass
+
+    def attach(self, physical):
+        with self.lock:
+            self.physical = physical
+            expired = self.expired.is_set()
+        if expired:
+            self.dispose(physical)
+            raise TimeoutError("bounded connect")
+
+    def close(self):
+        self.timer.cancel()
+        self.dispose(self.physical)
+        self.timer.join(1)
+        V.require(not self.timer.is_alive())
+
+
+def resolve(host, guard):
+    V.require(host in {"sso-a","sso-b"})
+    environment = {k:os.environ[k] for k in ("SystemRoot","WINDIR") if k in os.environ}
+    child = subprocess.Popen([sys.executable,"-I","-S","-c",RESOLVER,host], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,env=environment)
+    with guard.lock:
+        guard.child = child
+    try:
+        try:
+            raw,_ = child.communicate(timeout=guard.remaining())
+        except subprocess.TimeoutExpired:
+            raise TimeoutError("bounded resolver") from None
+        guard.remaining()
+        V.require(child.returncode==0 and len(raw)<=1024)
+        values = json.loads(raw.decode("ascii"))
+        V.require(type(values) is list and 1<=len(values)<=8)
+        addresses = [ipaddress.ip_address(item) for item in values]
+        # is_private also includes loopback, metadata and special-use ranges.
+        # No topology subnet is frozen; permit only RFC1918 / IPv6 ULA here.
+        V.require(all(fixture_address(address) for address in addresses))
+        return next((address for address in addresses if address.version==4),addresses[0])
+    finally:
+        if child.poll() is None: child.kill()
+        child.communicate(timeout=1)  # Kill and reap, including deadline/EOF failures.
+        with guard.lock:
+            guard.child = None
+
+
+class OwnedConnection(http.client.HTTPConnection):
+    def __init__(self, address, guard):
+        self.address, self.guard = address,guard
+        super().__init__(str(address),8080,timeout=guard.remaining())
+
+    def connect(self):
+        family = socket.AF_INET if self.address.version==4 else socket.AF_INET6
+        physical = socket.socket(family,socket.SOCK_STREAM)
+        self.guard.attach(physical)  # Capture before numeric TCP connect, no DNS here.
+        self.sock = physical
+        physical.settimeout(self.guard.remaining())
+        physical.connect((str(self.address),self.port))
+        self.guard.remaining()
+
+
 def exchange(node, binding, key):
-    V.require(node in V.TARGETS.values())
+    global observed_status
+    observed_status = "HTTP_NONE"
+    checkpoint("HTTP_SEND")
+    V.require(node in {"http://sso-a:8080","http://sso-b:8080"})
     origin = urllib.parse.urlsplit(node)
     deadline = min(time.monotonic()+4, case_stop or float("inf"), stop or float("inf"))
     V.require(time.monotonic() < deadline)
-    connection = http.client.HTTPConnection(origin.hostname, origin.port, timeout=4)
+    guard = Deadline(deadline)
+    connection = None
     try:
+        checkpoint("HTTP_DNS")
+        address = resolve(origin.hostname,guard)
+        connection = OwnedConnection(address,guard)
+        checkpoint("HTTP_SEND")
         payload = binding if type(binding) is bytes else json.dumps(binding, separators=(",", ":")).encode("utf-8")
         connection.request("POST", "/realms/"+REALM+"/armoney-status/code-session", payload,
             {"Content-Type":"application/json", "X-ArMoney-Auth-Status-Key":key})
-        transport = connection.sock
-        transport.settimeout(max(0.001, deadline-time.monotonic()))
+        transport = guard.physical
+        transport.settimeout(guard.remaining())
+        checkpoint("HTTP_HEADERS")
         response = connection.getresponse()
+        observed_status = status_label(response.status)
+        checkpoint("HTTP_BODY")
         raw = bytearray()
         while True:
-            V.require(time.monotonic() < deadline)
-            transport.settimeout(max(0.001, deadline-time.monotonic()))
+            guard.remaining()
+            # read1 closes a Connection:close transport after the exact final
+            # Content-Length byte. Do not touch that closed socket again.
+            if getattr(response,"length",None) == 0:
+                break
+            transport.settimeout(guard.remaining())
             chunk = response.read1(min(4096, 12289-len(raw)))
             raw.extend(chunk)
             V.require(len(raw) <= 12288)
-            if not chunk: break
-        V.require(time.monotonic() < deadline)
+            if not chunk:
+                V.require(getattr(response,"length",None) in (None,0))
+                break
+        guard.remaining()
+        checkpoint("HTTP_JSON")
         value = json.loads(raw.decode("utf-8"), object_pairs_hook=strict_object) if raw else None
+        guard.remaining()
         return response.status, value, response.headers
+    except (OSError,http.client.HTTPException):
+        if guard.expired.is_set(): raise TimeoutError("bounded exchange") from None
+        raise
     finally:
-        connection.close()
+        try:
+            if connection is not None: connection.close()
+        finally:
+            guard.close()
 
 
 def observe(node, binding, expected=200, enabled=True, key=None):
+    global expected_status
+    expected_status = status_label(expected)
     response = exchange(node, binding, os.environ["AUTH_TO_SSO_STATUS_KEY"] if key is None else key)
-    V.require(response[0] == expected and response[2].get("Cache-Control", "").lower() == "no-store")
+    checkpoint("STATUS")
+    V.require(response[0] == expected)
+    checkpoint("CACHE")
+    V.require(response[2].get("Cache-Control", "").lower() == "no-store")
     if expected == 200:
+        checkpoint("CONTENT_TYPE")
         V.require(response[2].get("Content-Type", "").split(";",1)[0].strip()=="application/json")
         return validate(response[1], binding, enabled)
     V.require(response[1] is None)
 
 
 def session(a, subject, username, password):
+    global failure_diagnostic
     token = None
     worker = None
     outcome = V.BrowserOutcome()
     try:
+        checkpoint("SESSION_ARM")
         token = V.control(a, "arm", {"subject": subject, "client_id": "armoney-ios", "mode": "COMPLETE"})["experiment_token"]
         worker = threading.Thread(target=V.browser_login, args=(a, "armoney-ios", username, password, "COMPLETE", False, outcome), daemon=True)
         worker.start()
+        checkpoint("SESSION_HELD")
         facts = V.wait_held(a, token, outcome)
         V.require(facts["subject"] == subject and facts["client_id"] == "armoney-ios")
+        checkpoint("SESSION_RELEASE")
         V.control(a, "release", {"experiment_token": token})
+        checkpoint("SESSION_BROWSER")
         outcome.await_response(15)
         return {"issuer": a + "/realms/" + REALM, "subject": subject,
                 "client_id": "armoney-ios", "user_session_id": facts["user_session_id"]}
+    except Exception as error:
+        remember_error(error)
+        raise
     finally:
         try:
             if token is not None:
+                checkpoint("SESSION_CANCEL")
                 V.control(a, "cancel", {"experiment_token": token})
+        except Exception as error:
+            remember_error(error)
+            raise
         finally:
             if worker is not None:
+                checkpoint("SESSION_JOIN")
                 worker.join(25)
                 V.require(not worker.is_alive())
 
@@ -147,7 +343,7 @@ def wait_expired(node, binding, timeout=12):
 
 
 def acceptance():
-    global current, failure
+    global current, failure, failure_diagnostic
     V.require(os.environ.get("CODE_SESSION_ACCEPTANCE_ISOLATED") == "true")
     V.validate_configuration()
     V.REALM = REALM  # Only this private imported instance, after isolation guards.
@@ -193,6 +389,7 @@ def acceptance():
         case("BASELINE")
         binding = session(a, subject, username, password)
         baseline = observe(b, binding)
+        checkpoint("BASELINE_CONTACT")
         V.require(baseline["email"] == username+"@example.invalid" and baseline["phone_number"] is None)
         case("HTTP_BOUNDARY")
         observe(a, binding, 503)
@@ -234,7 +431,9 @@ def acceptance():
         observe(b, fresh)
         wait_expired(b, fresh)
     finally:
-        if sys.exc_info()[0] is not None: failure = current
+        if sys.exc_info()[0] is not None:
+            failure = current
+            remember_error(sys.exc_info()[1])
         # Cleanup remains mandatory even when the overall evidence budget expires.
         current = "CLEANUP"
         print("CASE: CODE_SESSION CLEANUP", flush=True)
@@ -242,15 +441,17 @@ def acceptance():
 
 
 def main():
-    global stop, failure, current, case_stop
+    global stop, failure, current, case_stop, stage, expected_status, observed_status, failure_diagnostic
     failure, current, case_stop = None, "CONFIGURATION", None
+    stage, expected_status, observed_status, failure_diagnostic = "START", "HTTP_NONE", "HTTP_NONE", None
     stop = time.monotonic() + 540
     try:
         case("CONFIGURATION")
         acceptance()
         case("COMPLETE")
         print("PASS: CODE_SESSION COMPLETE", flush=True)
-    except Exception:
+    except Exception as error:
+        diagnostic(error)
         raise SystemExit("FAIL: CODE_SESSION " + (failure or current)) from None
 
 
