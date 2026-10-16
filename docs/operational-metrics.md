@@ -3,8 +3,7 @@
 Tracking: issue #22. Source includes the technical registry, private HTTP adapter,
 opt-in readiness for six Java services, two payment backlog measurements, and a
 local collector with finite alerts and runbooks. The main-based local full
-Gradle/PostgreSQL check passed; exact-head CI, Compose failure acceptance and
-persistent deployment remain pending.
+Gradle/PostgreSQL check passed. Baseline exact-head CI and Compose failure acceptance passed for PR #73 on 2026-10-16; persistent deployment remains pending. The replica-observation follow-up has its separate 93-test local evidence, while combined-revision CI and runtime acceptance remain pending.
 
 ## Service readiness opt-in
 
@@ -263,3 +262,9 @@ runtime task was up-to-date; the payment fixture executed ten cases with zero
 failures/errors/skips. Reports: `payment-service/build/reports/tests/test/`.
 
 See [ADR 0027](adr/0027-local-operational-metrics.md).
+
+Replica observation is not injected by the optional Compose file. To enable it,
+set `LEDGER_METRICS_REPLICA_NAMES` explicitly in a private service environment
+override together with the matching Ledger read URLs. Leaving it absent disables
+the observation pool; an explicitly blank value is invalid and must not be used
+as an interpolation default.

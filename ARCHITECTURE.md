@@ -39,7 +39,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | AI assistant | Implemented read-only C# service, local policy RAG, constrained bank reads and Android screen; local rollout verified on 2026-10-13 | Finite demonstration topics, English extracts, at most six wallets and first-page history of 50; physical-device/live-owner acceptance not run |
 | Gateway | Auth, profile/phone, wallets/balances, P2P and notifications | Further hardening |
 | Local SMS sandbox | Optional authenticated capture API and web inbox, bounded persistent file storage; no carrier delivery | Identity OTP and transaction producers are separate integration tasks |
-| Operational metrics (#22) | Source: six-service private readiness, payment recovery/email backlog counts, bounded local collector and finite stdout alerts | Deployment/key provisioning and integrated failure acceptance pending; worker counters, queue age and replica lag remain unknown |
+| Operational metrics (#22) | Source: six-service private readiness, payment recovery/email backlog counts, bounded local collector and finite stdout alerts | Baseline exact-head CI and failure acceptance passed in PR #73; deployment/key provisioning remain pending. Worker counters and queue age remain unknown; explicit-name replica observation is source-only in the current follow-up |
 | Kafka infrastructure | Optional source-defined three-controller/three-broker KRaft cluster, mutual TLS, exact service ACLs and cold snapshot helper | Real-cluster acceptance and deployment pending; service adapters and financial Saga recovery remain planned |
 
 A payment email presentation candidate adds HTML/plain text and a frozen optional
@@ -1244,3 +1244,16 @@ enforcing the marker in every mode: disabling flags does not make older binaries
 safe. Local affected Auth checks passed 675 tests across 38 suites without failures, errors or skips. Exact-head CI is pending; runtime activation, deployment and complete
 registration enforcement are not claimed. See
 [ADR 0039](docs/adr/0039-managed-registration-completion.md).
+
+### Bounded replica observation follow-up
+
+Ledger can optionally observe explicitly named primary WAL senders for metrics only.
+`LEDGER_METRICS_REPLICA_NAMES` must match the configured read-URL count; absent
+names allocate no observation pool and retain UNKNOWN. An authenticated scrape
+uses a separate bounded read-only pool. Complete fresh observations distinguish
+known zero backlog from recent replay delay; missing, stale or uncertain members
+clear the previous observation. This does not change money, read routing,
+readiness or durability. Local affected Ledger checks passed 93 tests across 13
+suites, including real physical standbys, on the recorded source patch. Combined
+current-main CI, Compose acceptance and deployment remain pending. See
+[ADR 0040](docs/adr/0040-replica-observation.md).
