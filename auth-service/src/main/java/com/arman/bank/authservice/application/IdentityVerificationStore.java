@@ -17,5 +17,9 @@ public interface IdentityVerificationStore {
     void cleanup();
     /** Must obtain committed pre-token evidence using the exact auth DB start time supplied before network I/O.
      * No production supplier is introduced by this staging slice. */
-    @FunctionalInterface interface Observations { Observation observe(Flow flow,Instant startedAt); }
+    @FunctionalInterface interface Observations {
+        Observation observe(Flow flow,Instant startedAt);
+        /** Separately validated status facts may suspend an existing grant; never authorize positive operations. */
+        default Observation observeStatus(Flow flow,Instant startedAt){return observe(flow,startedAt);}
+    }
 }

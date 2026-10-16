@@ -165,4 +165,38 @@ class VerificationObservationsTransportSpec extends Specification {
         cleanup:
         Thread.interrupted()
     }
+    def 'status-only trusted negatives preserve validated facts while positive observations still deny'(){
+        given:
+        def changed=observed();changed[field]=false;response=JsonOutput.toJson(changed)
+        when:
+        def result=transport.observeStatus(flow,anchor)
+        then:
+        result.observationStartedAt()==anchor
+        result.flow()==flow
+        result.enabled()==(field!='enabled')
+        result.sessionActive()==(field!='authentication_session_active')
+        when:
+        transport.observe(flow,anchor)
+        then:
+        thrown(Verification.Failure)
+        requests.size()==2
+        where:
+        field << ['enabled','authentication_session_active']
+    }
+    def 'negative status cannot bypass binding canonicalization types or expiry'(){
+        given:
+        def changed=observed()+[enabled:false];changed[field]=value;response=JsonOutput.toJson(changed)
+        when:
+        transport.observeStatus(flow,anchor)
+        then:
+        thrown(Verification.Failure)
+        requests.size()==1
+        where:
+        field | value
+        'subject' | 'other'
+        'email' | 'Mixed@Example.test'
+        'enabled' | 'false'
+        'authentication_session_active' | null
+        'authentication_session_expires_at' | '2026-10-16T10:00:00Z'
+    }
 }
