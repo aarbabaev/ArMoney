@@ -2,9 +2,14 @@
 import contextlib
 import importlib.util
 import io
+import http.client
+import http.server
 from pathlib import Path
 import threading
 import unittest
+import urllib.error
+import urllib.parse
+import urllib.request
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -204,6 +209,141 @@ class DiagnosticsTest(unittest.TestCase):
             outcome.diagnose()
         self.assertEqual("BROWSER: SSO_VIS_001 LAUNCH FAILED UNKNOWN\n", output.getvalue())
         self.assertTrue(outcome.failed)
+
+    def test_callback_validates_exact_path_state_code_and_bounded_query(self):
+        valid = "/visibility-callback?" + urllib.parse.urlencode({"state": PRIVATE, "code": "synthetic-code"})
+        self.assertTrue(HARNESS.valid_callback_path(valid, PRIVATE))
+        for path in (valid.replace("visibility-callback", "other"), valid + "&state=second",
+                     valid + "&state=", valid + "&code=", valid + "&error=", valid + "&unknown=",
+                     valid + "&error=invalid", valid.replace("synthetic-code", ""),
+                     "http://foreign.invalid" + valid, valid + "#fragment", "x" * 8193):
+            self.assertFalse(HARNESS.valid_callback_path(path, PRIVATE))
+        self.assertFalse(HARNESS.valid_callback_path(valid, "different-state"))
+
+    def test_completion_is_not_published_before_delayed_cleanup_failure(self):
+        closing, release = threading.Event(), threading.Event()
+        for fail_target in ("browser", "receiver"):
+            with self.subTest(fail_target=fail_target):
+                closing.clear()
+                release.clear()
+                class ContextManager:
+                    def __init__(self, value): self.value = value
+                    def __enter__(self): return self.value
+                    def __exit__(self, *args): pass
+                class Page:
+                    main_frame = object()
+                    def goto(self, *args, **kwargs): pass
+                    def locator(self, selector):
+                        return SimpleNamespace(fill=lambda *a: None, click=lambda **kw: None)
+                    def expect_event(self, *args, **kwargs):
+                        return ContextManager(SimpleNamespace(value=SimpleNamespace(response=lambda:
+                            SimpleNamespace(status=302))))
+                def cleanup(target):
+                    if target == fail_target:
+                        closing.set()
+                        if not release.wait(2): raise AssertionError("synthetic release timeout")
+                        raise RuntimeError(PRIVATE)
+                seen = threading.Event()
+                seen.set()
+                receiver = SimpleNamespace(start=lambda: receiver, completed=seen, seen=seen,
+                    invalid=threading.Event(), valid_completion=lambda: True, close=lambda: cleanup("receiver"))
+                browser = SimpleNamespace(new_context=lambda: SimpleNamespace(new_page=lambda: Page()),
+                    close=lambda: cleanup("browser"))
+                module = SimpleNamespace(sync_playwright=lambda: ContextManager(SimpleNamespace(
+                    chromium=SimpleNamespace(launch=lambda: browser))))
+                outcome = HARNESS.BrowserOutcome()
+                output = io.StringIO()
+                with patch.dict(HARNESS.sys.modules, {"playwright": SimpleNamespace(), "playwright.sync_api": module}), \
+                        patch.object(HARNESS, "CallbackReceiver", return_value=receiver), \
+                        contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                    worker = threading.Thread(target=HARNESS.browser_login,
+                        args=("A", "client", PRIVATE, PRIVATE, "COMPLETE", False, outcome))
+                    worker.start()
+                    try:
+                        self.assertTrue(closing.wait(1))
+                        self.assertFalse(outcome.done.is_set(), "POST must remain gated during cleanup")
+                        with self.assertRaises(AssertionError): outcome.await_response(0.001)
+                    finally:
+                        release.set()
+                        worker.join(3)
+                    self.assertFalse(worker.is_alive())
+                    self.assertTrue(outcome.done.is_set())
+                    self.assertTrue(outcome.failed)
+                    with self.assertRaises(AssertionError): outcome.await_response(0.001)
+                self.assertNotIn(PRIVATE, output.getvalue())
+
+    def test_actual_loopback_redirect_reaches_receiver_without_route_interception(self):
+        capture = HARNESS.CallbackReceiver(PRIVATE)
+        target = HARNESS.CALLBACK + "?" + urllib.parse.urlencode({"state": PRIVATE, "code": "synthetic-code"})
+        class Redirect(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", target)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+        source = http.server.HTTPServer(("127.0.0.1", 0), Redirect)
+        worker = threading.Thread(target=source.serve_forever, kwargs={"poll_interval":0.01})
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            try:
+                capture.start()
+                worker.start()
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                with opener.open("http://127.0.0.1:" + str(source.server_port) + "/start", timeout=3) as response:
+                    self.assertEqual(200, response.status)
+                    self.assertEqual(b"Disposable callback complete", response.read(128))
+                self.assertTrue(capture.completed.wait(1))
+                self.assertTrue(capture.valid_completion())
+            finally:
+                if worker.is_alive(): source.shutdown()
+                source.server_close()
+                if worker.ident is not None: worker.join(3)
+                capture.close()
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(capture.thread.is_alive())
+        self.assertIsNone(capture.state)
+        self.assertEqual("", output.getvalue())
+
+    def test_actual_callback_abort_closes_without_success_response(self):
+        capture = HARNESS.CallbackReceiver(PRIVATE, abort=True)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            try:
+                capture.start()
+                connection = http.client.HTTPConnection("127.0.0.1", 18767, timeout=3)
+                try:
+                    connection.request("GET", "/visibility-callback?" + urllib.parse.urlencode({"state":PRIVATE,"code":"synthetic-code"}))
+                    with self.assertRaises(http.client.RemoteDisconnected):
+                        connection.getresponse()
+                finally:
+                    connection.close()
+                self.assertTrue(capture.completed.wait(1))
+                self.assertTrue(capture.valid_completion())
+            finally:
+                capture.close()
+        self.assertEqual("", output.getvalue())
+
+    def test_wrong_callback_state_does_not_count_as_completed(self):
+        capture = HARNESS.CallbackReceiver(PRIVATE)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            try:
+                capture.start()
+                connection = http.client.HTTPConnection("127.0.0.1", 18767, timeout=3)
+                try:
+                    connection.request("GET", "/visibility-callback?state=wrong&code=synthetic")
+                    response = connection.getresponse()
+                    self.assertEqual(400, response.status)
+                    response.read(128)
+                finally:
+                    connection.close()
+                self.assertTrue(capture.invalid.is_set())
+                self.assertFalse(capture.valid_completion())
+                self.assertFalse(capture.seen.is_set())
+            finally:
+                capture.close()
+        self.assertEqual("", output.getvalue())
 
 
 if __name__ == "__main__":

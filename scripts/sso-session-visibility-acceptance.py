@@ -1,11 +1,13 @@
 """Disposable SSO-VIS-001 diagnostics; visibility never grants banking authority."""
 import base64
 import hashlib
+import http.server
 import importlib.util
 import os
 from pathlib import Path
 import re
 import secrets
+import socket
 import sys
 import threading
 import time
@@ -26,7 +28,7 @@ PHASES = frozenset({"START", "CONFIGURATION", "READINESS", "SETUP", "ARM", "HELD
                     "PRE", "RELEASE", "BROWSER", "POST", "CLEANUP", "COMPLETE"})
 OUTCOMES = frozenset({"PREVISIBLE", "NOT_VISIBLE", "ERROR"})
 BROWSER_STAGES = frozenset({"START", "IMPORT", "LAUNCH", "CONTEXT", "AUTH_NAV", "USERNAME", "PASSWORD",
-                            "SUBMIT", "RESPONSE", "CALLBACK", "CLOSED"})
+                            "SUBMIT", "RESPONSE", "CALLBACK", "CALLBACK_START", "CALLBACK_CLOSE", "CLOSED"})
 BROWSER_RESULTS = frozenset({"PENDING", "FAILED", "HTTP_200", "HTTP_302", "HTTP_503", "HTTP_OTHER", "COMPLETE"})
 BROWSER_FORMS = frozenset({"UNKNOWN", "LOGIN", "PROFILE", "OTHER"})
 HOOK_BOUNDARIES = frozenset({"NOT_ENTERED", "ENTERED", "RESPONSE_REJECTED", "TUPLE_REJECTED", "HELD",
@@ -180,6 +182,98 @@ class BrowserOutcome:
         require(not self.failed and self.response_complete, "completed expected browser response")
 
 
+def valid_callback_path(path, state):
+    # Query contents are inspected only in memory and never retained or emitted.
+    try:
+        if type(path) is not str or len(path) > 8192:
+            return False
+        parsed = urllib.parse.urlsplit(path)
+        if parsed.scheme or parsed.netloc or parsed.fragment or parsed.path != "/visibility-callback":
+            return False
+        query = urllib.parse.parse_qs(parsed.query, strict_parsing=True, max_num_fields=8, keep_blank_values=True)
+        return (set(query) <= {"state", "code", "session_state", "iss"}
+            and set(query) >= {"state", "code"}
+            and all(len(values) == 1 and 0 < len(values[0]) <= 2048 for values in query.values())
+            and query["state"][0] == state)
+    except (ValueError, TypeError):
+        return False
+
+
+class CallbackReceiver:
+    """Runner-loopback receiver for the actual redirect chain; never redeems codes."""
+    def __init__(self, state, abort=False):
+        self.state = state
+        self.abort = abort
+        self.seen = threading.Event()
+        self.completed = threading.Event()
+        self.invalid = threading.Event()
+        self.server = None
+        self.thread = None
+
+    def start(self):
+        capture = self
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def setup(self):
+                self.request.settimeout(2)
+                super().setup()
+
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                if (self.headers.get("Host") != "127.0.0.1:18767"
+                        or not valid_callback_path(self.path, capture.state)):
+                    capture.invalid.set()
+                    self.send_response(400)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                capture.seen.set()
+                if capture.abort:
+                    # Deliberately terminate callback transport after A's real302.
+                    self.close_connection = True
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                    capture.completed.set()
+                    return
+                body = b"Disposable callback complete"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                self.wfile.flush()
+                capture.completed.set()
+
+        class Server(http.server.HTTPServer):
+            def handle_error(self, request, client_address):
+                capture.invalid.set()  # BaseServer would print a private traceback.
+
+        self.server = Server(("127.0.0.1", 18767), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever,
+            kwargs={"poll_interval": 0.05}, daemon=True)
+        try:
+            self.thread.start()
+        except Exception:
+            self.server.server_close()
+            self.server = None
+            raise
+        return self
+
+    def close(self):
+        if self.server is not None:
+            try:
+                self.server.shutdown()
+            finally:
+                self.server.server_close()
+                self.thread.join(3)
+                self.state = None
+            require(not self.thread.is_alive(), "bounded callback shutdown")
+
+    def valid_completion(self):
+        return self.seen.is_set() and self.completed.is_set() and not self.invalid.is_set()
+
+
 def run_with_cleanup(action, cleanup):
     try:
         action()
@@ -209,6 +303,8 @@ def main():
 
 def browser_login(node, client, username, password, mode, callback_failure, outcome):
     # Every Playwright object stays in this thread. Only finite completion facts leave it.
+    receiver = None
+    complete, callback_seen, failed = False, False, False
     try:
         outcome.progress(stage="IMPORT")
         from playwright.sync_api import sync_playwright
@@ -218,18 +314,13 @@ def browser_login(node, client, username, password, mode, callback_failure, outc
             try:
                 outcome.progress(stage="CONTEXT")
                 context = browser.new_context()
-                callback_seen = []
-                def callback(route):
-                    callback_seen.append(True)
-                    if callback_failure:
-                        route.abort()
-                    else:
-                        route.fulfill(status=200, content_type="text/plain", body="Disposable callback complete")
-                context.route(CALLBACK + "**", callback)
+                state = secrets.token_urlsafe(24)
+                outcome.progress(stage="CALLBACK_START")
+                receiver = CallbackReceiver(state, abort=callback_failure).start()
                 page = context.new_page()
                 challenge = base64.urlsafe_b64encode(hashlib.sha256(secrets.token_urlsafe(48).encode()).digest()).rstrip(b"=").decode()
                 query = urllib.parse.urlencode({"client_id": client, "response_type": "code", "redirect_uri": CALLBACK,
-                    "scope": "openid", "state": secrets.token_urlsafe(24), "nonce": secrets.token_urlsafe(24),
+                    "scope": "openid", "state": state, "nonce": secrets.token_urlsafe(24),
                     "code_challenge": challenge, "code_challenge_method": "S256", "prompt": "login"})
                 outcome.progress(stage="AUTH_NAV")
                 page.goto(node + "/realms/" + REALM + "/protocol/openid-connect/auth?" + query, timeout=20000)
@@ -258,21 +349,32 @@ def browser_login(node, client, username, password, mode, callback_failure, outc
                     form = ("PROFILE" if page.locator("#firstName, #lastName, #kc-update-profile-form").count()
                             else "LOGIN" if page.locator("#kc-form-login").count() else "OTHER")
                     outcome.progress(form=form)
-                    outcome.finish()
                     return
                 outcome.progress(stage="CALLBACK")
                 if mode == "COMPLETE":
                     deadline = time.monotonic() + 5
-                    while not callback_seen and time.monotonic() < deadline:
+                    while not receiver.completed.is_set() and time.monotonic() < deadline:
                         page.wait_for_timeout(50)
-                    complete = complete and bool(callback_seen)
+                    complete = complete and receiver.valid_completion()
                 else:
-                    complete = complete and not callback_seen
-                outcome.finish(response_complete=complete, callback_seen=bool(callback_seen))
+                    complete = complete and not receiver.seen.is_set() and not receiver.invalid.is_set()
+                print("CALLBACK: SSO_VIS_001 " + ("ABORTED" if callback_failure and receiver.valid_completion()
+                    else "COMPLETE" if receiver.valid_completion() else "INVALID" if receiver.invalid.is_set()
+                    else "ABSENT"), flush=True)
+                callback_seen = receiver.seen.is_set()
             finally:
                 browser.close()
     except Exception:
-        outcome.finish(failed=True)
+        failed = True
+    finally:
+        if receiver is not None:
+            try:
+                receiver.close()
+            except Exception:
+                outcome.progress(stage="CALLBACK_CLOSE")
+                failed = True
+        # Publish once, after all cleanup, so POST cannot outrun cleanup failure.
+        outcome.finish(response_complete=complete, callback_seen=callback_seen, failed=failed)
 
 
 def experiment(a, b, subject, client, username, password, mode="COMPLETE", callback_failure=False):
