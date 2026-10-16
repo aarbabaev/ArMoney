@@ -22,6 +22,10 @@ final class ProofHookTest {
         var protocol=fixture.protocol(true,LoginProofTest.client(transport));
         var failure=assertThrows(WebApplicationException.class,()->protocol.buildRedirectUri(fixture.builder(),fixture.auth,fixture.user,fixture.context));
         assertEquals(503,failure.getResponse().getStatus());
+        assertNull(failure.getResponse().getEntity());
+        assertEquals("no-store",failure.getResponse().getHeaderString("Cache-Control"));
+        assertEquals(MediaType.APPLICATION_JSON_TYPE,failure.getResponse().getMediaType());
+        assertDoesNotThrow(()->StatusBoundaryTest.applyPinnedSecurityHeaders(failure.getResponse()));
         String pending=fixture.notes.get("armoney.code-proof."+LoginProofTest.CODE); assertNotNull(pending);
         var original=LoginProof.write(Bridge.strictJson(pending.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         try(var response=protocol.buildRedirectUri(fixture.builder(),fixture.auth,fixture.user,fixture.context)) {
@@ -30,6 +34,36 @@ final class ProofHookTest {
         assertEquals(pending,fixture.notes.get("armoney.code-proof."+LoginProofTest.CODE));
         assertEquals("current",original.keyId()); assertEquals(LoginProofTest.NOW.minusSeconds(4),original.passwordTime());
         assertEquals(2,transport.requests.size()); assertEquals("code:"+LoginProofTest.CODE,fixture.readCodeKey);
+    }
+    @Test void reusePendingWriteRetainsExplicitNullsAndRetriesIdenticalHttpPayload() throws Exception {
+        var fixture=new Fixture();
+        fixture.notes.remove(PasswordProofFactory.NOTE); fixture.notes.remove(PasswordProofFactory.TIME_NOTE);
+        var transport=new LoginProofTest.Transport(new LoginProofTest.Reply(503,"{}"),
+                new LoginProofTest.Reply(200,LoginProofTest.reuseReply()));
+        var protocol=fixture.protocol(true,LoginProofTest.client(transport));
+        var failure=assertThrows(WebApplicationException.class,
+                ()->protocol.buildRedirectUri(fixture.builder(),fixture.auth,fixture.user,fixture.context));
+        try(var response=failure.getResponse()) {
+            assertEquals(503,response.getStatus()); assertNull(response.getEntity());
+            assertEquals("no-store",response.getHeaderString("Cache-Control"));
+            assertDoesNotThrow(()->StatusBoundaryTest.applyPinnedSecurityHeaders(response));
+        }
+        String pending=fixture.notes.get("armoney.code-proof."+LoginProofTest.CODE);
+        assertNotNull(pending);
+        var stored=Bridge.strictJson(pending.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertEquals(13,stored.size());
+        assertTrue(stored.has("event_id") && stored.get("event_id").isNull());
+        assertTrue(stored.has("password_authenticated_at") && stored.get("password_authenticated_at").isNull());
+        var original=LoginProof.write(stored);
+        assertEquals("reuse",original.kind()); assertNull(original.event()); assertNull(original.passwordTime());
+        try(var response=protocol.buildRedirectUri(fixture.builder(),fixture.auth,fixture.user,fixture.context)) {
+            assertEquals(302,response.getStatus()); assertEquals(fixture.location,response.getLocation());
+        }
+        assertEquals(pending,fixture.notes.get("armoney.code-proof."+LoginProofTest.CODE));
+        assertEquals(2,transport.requests.size());
+        assertArrayEquals(LoginProofTest.requestBody(transport.requests.getFirst()),
+                LoginProofTest.requestBody(transport.requests.getLast()));
+        assertEquals(original,LoginProof.write(Bridge.strictJson(LoginProofTest.requestBody(transport.requests.getLast()))));
     }
     @Test void mismatchedOrMissingPersistedCodeNeverWritesProofOrReleasesRedirect() {
         for(boolean missing:List.of(false,true)) {

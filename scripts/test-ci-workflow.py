@@ -86,9 +86,9 @@ class WorkflowGuards(unittest.TestCase):
                               cwd=cwd, env=dict(os.environ, **environment),
                               capture_output=True, text=True, timeout=20)
 
-    def test_every_required_job_runs_even_if_impact_failed_or_skipped(self):
+    def test_required_jobs_run_after_impact_failure_but_stop_on_workflow_cancellation(self):
         self.assertEqual(set(self.jobs), {'impact', *JOBS})
-        expected = ("always() && github.actor == 'aarbabaev' && "
+        expected = ("always() && !cancelled() && github.actor == 'aarbabaev' && "
                     "(github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)")
         for name in JOBS:
             job = self.jobs[name]

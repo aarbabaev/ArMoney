@@ -81,7 +81,8 @@ final class ProofLoginProtocol extends OIDCLoginProtocol {
                 return response;
             } catch (Exception failure) { response.close(); throw failure; }
         } catch (Exception unavailable) {
-            throw new WebApplicationException(Response.status(503).header("Cache-Control","no-store").build());
+            throw new WebApplicationException(Response.status(503).type(jakarta.ws.rs.core.MediaType.APPLICATION_JSON_TYPE)
+                    .header("Cache-Control","no-store").build());
         }
     }
     static String codeId(Response response, String sessionId, String clientInternalId) {
