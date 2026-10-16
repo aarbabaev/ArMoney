@@ -9,6 +9,7 @@ import base64
 import datetime
 import hashlib
 import hmac
+import http.client
 import http.server
 import json
 import os
@@ -41,6 +42,9 @@ PHASES = frozenset({"START", "KEY_VALIDATION", "READINESS", "ADMIN_LOGIN", "REAL
                     "CROSS_NODE", "READ_ONLY", "EXPIRY", "TAB_REMOVAL", "ROOT_REMOVAL",
                     "DISABLE_DELETE", "CLEANUP", "COMPLETE"})
 BRIDGE_ERRORS = frozenset({"BRIDGE_BODY", "BRIDGE_OBSERVER", "BRIDGE_DTO", "BRIDGE_CONTACTS", "BRIDGE_UNKNOWN"})
+HTTP_CODES = frozenset({200, 400, 401, 403, 404, 405, 500, 503})
+OBSERVER_BOUNDARIES = frozenset({"HTTP_" + str(code) for code in HTTP_CODES} | {
+    "HTTP_OTHER", "TRANSPORT_TIMEOUT", "TRANSPORT_IO", "INVALID_JSON", "CACHE_POLICY", "ERROR_BODY", "UNKNOWN"})
 current_phase = "START"
 failure_phase = None
 
@@ -63,6 +67,11 @@ def bridge_error(label):
     # Never stringify a response, exception, tuple or unvalidated capture value.
     label = label if isinstance(label, str) and label in BRIDGE_ERRORS else "BRIDGE_UNKNOWN"
     print("BRIDGE_ERROR: OBSERVER69 " + label, flush=True)
+
+
+def observer_boundary(label):
+    label = label if isinstance(label, str) and label in OBSERVER_BOUNDARIES else "UNKNOWN"
+    print("OBSERVER_BOUNDARY: OBSERVER69 " + label, flush=True)
 
 
 def require(condition, label):
@@ -109,7 +118,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def request(method, target, data=None, headers=None, form=False):
+def request(method, target, data=None, headers=None, form=False, diagnostic=None):
     payload = None if data is None else (urllib.parse.urlencode(data) if form else json.dumps(data, separators=(",", ":"))).encode()
     context = ssl.create_default_context(cafile=os.environ.get("SSO_CA_FILE"))
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(),
@@ -117,13 +126,27 @@ def request(method, target, data=None, headers=None, form=False):
     req = urllib.request.Request(target, data=payload, method=method,
                                  headers={"Content-Type": "application/x-www-form-urlencoded" if form else "application/json", **(headers or {})})
     try:
-        response = opener.open(req, timeout=8)
-    except urllib.error.HTTPError as error:
-        response = error
-    with response:
-        body = response.read(16385)
-        require(len(body) <= 16384, "bounded HTTP response")
-        return response.status, json.loads(body) if body else None, response.headers
+        try:
+            response = opener.open(req, timeout=8)
+        except urllib.error.HTTPError as error:
+            response = error
+        with response:
+            if diagnostic is not None:
+                diagnostic("HTTP_" + str(response.status) if type(response.status) is int and response.status in HTTP_CODES else "HTTP_OTHER")
+            body = response.read(16385)
+            require(len(body) <= 16384, "bounded HTTP response")
+            try:
+                parsed = json.loads(body) if body else None
+            except (ValueError, UnicodeError):
+                if diagnostic is not None:
+                    diagnostic("INVALID_JSON")
+                raise
+            return response.status, parsed, response.headers
+    except (OSError, http.client.HTTPException) as error:
+        if diagnostic is not None:
+            timeout = isinstance(error, TimeoutError) or isinstance(getattr(error, "reason", None), TimeoutError)
+            diagnostic("TRANSPORT_TIMEOUT" if timeout else "TRANSPORT_IO")
+        raise
 
 
 def expect(status, response, label):
@@ -194,11 +217,15 @@ def provision_client_and_action(admin, authorization):
                             action, authorization), "enable only email action")
 
 
-def observer(node, flow, key=None):
+def observer(node, flow, key=None, diagnostic=None):
     response = request("POST", node + "/realms/armoney/armoney-status/enrollment", flow,
-                   {"X-ArMoney-Auth-Status-Key": key or env("AUTH_TO_SSO_STATUS_KEY")})
+                   {"X-ArMoney-Auth-Status-Key": key or env("AUTH_TO_SSO_STATUS_KEY")}, diagnostic=diagnostic)
+    if response[2].get("Cache-Control") != "no-store" and diagnostic is not None:
+        diagnostic("CACHE_POLICY")
     require(response[2].get("Cache-Control") == "no-store", "observer responses cannot be cached")
     if response[0] != 200:
+        if response[1] is not None and diagnostic is not None:
+            diagnostic("ERROR_BODY")
         require(response[1] is None, "observer errors have no contact or binding body")
     return response
 
@@ -218,7 +245,8 @@ def controls(node, operation, flow):
 
 def serve_bridge():
     """Capture only genuine provider requests; observe B, then ALWAYS deny provider."""
-    state = {"count": 0, "flow": None, "observation": None, "error": False, "error_code": None}
+    state = {"count": 0, "flow": None, "observation": None, "error": False, "error_code": None,
+             "observer_http": None, "observer_boundary": None}
     lock = threading.Lock()
     control = env("OBSERVER_FIXTURE_CONTROL_KEY")
     bridge_key = env("SSO_VERIFICATION_BRIDGE_KEY")
@@ -251,6 +279,12 @@ def serve_bridge():
                 self.reply(503)
                 return
             bridge_phase = "BRIDGE_BODY"
+            diagnostics = {"observer_http": None, "observer_boundary": None}
+            def record_boundary(code):
+                require(code in OBSERVER_BOUNDARIES, "finite observer boundary")
+                if code.startswith("HTTP_"):
+                    diagnostics["observer_http"] = code
+                diagnostics["observer_boundary"] = code
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 require(0 < length <= 12288, "bounded bridge body")
@@ -258,7 +292,7 @@ def serve_bridge():
                 require(set(body) == FLOW | {"command_id", "phone_number", "email"}, "exact enrollment request")
                 flow = {key: body[key] for key in FLOW}
                 bridge_phase = "BRIDGE_OBSERVER"
-                observed = expect(200, observer(url("OBSERVER_NODE_B_URL"), flow), "bridge observes node B")
+                observed = expect(200, observer(url("OBSERVER_NODE_B_URL"), flow, diagnostic=record_boundary), "bridge observes node B")
                 bridge_phase = "BRIDGE_DTO"
                 require(set(observed) == OBSERVATION, "exact twelve-field observation")
                 require(all(observed[k] == flow[k] for k in FLOW), "exact observed binding")
@@ -273,6 +307,7 @@ def serve_bridge():
                 with lock:
                     state["error"] = True
                     state["error_code"] = bridge_phase
+                    state.update(diagnostics)
             self.reply(503)  # Never fabricated receipts, ACTIVE, tokens or banking success.
 
     class PrivateServer(http.server.ThreadingHTTPServer):
@@ -361,6 +396,8 @@ def acceptance():
                     item = capture()
                     if item["error"]:
                         bridge_error(item.get("error_code"))
+                        observer_boundary(item.get("observer_http"))
+                        observer_boundary(item.get("observer_boundary"))
                     require(not item["error"], "bridge observation failed")
                     if item["count"] == before + 1:
                         require(not callback_count, "denied bridge cannot complete login")

@@ -4,7 +4,8 @@ import importlib.util
 import io
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
+import urllib.error
 
 SPEC = importlib.util.spec_from_file_location("observer_diagnostics", Path(__file__).with_name("sso-provider-acceptance.py"))
 HARNESS = importlib.util.module_from_spec(SPEC)
@@ -124,6 +125,89 @@ class DiagnosticsTest(unittest.TestCase):
                 HARNESS.provision_client_and_action("http://fixture.invalid", {})
         self.assertEqual(3, len(calls))
         self.assertEqual("ACTION_AVAILABLE", HARNESS.current_phase)
+
+
+    def boundary_exchange(self, status=200, payload=b"{}", headers=None, open_error=None, read_error=None):
+        codes, output = [], io.StringIO()
+        class Response:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def read(self, limit):
+                self.limit = limit
+                if read_error is not None:
+                    raise read_error
+                return payload
+        response = Response()
+        response.status = status
+        response.headers = {"Cache-Control": "no-store"} if headers is None else headers
+        opener = Mock()
+        opener.open.side_effect = open_error
+        opener.open.return_value = response
+        failure = None
+        with patch.object(HARNESS.urllib.request, "build_opener", return_value=opener), \
+                patch.object(HARNESS.ssl, "create_default_context", return_value=object()), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            try:
+                HARNESS.expect(200, HARNESS.observer("http://sso-b:8080", {}, key="synthetic-only", diagnostic=codes.append), "observer")
+            except Exception as error:
+                failure = error
+            for code in codes:
+                HARNESS.observer_boundary(code)
+        self.assertEqual(1, opener.open.call_count, "Diagnostic path must never retry")
+        self.assertEqual(8, opener.open.call_args.kwargs["timeout"])
+        self.assertNotIn(PRIVATE, output.getvalue())
+        self.assertTrue(set(codes) <= HARNESS.OBSERVER_BOUNDARIES)
+        self.assertTrue(all(line in {"OBSERVER_BOUNDARY: OBSERVER69 " + code for code in HARNESS.OBSERVER_BOUNDARIES}
+                            for line in output.getvalue().splitlines()))
+        return codes, failure, response
+
+    def test_http_status_precedes_json_cache_and_error_body_validation(self):
+        for kwargs, expected in [
+                ({"status":503,"payload":b""}, ["HTTP_503"]),
+                ({"status":404,"payload":PRIVATE.encode()}, ["HTTP_404","INVALID_JSON"]),
+                ({"status":503,"payload":b"","headers":{}}, ["HTTP_503","CACHE_POLICY"]),
+                ({"status":401,"payload":HARNESS.json.dumps({"private":PRIVATE}).encode()}, ["HTTP_401","ERROR_BODY"]),
+                ({"status":418,"payload":b""}, ["HTTP_OTHER"])]:
+            with self.subTest(expected=expected):
+                codes, failure, response = self.boundary_exchange(**kwargs)
+                self.assertEqual(expected, codes)
+                self.assertIsNotNone(failure, "Existing denial assertions must remain effective")
+                self.assertEqual(16385,response.limit)
+
+    def test_http_error_response_uses_status_not_reason_or_body_text(self):
+        error = urllib.error.HTTPError("http://sso-b:8080/private", 405, PRIVATE,
+                                       {"Cache-Control":"no-store"}, io.BytesIO(b""))
+        codes, failure, _ = self.boundary_exchange(open_error=error)
+        self.assertEqual(["HTTP_405"],codes)
+        self.assertIsInstance(failure,AssertionError)
+
+    def test_transport_failures_are_finite_and_preserve_header_status_if_available(self):
+        for kwargs, expected in [
+                ({"open_error":TimeoutError(PRIVATE)}, ["TRANSPORT_TIMEOUT"]),
+                ({"open_error":urllib.error.URLError(TimeoutError(PRIVATE))}, ["TRANSPORT_TIMEOUT"]),
+                ({"open_error":urllib.error.URLError(PRIVATE)}, ["TRANSPORT_IO"]),
+                ({"read_error":TimeoutError(PRIVATE)}, ["HTTP_200","TRANSPORT_TIMEOUT"]),
+                ({"read_error":HARNESS.http.client.IncompleteRead(b"private",10)}, ["HTTP_200","TRANSPORT_IO"])]:
+            with self.subTest(expected=expected):
+                codes, failure, _ = self.boundary_exchange(**kwargs)
+                self.assertEqual(expected,codes)
+                self.assertIsNotNone(failure)
+
+    def test_diagnostics_preserve_success_and_response_size_guard(self):
+        codes, failure, response = self.boundary_exchange(payload=b"{}")
+        self.assertEqual(["HTTP_200"],codes)
+        self.assertIsNone(failure)
+        self.assertEqual(16385,response.limit)
+        codes, failure, _ = self.boundary_exchange(payload=b"x"*16385)
+        self.assertEqual(["HTTP_200"],codes)
+        self.assertIsInstance(failure,AssertionError)
+        output=io.StringIO()
+        with contextlib.redirect_stdout(output):
+            HARNESS.observer_boundary(PRIVATE)
+            HARNESS.observer_boundary({"private":PRIVATE})
+        self.assertEqual("OBSERVER_BOUNDARY: OBSERVER69 UNKNOWN\n"*2,output.getvalue())
 
 
 if __name__ == "__main__":
