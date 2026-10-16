@@ -42,6 +42,28 @@ class CodeIntentIntegrationSpec extends Specification {
     }
     Write command(Write w,UUID id){new Write(id,w.codeDigest(),w.codeKeyId(),w.issuer(),w.subject(),w.clientId(),w.userSessionId(),w.authenticationSessionId(),w.issuedAt(),w.expiresAt(),w.kind(),w.eventId(),w.passwordAuthenticatedAt())}
     long count(String table){database.transaction{sql->sql.fetchOne('select count(*) from '+table).get(0,Long)}}
+    void executeBytes(org.jooq.DSLContext sql,String query,byte[] value){
+        sql.connection{connection->
+            def statement=connection.prepareStatement(query)
+            try{statement.setBytes(1,value);assert statement.executeUpdate()==1}
+            finally{statement.close()}
+        }
+    }
+    Map budgetByHash(org.jooq.DSLContext sql,byte[] value){
+        sql.connectionResult{connection->
+            def statement=connection.prepareStatement('select credits,refilled_at from sso_code_intent_admission where actor_hash=?')
+            try{
+                statement.setBytes(1,value)
+                def rows=statement.executeQuery()
+                try{
+                    assert rows.next()
+                    Map result=[credits:rows.getBigDecimal('credits'),refilled_at:rows.getObject('refilled_at',java.time.OffsetDateTime)]
+                    assert !rows.next()
+                    return result
+                }finally{rows.close()}
+            }finally{statement.close()}
+        }
+    }
     Map businessSnapshot(){database.transaction{sql->
         ['identities','external_identities','sessions','verification_enrollments','verification_authorities','verification_candidates',
          'verification_challenges','verification_receipts','auth_verification_projection_commands','auth_verification_projection_tombstones',
@@ -107,8 +129,8 @@ class CodeIntentIntegrationSpec extends Specification {
         old.stage('inactive-provider',input(UUID.randomUUID(),'b'*64))
         def oldKeys=new CodeIntentRetentionKeys('original',['original':key])
         def inactiveHash=oldKeys.hash('original','armoney-intent-actor-v1','inactive-provider')
-        database.transaction{sql->sql.execute("update sso_code_intent_admission set credits=0,refilled_at=clock_timestamp()+interval '1 hour' where actor_hash=?",(Object)inactiveHash)}
-        def preserved=database.transaction{sql->sql.fetchOne('select credits,refilled_at from sso_code_intent_admission where actor_hash=?',(Object)inactiveHash).intoMap()}
+        database.transaction{sql->executeBytes(sql,"update sso_code_intent_admission set credits=0,refilled_at=clock_timestamp()+interval '1 hour' where actor_hash=?",inactiveHash)}
+        def preserved=database.transaction{sql->budgetByHash(sql,inactiveHash)}
         def next=Base64.encoder.encodeToString((byte[])([2]*32))
         def currentKeys=new CodeIntentRetentionKeys('next',['original':key,'next':next])
         def rotated=new PostgresCodeIntentStore(database,multiPolicy,currentKeys,detailCrypto())
@@ -116,7 +138,7 @@ class CodeIntentIntegrationSpec extends Specification {
         then:
         database.transaction{sql->
             assert sql.fetchOne('select count(*) from sso_code_intent_admission where retention_key_id<>?', 'next').get(0,Integer)==0
-            assert sql.fetchOne('select credits,refilled_at from sso_code_intent_admission where actor_hash=?',(Object)currentKeys.hash('next','armoney-intent-actor-v1','inactive-provider')).intoMap()==preserved
+            assert budgetByHash(sql,currentKeys.hash('next','armoney-intent-actor-v1','inactive-provider'))==preserved
             assert sql.fetchOne('select count(*) from sso_code_intents where retention_key_id=?','original').get(0,Integer)==2
             true
         }
@@ -143,7 +165,7 @@ class CodeIntentIntegrationSpec extends Specification {
         store.stage(ACTOR,input())
         def next=Base64.encoder.encodeToString((byte[])([2]*32))
         def both=new CodeIntentRetentionKeys('next',['original':key,'next':next])
-        database.transaction{sql->sql.execute("insert into sso_code_intent_admission values (?,'next',0,clock_timestamp())",(Object)both.hash('next','armoney-intent-actor-v1',ACTOR))}
+        database.transaction{sql->executeBytes(sql,"insert into sso_code_intent_admission values (?,'next',0,clock_timestamp())",both.hash('next','armoney-intent-actor-v1',ACTOR))}
         def before=database.transaction{sql->sql.fetch('select * from sso_code_intent_admission order by actor_hash').intoMaps()}
         when: new PostgresCodeIntentStore(database,policy,both,detailCrypto()).stage(ACTOR,input(UUID.randomUUID(),'b'*64))
         then: def failure=thrown(Failure);failure.error()==LoginProof.Error.UNAVAILABLE
