@@ -31,7 +31,9 @@ stop = None
 case_stop = None
 STAGES = frozenset({"START", "SESSION_ARM", "SESSION_HELD", "SESSION_RELEASE", "SESSION_BROWSER", "SESSION_CANCEL",
     "SESSION_JOIN", "HTTP_DNS", "HTTP_SEND", "HTTP_HEADERS", "HTTP_BODY", "HTTP_JSON", "STATUS", "CACHE", "CONTENT_TYPE",
-    "DTO_FIELDS", "UTF8", "BINDING", "USERNAME", "CONTACTS", "FLAGS", "TIMESTAMP", "TIME_DELTA", "BASELINE_CONTACT"})
+    "DTO_FIELDS", "UTF8", "BINDING", "USERNAME", "CONTACTS", "FLAGS", "TIMESTAMP", "TIME_DELTA", "BASELINE_CONTACT",
+    "ADMIN_COMMAND", "ADMIN_CONTACT_CLEAR", "ADMIN_CONTACT_READBACK", "ADMIN_CONTACT_RESTORE", "NULL_CONTACT_VALUE",
+    "POLICY_NEW_SESSION", "ERROR_BODY"})
 stage = "START"
 expected_status = "HTTP_NONE"
 observed_status = "HTTP_NONE"
@@ -65,11 +67,13 @@ def diagnostic(error):
 
 
 def case(value):
-    global current, case_stop
+    global current, case_stop, expected_status, observed_status
     V.require(value in CASES)
     V.require(stop is None or time.monotonic() < stop)
     V.require(case_stop is None or time.monotonic() < case_stop)
     current = value
+    checkpoint("START")
+    expected_status = observed_status = "HTTP_NONE"
     case_stop = time.monotonic() + (120 if value == "READINESS" else 30)
     print("CASE: CODE_SESSION " + value, flush=True)
 
@@ -288,7 +292,40 @@ def observe(node, binding, expected=200, enabled=True, key=None):
         checkpoint("CONTENT_TYPE")
         V.require(response[2].get("Content-Type", "").split(";",1)[0].strip()=="application/json")
         return validate(response[1], binding, enabled)
+    checkpoint("ERROR_BODY")
     V.require(response[1] is None)
+
+
+def contact_readback(command, subject, username, email=None):
+    checkpoint("ADMIN_CONTACT_READBACK")
+    user = command("GET", "/users/"+subject, expected=200)
+    V.require(type(user) is dict)
+    missing = "email" not in user or user["email"] is None
+    phone_source = user.get("username")
+    phone = ("PHONE_SOURCE_CANONICAL" if type(phone_source) is str and re.fullmatch(r"\+9715[024568][0-9]{7}",phone_source)
+        else "PHONE_SOURCE_NONCANONICAL" if type(phone_source) is str else "PHONE_SOURCE_UNKNOWN")
+    print("CONTACT_READBACK: CODE_SESSION "+("EMAIL_NULL" if missing else "EMAIL_NON_NULL")+" "+phone,flush=True)
+    V.require(user.get("id")==subject and phone_source==username and phone=="PHONE_SOURCE_NONCANONICAL")
+    V.require(missing if email is None else user.get("email")==email)
+
+
+def null_contacts(command, node, binding, username, original_email):
+    subject = binding["subject"]
+    try:
+        checkpoint("ADMIN_CONTACT_CLEAR")
+        # Pinned admin profile merge ignores null; explicit blank removes email.
+        command("PUT", "/users/"+subject, {"email":""})
+        contact_readback(command,subject,username)
+        value = observe(node,binding)
+        checkpoint("NULL_CONTACT_VALUE")
+        V.require(value["email"] is None and value["phone_number"] is None)
+    except Exception as error:
+        remember_error(error)
+        raise
+    finally:
+        checkpoint("ADMIN_CONTACT_RESTORE")
+        command("PUT", "/users/"+subject, {"email":original_email})
+        contact_readback(command,subject,username,original_email)
 
 
 def session(a, subject, username, password):
@@ -366,6 +403,10 @@ def acceptance():
     auth = {"Authorization":"Bearer " + login["access_token"]}
     target = admin + "/admin/realms/" + REALM
     def command(method, path, data=None, expected=204):
+        previous = stage
+        checkpoint("ADMIN_COMMAND")
+        # Contact substeps retain their more specific boundary on HTTP failures.
+        if previous in {"ADMIN_CONTACT_CLEAR","ADMIN_CONTACT_READBACK","ADMIN_CONTACT_RESTORE"}: checkpoint(previous)
         return HTTP.expect(expected, HTTP.request(method, target + path, data, auth), "owned fixture command")
     case("SETUP")
     HTTP.expect(404, HTTP.request("GET", target, headers=auth), "absent owned realm")
@@ -417,16 +458,14 @@ def acceptance():
         observe(b, binding, enabled=False)
         command("PUT", "/users/"+subject, {"enabled":True})
         case("NULL_CONTACT")
-        command("PUT", "/users/"+subject, {"email":None})
-        value = observe(b, binding)
-        V.require(value["email"] is None and value["phone_number"] is None)
-        command("PUT", "/users/"+subject, {"email":username+"@example.invalid"})
+        null_contacts(command,b,binding,username,username+"@example.invalid")
         case("SESSION_DELETE")
         command("DELETE", "/sessions/"+binding["user_session_id"])
         observe(b, binding, 503)
         case("POLICY_EXPIRY")
         command("PUT", "", {"ssoSessionIdleTimeout":8,"ssoSessionMaxLifespan":8,"clientSessionIdleTimeout":8,"clientSessionMaxLifespan":8})
         fresh = session(a, subject, username, password)
+        checkpoint("POLICY_NEW_SESSION")
         V.require(fresh["user_session_id"] != binding["user_session_id"])
         observe(b, fresh)
         wait_expired(b, fresh)

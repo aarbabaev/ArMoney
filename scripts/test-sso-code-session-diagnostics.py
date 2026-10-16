@@ -289,6 +289,47 @@ class CodeSessionDiagnosticsTest(unittest.TestCase):
         # no environment switch or production resolver exception admits loopback.
         self.assertFalse(H.fixture_address(ipaddress.ip_address("127.0.0.1")))
 
+    def test_null_contact_fixture_requires_blank_clear_readback_and_restoration(self):
+        for mode in ("success","retained","empty","observer_mismatch","read_failure","restore_mismatch"):
+            with self.subTest(mode=mode):
+                H.failure_diagnostic=None
+                state={"email":"synthetic@example.invalid"}
+                calls=[]
+                reads=[]
+                def command(method,path,data=None,expected=204):
+                    calls.append((method,data,expected))
+                    if method=="PUT":
+                        if data["email"]=="":
+                            state["email"]=("synthetic@example.invalid" if mode=="retained" else "" if mode=="empty" else None)
+                        else: state["email"]="wrong@example.invalid" if mode=="restore_mismatch" else data["email"]
+                    else:
+                        reads.append(True)
+                        if mode=="read_failure" and len(reads)==1: raise OSError(PRIVATE)
+                        return {"id":BINDING["subject"],"username":"legacy-user","email":state["email"]}
+                def observe(*args):
+                    self.assertEqual(1,len(reads),"Readback is mandatory before observer")
+                    self.assertIsNone(state["email"])
+                    result=value()
+                    if mode=="observer_mismatch": result["email"]="retained@example.invalid"
+                    return H.validate(result,BINDING)
+                output=io.StringIO()
+                with patch.object(H,"observe",side_effect=observe) as observer,contextlib.redirect_stdout(output),contextlib.redirect_stderr(output):
+                    if mode=="success":
+                        H.null_contacts(command,"http://sso-b:8080",BINDING,"legacy-user","synthetic@example.invalid")
+                    else:
+                        with self.assertRaises((AssertionError,OSError)) as error:
+                            H.null_contacts(command,"http://sso-b:8080",BINDING,"legacy-user","synthetic@example.invalid")
+                        H.diagnostic(error.exception)
+                self.assertEqual(("PUT",{"email":""},204),calls[0])
+                self.assertEqual(("PUT",{"email":"synthetic@example.invalid"},204),calls[-2])
+                self.assertEqual("GET",calls[-1][0],"Restoration needs readback")
+                self.assertEqual(2,len(reads))
+                if mode in {"retained","empty","read_failure"}: observer.assert_not_called()
+                if mode=="observer_mismatch": self.assertIn("BOUNDARY: CODE_SESSION NULL_CONTACT_VALUE",output.getvalue())
+                if mode in {"retained","empty","read_failure","restore_mismatch"}: self.assertIn("BOUNDARY: CODE_SESSION ADMIN_CONTACT_READBACK",output.getvalue())
+                self.assertNotIn(PRIVATE,output.getvalue())
+                self.assertNotIn("synthetic@example.invalid",output.getvalue())
+
     def test_session_browser_failure_category_survives_cancel_transport_error(self):
         def control(node,operation,body):
             if operation=="cancel": raise OSError(PRIVATE)
