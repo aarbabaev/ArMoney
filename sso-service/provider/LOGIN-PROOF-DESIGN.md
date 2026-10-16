@@ -195,6 +195,10 @@ rollback guarantees.
 
 ### Proposed ordering contract: awaiting joint freeze
 
+The exact proposed wire/capability and acceptance matrix is in the
+[unfrozen Auth draft](../../auth-service/CODE-INTENT-CONFIRMATION-DRAFT.md), with
+[ADR 0043](../../docs/adr/0043-code-intent-confirmation.md).
+
 The existing Auth contract remains authoritative and has not been changed by
 this experiment. Its pre-write observation requirement must be reconciled by the
 Auth owner and orchestrator before implementation. The bounded proposal is to

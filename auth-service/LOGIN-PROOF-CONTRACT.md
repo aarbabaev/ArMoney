@@ -1,5 +1,9 @@
 # Planned auth login proof contract, revision 3
 
+Draft follow-up: [staged intent and explicit confirmation](CODE-INTENT-CONFIRMATION-DRAFT.md)
+records the observed first-login ordering blocker and proposed replacement.
+It is not frozen and does not supersede this agreement or enable any route.
+
 Status: **PLANNED AUTH CONTRACT; DISABLED PROVIDER SOURCE ONLY; NO AUTH PROOF ROUTES REGISTERED.**
 
 Reconciled against main baseline `8b8f8aca9a82f8fc76ae302a748fd61bca91ddd4`

@@ -1,0 +1,54 @@
+# ADR 0043: staged code intent and postcommit proof confirmation
+
+Status: **DRAFT FOR JOINT AUTH/SSO, QA AND SECURITY FREEZE. NOT IMPLEMENTED.**
+Date: 2026-10-17 (Asia/Dubai).
+
+## Context
+
+The isolated SSO-VIS-001 experiment at `05bff8e` observed the session pair as
+not visible from node B while the redirect hook held the login request. Both
+sessions were visible after the response, including callback abort and hook 503.
+This does not identify which member was absent during PRE or promise rollback.
+See the retained evidence described in the provider design.
+
+The existing pre-write positive-session requirement therefore cannot implement
+the tested fresh-login ordering. V7 interactive proof requires an event and true
+notice eligibility; it must not be repurposed as non-authoritative pending state.
+
+## Proposed decision
+
+Use separate immutable code-intent storage. Stage the existing strict Write
+payload before redirect without creating a proof, event, recipient, notice,
+banking session, projection acknowledgement or ACTIVE authority. An explicit,
+separately authenticated confirmation operation runs only after Keycloak validates
+the authorization code and before final token serialization/release.
+
+Confirmation obtains fresh committed user AND authenticated client-session
+observations outside the local transaction. One owning Auth transaction locks
+verification, projection and proof state in order, rechecks all owned evidence
+and deadlines, and atomically records the V7 proof/event and confirmation.
+Historical resolve remains read-only. No nested transaction or hidden remote
+fanout is introduced by resolve. V7 is unchanged; future migrations are append-only.
+
+The exact draft DTOs, credentials, invalidation/replay rules, timeouts and
+acceptance cases are in
+[the draft contract](../../auth-service/CODE-INTENT-CONFIRMATION-DRAFT.md).
+That draft does not supersede the current contract until joint freeze.
+
+## Consequences and limits
+
+Keycloak consumes its single-use code before the policy response hook. An Auth
+commit followed by timeout can therefore leave a confirmed orphan while the code
+is no longer usable. Exact internal replay cannot resurrect the code or authorize
+an invalid token replay; a fresh authorization flow may be required. A record
+alone never creates a banking session or dispatches a notice.
+
+The replacement observer must bind the specific client and a trusted validity
+deadline. The current eight-field status response is insufficient and cannot be
+accepted as a fallback. Required-action OIDC_CONTINUATION is distinct from ACTIVE;
+managed banking denial remains unconditional until its separate consumer passes
+all gates. No provider factory, route, credential or runtime flag is enabled here.
+
+Freeze requires independent Auth/SSO source assessment, QA/security review and
+resolution of the observer-deadline derivation below. Implementation then needs
+exact-head full checks, disposable multi-node acceptance and independent review.
