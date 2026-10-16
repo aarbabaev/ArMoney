@@ -37,6 +37,17 @@ public final class VerificationProjectionConfiguration {
         if(!enabled)return null;
         return new PostgresVerificationProjectionStore(database,policy,retentionKey,sql->(identity,now)->{throw new Failure(Error.UNAVAILABLE);});
     }
+    PostgresVerificationProjectionStore store(Database database,java.util.function.Function<org.jooq.DSLContext,com.arman.bank.authservice.application.VerificationProjectionStore.AuthorityPort> authority){
+        if(!enabled)throw new IllegalArgumentException("Completion requires projection configuration");
+        return new PostgresVerificationProjectionStore(database,policy,retentionKey,authority);
+    }
+    String writer(){return writer;}
+    VerificationProjectionWorker worker(PostgresVerificationProjectionStore store,PostgresIdentityVerificationStore authority){
+        if(!enabled)throw new IllegalArgumentException("Completion requires projection configuration");
+        var transport=new HttpVerificationProjection(base,credential);
+        try{return new VerificationProjectionWorker(store,transport,writer,Clock.systemUTC(),(claim,result)->authority.attach(writer,claim,result));}
+        catch(RuntimeException failure){transport.close();throw failure;}
+    }
     public VerificationProjectionWorker worker(Database database){
         if(!enabled)return null;
         var store=store(database);var transport=new HttpVerificationProjection(base,credential);

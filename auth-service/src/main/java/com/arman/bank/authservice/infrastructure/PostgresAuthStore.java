@@ -14,15 +14,42 @@ import java.util.UUID;
 
 public final class PostgresAuthStore implements AuthStore {
     private final Database database;
-    public PostgresAuthStore(Database database) { this.database = database; }
+    private final boolean eligibilityEnforced;
+    public PostgresAuthStore(Database database) { this(database, false); }
+    public PostgresAuthStore(Database database, boolean eligibilityEnforced) {
+        this.database = java.util.Objects.requireNonNull(database);
+        this.eligibilityEnforced = eligibilityEnforced;
+    }
+    private void lockEligibility(org.jooq.DSLContext sql) {
+        try { PostgresVerificationProjectionStore.lockControls(sql); }
+        catch (com.arman.bank.authservice.domain.VerificationProjection.Failure unavailable) {
+            throw new AuthFailure(AuthFailure.Kind.UNAVAILABLE);
+        }
+    }
+    private void requireBankingAccess(org.jooq.DSLContext sql, UUID identityId) {
+        if (sql.fetchOne("select identity_id from managed_registration_principals where identity_id=?", identityId) != null)
+            throw new AuthFailure(AuthFailure.Kind.UNAUTHORIZED);
+        if (eligibilityEnforced && sql.fetchOne("select enrollment_id from verification_authorities where mapped_identity_id=? or pending_identity_id=?", identityId, identityId) != null)
+            throw new AuthFailure(AuthFailure.Kind.UNAUTHORIZED);
+    }
+    @Override public void requireBankingAccess(UUID identityId) {
+        database.transaction(sql -> { lockEligibility(sql); requireBankingAccess(sql, identityId); return null; });
+    }
     private static OffsetDateTime time(Instant value) { return value.atOffset(ZoneOffset.UTC); }
 
     @Override public Identity externalIdentity(SsoTokens.Principal principal) {
         String issuer = principal.issuer(), subject = principal.subject(), phone = principal.phoneNumber();
         return database.transaction(sql -> {
+            lockEligibility(sql);
             var existing = external(sql, issuer, subject);
+            if (existing != null) requireBankingAccess(sql, existing.id());
             if (existing != null) return refreshContact(sql, matchingPhone(existing, phone), principal);
             if (!AuthService.canonicalPhone(phone)) throw new AuthFailure(AuthFailure.Kind.UNAUTHORIZED);
+            // Staged subjects must finish their own authority transaction, never allocate a different legacy UUID.
+            if (sql.fetchOne("select e.id from verification_enrollments e join verification_authorities a on a.enrollment_id=e.id where e.issuer=? and e.subject=?", issuer, subject) != null)
+                throw new AuthFailure(AuthFailure.Kind.UNAUTHORIZED);
+            if (sql.fetchOne("select e.id from verification_enrollments e join verification_authorities a on a.enrollment_id=e.id where e.phone=?", phone) != null)
+                throw new AuthFailure(AuthFailure.Kind.CONFLICT);
             var candidate = UUID.randomUUID();
             var reserved = sql.fetchOne("""
                 insert into identities(id, registration_phone) values (?, ?)
@@ -84,6 +111,15 @@ public final class PostgresAuthStore implements AuthStore {
     @Override public Identity register(Identity identity, String passwordHash) {
         if (!AuthService.canonicalPhone(identity.registrationPhone())) throw new AuthFailure(AuthFailure.Kind.BAD_INPUT);
         return database.transaction(sql -> {
+            lockEligibility(sql);
+            var retry = sql.fetchOne("select id,email,registration_phone from identities where email=?", identity.email());
+            if (retry != null) {
+                if (identity.registrationPhone().equals(retry.get("registration_phone", String.class))) return identity(retry);
+                throw new AuthFailure(AuthFailure.Kind.CONFLICT);
+            }
+            // Contact equality is conflict denial only; it must never select or link the new identity.
+            if (sql.fetchOne("select e.id from verification_enrollments e join verification_authorities a on a.enrollment_id=e.id where e.phone=? or e.email=?", identity.registrationPhone(), identity.email()) != null)
+                throw new AuthFailure(AuthFailure.Kind.CONFLICT);
             var inserted = sql.fetchOne("""
                 insert into identities(id, email, password_hash, registration_phone) values (?, ?, ?, ?)
                 on conflict do nothing returning id, email, registration_phone
@@ -119,6 +155,8 @@ public final class PostgresAuthStore implements AuthStore {
 
     @Override public void saveSession(String tokenHash, UUID identityId, Instant now, Instant expiresAt) {
         database.transaction(sql -> {
+            lockEligibility(sql);
+            requireBankingAccess(sql, identityId);
             sql.execute("delete from sessions where expires_at <= cast(? as timestamptz)", time(now));
             return sql.execute("insert into sessions(token_hash, identity_id, created_at, expires_at) values (?, ?, cast(? as timestamptz), cast(? as timestamptz))",
                 tokenHash, identityId, time(now), time(expiresAt));
@@ -127,15 +165,18 @@ public final class PostgresAuthStore implements AuthStore {
 
     @Override public Optional<Identity> findSession(String tokenHash, Instant now) {
         return database.transaction(sql -> {
+            lockEligibility(sql);
             var row = sql.fetchOne("""
                 select i.id, i.email, i.registration_phone from identities i join sessions s on s.identity_id = i.id
                 where s.token_hash = ? and s.expires_at > cast(? as timestamptz)
                 """, tokenHash, time(now));
-            return row == null ? Optional.empty() : Optional.of(identity(row));
+            if (row == null) return Optional.empty();
+            requireBankingAccess(sql, row.get("id", UUID.class));
+            return Optional.of(identity(row));
         });
     }
 
     @Override public void revoke(String tokenHash) {
-        database.transaction(sql -> sql.execute("delete from sessions where token_hash = ?", tokenHash));
+        database.transaction(sql -> { lockEligibility(sql); return sql.execute("delete from sessions where token_hash = ?", tokenHash); });
     }
 }

@@ -16,7 +16,7 @@ import java.util.concurrent.Flow;
 
 /** Existing sandbox transports only; no protocol/body logging or redirect following. */
 public final class VerificationDeliveryTransport implements VerificationDeliveryWorker.Sender {
-    @FunctionalInterface interface MailSender { Result send(String recipient, String subject, String text) throws InterruptedException; }
+    @FunctionalInterface interface MailSender { Result send(String recipient, String subject, String text, String html) throws InterruptedException; }
     private static final ObjectMapper JSON = new ObjectMapper()
         .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
         .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
@@ -44,7 +44,8 @@ public final class VerificationDeliveryTransport implements VerificationDelivery
         String text = "Your ArMoney registration verification code is " + payload.code() + ". It expires in 5 minutes. Do not share this code.";
         if (lease.purpose() == Purpose.REGISTRATION_EMAIL) {
             if (!EmailConfiguration.validEmail(payload.destination())) return false;
-            return mail.send(payload.destination(), "ArMoney registration verification", text) == Result.ACCEPTED;
+            var email = VerificationEmail.render(payload.code());
+            return mail.send(payload.destination(), email.subject(), email.text(), email.html()) == Result.ACCEPTED;
         }
         if (lease.purpose() != Purpose.REGISTRATION_PHONE || !VerificationService.canonicalPhone(payload.destination())) return false;
         CompletableFuture<HttpResponse<byte[]>> pending = null;

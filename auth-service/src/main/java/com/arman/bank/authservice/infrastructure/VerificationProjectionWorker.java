@@ -14,11 +14,17 @@ public final class VerificationProjectionWorker implements AutoCloseable {
     private final Transport transport;
     private final String writer;
     private final Clock clock;
+    private final java.util.function.BiFunction<com.arman.bank.authservice.domain.VerificationProjection.Claim,Result,Boolean> finish;
     private final AtomicBoolean started=new AtomicBoolean(),closed=new AtomicBoolean();
     private final ScheduledExecutorService executor=Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().name("verification-projection").daemon(true).factory());
     private Instant nextCleanup=Instant.MIN;
     public VerificationProjectionWorker(VerificationProjectionStore store,Transport transport,String writer,Clock clock){
+        this(store,transport,writer,clock,store::finish);
+    }
+    public VerificationProjectionWorker(VerificationProjectionStore store,Transport transport,String writer,Clock clock,
+            java.util.function.BiFunction<com.arman.bank.authservice.domain.VerificationProjection.Claim,Result,Boolean> finish){
         this.store=Objects.requireNonNull(store);this.transport=Objects.requireNonNull(transport);this.writer=Objects.requireNonNull(writer);this.clock=Objects.requireNonNull(clock);
+        this.finish=Objects.requireNonNull(finish);
     }
     public void start(){if(closed.get()||!started.compareAndSet(false,true))throw new IllegalStateException("Projection worker lifecycle rejected");executor.scheduleWithFixedDelay(this::safeTick,1,2,TimeUnit.SECONDS);}
     synchronized void tick() throws InterruptedException {
@@ -29,7 +35,7 @@ public final class VerificationProjectionWorker implements AutoCloseable {
         try {if(!closed.get()&&clock.instant().isBefore(item.expiresAt())&&clock.instant().isBefore(item.leaseUntil()))result=transport.send(item);}
         catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw interrupted;}
         catch(RuntimeException unavailable){/* Persist uncertainty, never provider/contact data. */}
-        store.finish(item,result);
+        finish.apply(item,result);
     }
     private void safeTick(){try{tick();}catch(InterruptedException interrupted){Thread.currentThread().interrupt();}catch(RuntimeException unavailable){/* Fenced lease recovers database uncertainty. */}}
     @Override public void close(){if(!closed.compareAndSet(false,true))return;executor.shutdownNow();transport.close();try{executor.awaitTermination(5,TimeUnit.SECONDS);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();}}

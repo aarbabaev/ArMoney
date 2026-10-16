@@ -35,6 +35,24 @@ ERROR_TYPES = ('AuthorizationException', 'TopicAuthorizationException', 'GroupAu
                'ClusterAuthorizationException', 'SSLHandshakeException', 'SslAuthenticationException',
                'TimeoutException', 'NotEnoughReplicasException', 'NotEnoughReplicasAfterAppendException',
                'ConfigException', 'IllegalArgumentException', 'AccessDeniedException')
+FORMAT_STAGES = frozenset(('CONFIG', 'CLUSTER_ID', 'METADATA', 'EMPTY_ROOT', 'OWNERSHIP',
+                          'INITIAL_CONTROLLERS', 'STORAGE_TOOL'))
+FORMAT_REASONS = {
+    'Invalid Kafka node identity': 'NODE_IDENTITY',
+    'Required node configuration missing': 'NODE_CONFIGURATION',
+    'Invalid keystore password encoding': 'KEYSTORE_ENCODING',
+    'Invalid cluster identity': 'CLUSTER_ID',
+    'Existing storage identity mismatch; refusing format': 'EXISTING_IDENTITY',
+    'Nonempty unrecognized storage; refusing format': 'NONEMPTY_STORAGE',
+    'Invalid initial controller manifest': 'INITIAL_CONTROLLERS',
+    'Storage preparation root rejected': 'ROOT_REJECTED',
+    'Storage preparation requires uid/gid 1000': 'UID_GID',
+    'Storage preparation requires a real directory': 'NOT_DIRECTORY',
+    'Storage preparation could not inspect the root': 'ROOT_INVENTORY',
+    'Storage preparation requires an empty root': 'NONEMPTY_STORAGE',
+    'Unexpected fresh storage ownership; refusing preparation': 'OWNERSHIP',
+    'Fresh storage group normalization failed': 'GROUP_NORMALIZATION',
+}
 SNAPSHOT_STAGES = frozenset(('SETUP', 'SOURCE_INVENTORY', 'SOURCE_IDENTITY', 'COPY',
                             'ARCHIVE_INVENTORY', 'CHECKSUMS', 'MANIFEST', 'TARGET', 'RESTORED_VERIFY'))
 SNAPSHOT_REASONS = {
@@ -85,8 +103,16 @@ def safe_docker_failure(args, result, phase, env=None):
     code = result.returncode if isinstance(result.returncode, int) else 'unknown'
     output = result.stdout + '\n' + result.stderr
     errors = [error for error in ERROR_TYPES if re.search(r'\b' + error + r'\b', output)]
+    # Match complete finite labels/messages only. Unknown text remains withheld.
+    stages = [line.removeprefix('ARMONEY_KAFKA_FORMAT_STAGE=') for line in output.splitlines()
+              if line.startswith('ARMONEY_KAFKA_FORMAT_STAGE=')
+              and line.removeprefix('ARMONEY_KAFKA_FORMAT_STAGE=') in FORMAT_STAGES]
+    format_stage = stages[-1] if phase == 'format' and stages else 'UNKNOWN'
+    reason = next((FORMAT_REASONS[line] for line in output.splitlines()
+                   if phase == 'format' and line in FORMAT_REASONS), 'UNCLASSIFIED')
     return (f'Docker failure: phase={phase} operation={operation} subcommand={subcommand} '
-            f'principal={principal} node={node} exit={code} errors=' + (','.join(errors) or 'unclassified'))
+            f'principal={principal} node={node} exit={code} errors=' + (','.join(errors) or 'unclassified')
+            + (f' format_stage={format_stage} format_reason={reason}' if phase == 'format' else ''))
 
 
 def safe_snapshot_failure(result, mode, node):
