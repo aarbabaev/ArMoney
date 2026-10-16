@@ -1257,3 +1257,12 @@ readiness or durability. Local affected Ledger checks passed 93 tests across 13
 suites, including real physical standbys, on the recorded source patch. Combined
 current-main CI, Compose acceptance and deployment remain pending. See
 [ADR 0040](docs/adr/0040-replica-observation.md).
+
+### Diagnostic first-login session visibility
+
+The test-only SSO-VIS-001 topology uses two disposable Keycloak nodes to inspect
+user and authenticated client-session visibility before and after a bounded
+login redirect barrier. It is not a production service or proof authority.
+Production positive-proof hooks remain unregistered; the first-login commit
+boundary is an unresolved activation gate pending actual acceptance evidence.
+See [the proof design](sso-service/provider/LOGIN-PROOF-DESIGN.md#first-login-transaction-visibility-gate-sso-vis-001).

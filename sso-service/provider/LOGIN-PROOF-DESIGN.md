@@ -133,3 +133,31 @@ properties. The extension must stay disabled until independent acceptance.
 - [Token generation and policy event ordering](https://github.com/keycloak/keycloak/blob/26.7.4/services/src/main/java/org/keycloak/protocol/oidc/grants/OAuth2GrantTypeBase.java)
 - [TokenResponseContext](https://github.com/keycloak/keycloak/blob/26.7.4/services/src/main/java/org/keycloak/services/clientpolicy/context/TokenResponseContext.java)
 - [Introspection transformation](https://github.com/keycloak/keycloak/blob/26.7.4/services/src/main/java/org/keycloak/protocol/oidc/AccessTokenIntrospectionProvider.java)
+
+## First-login transaction visibility gate (SSO-VIS-001)
+
+Pinned Keycloak 26.7.4 stages newly attached persistent user and authenticated
+client sessions in the login request transaction. The synchronous proof hook
+awaits its callback before returning the redirect; request close commits later.
+Source inspection therefore identifies a circular dependency if that callback
+requires a separate node to observe the new session before returning. LOGIN
+events alone do not establish a commit boundary. A pre-existing cookie session
+does not prove visibility of a fresh client attachment. HTTP 503 does not prove
+that the request transaction rolled back. Actual cross-node confirmation remains
+unrun until the dedicated experiment completes.
+
+The disposable-only `compose.sso-session-visibility.yaml` and
+`scripts/run-sso-session-visibility.sh` exercise a bounded test login hook. A
+dedicated control key authenticates strict bounded requests; a signed immutable
+tuple binds realm, subject, user session, external/internal client, nonce and
+expiry. The held request shares no Keycloak session/model objects with control
+threads. Before release, visibility is diagnostic only. After a successful
+completed OIDC response, node B must see both the user and authenticated client
+session. Hook failure records persistence outcomes without assuming rollback.
+No code is redeemed and no banking, financial or mail operation runs.
+
+Only `Dockerfile.visibility` registers the test hook/resource inside the fixture
+JAR. Production factories, provider packaging and the existing observer image
+remain unchanged. Run only under the approved disposable CI daemon and exclusive
+heavy-build lease; the wrapper owns its random project and unique image cleanup.
+This experiment grants no proof authority, activation or production deployment.
