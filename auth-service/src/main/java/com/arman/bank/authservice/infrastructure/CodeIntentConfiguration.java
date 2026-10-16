@@ -9,11 +9,12 @@ public final class CodeIntentConfiguration {
     public final boolean enabled;
     private final LoginProof.Policy policy;
     private final CodeIntentRetentionKeys keys;
+    private final CodeIntentDetailCrypto crypto;
     public CodeIntentConfiguration(Map<String,String> environment) {
         String flag=environment.getOrDefault("AUTH_SSO_CODE_INTENT_STAGE_ENABLED","false");
         if(!"true".equals(flag)&&!"false".equals(flag))throw new IllegalArgumentException("Invalid code intent flag");
         enabled=flag.equals("true");
-        if(!enabled){policy=null;keys=null;return;}
+        if(!enabled){policy=null;keys=null;crypto=null;return;}
         var authority=new VerificationAuthorityConfiguration(environment);
         if(!authority.completionEnabled||!authority.eligibilityGrantsEnabled)throw new IllegalArgumentException("Code intent authority configuration required");
         String current=required(environment,"SSO_LOGIN_PROOF_RETENTION_HMAC_KEY_ID");
@@ -28,12 +29,29 @@ public final class CodeIntentConfiguration {
         for(var entry:environment.entrySet())if(!entry.getKey().startsWith("SSO_LOGIN_PROOF_RETENTION_HMAC_")&&(entry.getKey().contains("KEY")||entry.getKey().contains("SECRET")||entry.getKey().contains("TOKEN")||entry.getKey().contains("PASSWORD"))
             &&ring.values().stream().anyMatch(value->sameKey(value,entry.getValue())))
             throw new IllegalArgumentException("Intent retention key must be separate");
+        String encryptionId=required(environment,"SSO_CODE_INTENT_DETAIL_ENCRYPTION_KEY_ID");
+        var encryptionRing=new HashMap<String,String>();
+        encryptionRing.put(encryptionId,required(environment,"SSO_CODE_INTENT_DETAIL_ENCRYPTION_KEY"));
+        String priorEncryption=environment.getOrDefault("SSO_CODE_INTENT_DETAIL_ENCRYPTION_PREVIOUS_KEYS","");
+        if(!priorEncryption.isEmpty())for(String entry:priorEncryption.split(",",-1)){
+            String[] pair=entry.split(":",2);
+            if(pair.length!=2||encryptionRing.putIfAbsent(pair[0],pair[1])!=null)throw new IllegalArgumentException("Invalid intent encryption ring");
+        }
+        String retirement=environment.getOrDefault("SSO_CODE_INTENT_DETAIL_ENCRYPTION_RETIRED_KEY_IDS","");
+        Set<String> retired=retirement.isEmpty()?Set.of():Set.copyOf(Arrays.asList(retirement.split(",",-1)));
+        crypto=new CodeIntentDetailCrypto(encryptionId,encryptionRing,retired);
+        for(String material:encryptionRing.values())for(String retention:ring.values())if(sameKey(material,retention))
+            throw new IllegalArgumentException("Intent encryption key must be separate");
+        for(var entry:environment.entrySet())if(!entry.getKey().startsWith("SSO_CODE_INTENT_DETAIL_ENCRYPTION_")
+            &&(entry.getKey().contains("KEY")||entry.getKey().contains("SECRET")||entry.getKey().contains("TOKEN")||entry.getKey().contains("PASSWORD"))
+            &&encryptionRing.values().stream().anyMatch(value->sameKey(value,entry.getValue())))
+            throw new IllegalArgumentException("Intent encryption key must be separate");
         policy=LoginProof.Policy.defaults(values(environment,"SSO_CODE_INTENT_ISSUERS"),values(environment,"SSO_CODE_INTENT_CLIENTS"),
             values(environment,"SSO_CODE_INTENT_CODE_KEY_IDS"),values(environment,"SSO_CODE_INTENT_ACTORS"));
     }
     public Optional<Resources> open(Database database){
         if(!enabled)return Optional.empty();
-        var store=new PostgresCodeIntentStore(Objects.requireNonNull(database),policy,keys);
+        var store=new PostgresCodeIntentStore(Objects.requireNonNull(database),policy,keys,crypto);
         return Optional.of(new Resources(store,new CodeIntentCleanupWorker(store)));
     }
     public record Resources(PostgresCodeIntentStore store,CodeIntentCleanupWorker cleanupWorker) implements AutoCloseable {

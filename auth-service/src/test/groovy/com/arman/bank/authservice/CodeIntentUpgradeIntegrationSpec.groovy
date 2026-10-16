@@ -35,7 +35,7 @@ class CodeIntentUpgradeIntegrationSpec extends Specification {
             before.each{table,rows->assert current.fetch('select row_to_json(t)::text as snapshot from '+table+' t order by row_to_json(t)::text').getValues('snapshot',String)==rows}
             assert current.fetch('select * from flyway_schema_history where version<>? order by installed_rank','12').intoMaps()==history
             assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get(0,String)=='12'
-            ['sso_code_intents','sso_code_intent_details','sso_code_intent_commands','sso_code_intent_admission','sso_login_creation_reservations'].each{table->assert current.fetchOne('select count(*) from '+table).get(0,Integer)==0}
+            ['sso_code_intents','sso_code_intent_details','sso_code_intent_commands','sso_code_intent_admission','sso_login_creation_reservations','sso_code_intent_encryption_keys','sso_code_intent_nonces'].each{table->assert current.fetchOne('select count(*) from '+table).get(0,Integer)==0}
             true
         }
         owners.every{new PostgresAuthStore(database,false).requireBankingAccess(it);true}
@@ -52,7 +52,7 @@ class CodeIntentUpgradeIntegrationSpec extends Specification {
             current.execute('insert into managed_registration_principals(identity_id,enrollment_id) values (?,?)',managed,enrollment)
         }
         def policy=new LoginProof.Policy([issuer] as Set,['armoney-web'] as Set,['code1'] as Set,['provider'] as Set,100000,100000,1)
-        def store=new PostgresCodeIntentStore(database,policy,new CodeIntentRetentionKeys('key',['key':Base64.encoder.encodeToString(new byte[32])]))
+        def store=new PostgresCodeIntentStore(database,policy,new CodeIntentRetentionKeys('key',['key':Base64.encoder.encodeToString(new byte[32])]),new CodeIntentDetailCrypto('aead',['aead':Base64.encoder.encodeToString(([7]*32) as byte[])],[] as Set))
         store.cleanup()
         def now=Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
         store.stage('provider',new LoginProof.Write(UUID.randomUUID(),'a'*64,'code1',issuer,'managed-subject','armoney-web','user-session','auth-session',now,now.plusSeconds(120),LoginProof.Kind.INTERACTIVE,UUID.randomUUID(),now))

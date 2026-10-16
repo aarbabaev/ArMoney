@@ -34,7 +34,8 @@ class CodeIntentIntegrationSpec extends Specification {
         store.cleanup()
     }
     def cleanup(){database?.close();postgres?.stop()}
-    PostgresCodeIntentStore makeStore(Map ring,String current){new PostgresCodeIntentStore(database,policy,new CodeIntentRetentionKeys(current,ring))}
+    PostgresCodeIntentStore makeStore(Map ring,String current){new PostgresCodeIntentStore(database,policy,new CodeIntentRetentionKeys(current,ring),detailCrypto())}
+    CodeIntentDetailCrypto detailCrypto(){new CodeIntentDetailCrypto('aead',['aead':Base64.encoder.encodeToString(([7]*32) as byte[])],[] as Set)}
     Write input(UUID command=UUID.randomUUID(),String digest='a'*64){
         def now=Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
         new Write(command,digest,'code1',ISSUER,'managed-subject',CLIENT,'synthetic-user-session','synthetic-auth-session',now,now.plusSeconds(120),Kind.INTERACTIVE,UUID.randomUUID(),now)
@@ -101,21 +102,21 @@ class CodeIntentIntegrationSpec extends Specification {
         given:
         def actors=[ACTOR,'inactive-provider','new-provider'] as Set
         def multiPolicy=Policy.defaults([ISSUER] as Set,[CLIENT] as Set,['code1'] as Set,actors)
-        def old=new PostgresCodeIntentStore(database,multiPolicy,new CodeIntentRetentionKeys('original',['original':key]))
+        def old=new PostgresCodeIntentStore(database,multiPolicy,new CodeIntentRetentionKeys('original',['original':key]),detailCrypto())
         def first=input();old.stage(ACTOR,first)
         old.stage('inactive-provider',input(UUID.randomUUID(),'b'*64))
         def oldKeys=new CodeIntentRetentionKeys('original',['original':key])
         def inactiveHash=oldKeys.hash('original','armoney-intent-actor-v1','inactive-provider')
-        database.transaction{sql->sql.execute("update sso_code_intent_admission set credits=0,refilled_at=clock_timestamp()+interval '1 hour' where actor_hash=?",inactiveHash)}
-        def preserved=database.transaction{sql->sql.fetchOne('select credits,refilled_at from sso_code_intent_admission where actor_hash=?',inactiveHash).intoMap()}
+        database.transaction{sql->sql.execute("update sso_code_intent_admission set credits=0,refilled_at=clock_timestamp()+interval '1 hour' where actor_hash=?",(Object)inactiveHash)}
+        def preserved=database.transaction{sql->sql.fetchOne('select credits,refilled_at from sso_code_intent_admission where actor_hash=?',(Object)inactiveHash).intoMap()}
         def next=Base64.encoder.encodeToString((byte[])([2]*32))
         def currentKeys=new CodeIntentRetentionKeys('next',['original':key,'next':next])
-        def rotated=new PostgresCodeIntentStore(database,multiPolicy,currentKeys)
+        def rotated=new PostgresCodeIntentStore(database,multiPolicy,currentKeys,detailCrypto())
         when: rotated.stage(ACTOR,first)
         then:
         database.transaction{sql->
             assert sql.fetchOne('select count(*) from sso_code_intent_admission where retention_key_id<>?', 'next').get(0,Integer)==0
-            assert sql.fetchOne('select credits,refilled_at from sso_code_intent_admission where actor_hash=?',currentKeys.hash('next','armoney-intent-actor-v1','inactive-provider')).intoMap()==preserved
+            assert sql.fetchOne('select credits,refilled_at from sso_code_intent_admission where actor_hash=?',(Object)currentKeys.hash('next','armoney-intent-actor-v1','inactive-provider')).intoMap()==preserved
             assert sql.fetchOne('select count(*) from sso_code_intents where retention_key_id=?','original').get(0,Integer)==2
             true
         }
@@ -133,7 +134,7 @@ class CodeIntentIntegrationSpec extends Specification {
             sql.execute('alter table sso_code_intent_details enable trigger sso_code_intent_detail_no_change')
         }
         rotated.cleanup()
-        def restarted=new PostgresCodeIntentStore(database,multiPolicy,new CodeIntentRetentionKeys('next',['next':next]))
+        def restarted=new PostgresCodeIntentStore(database,multiPolicy,new CodeIntentRetentionKeys('next',['next':next]),detailCrypto())
         def created=restarted.stage('new-provider',input(UUID.randomUUID(),'d'*64))
         then: created.state()=='STAGED';count('sso_code_intent_admission')==3;count('sso_code_intents')==1
     }
@@ -142,9 +143,9 @@ class CodeIntentIntegrationSpec extends Specification {
         store.stage(ACTOR,input())
         def next=Base64.encoder.encodeToString((byte[])([2]*32))
         def both=new CodeIntentRetentionKeys('next',['original':key,'next':next])
-        database.transaction{sql->sql.execute("insert into sso_code_intent_admission values (?,'next',0,clock_timestamp())",both.hash('next','armoney-intent-actor-v1',ACTOR))}
+        database.transaction{sql->sql.execute("insert into sso_code_intent_admission values (?,'next',0,clock_timestamp())",(Object)both.hash('next','armoney-intent-actor-v1',ACTOR))}
         def before=database.transaction{sql->sql.fetch('select * from sso_code_intent_admission order by actor_hash').intoMaps()}
-        when: new PostgresCodeIntentStore(database,policy,both).stage(ACTOR,input(UUID.randomUUID(),'b'*64))
+        when: new PostgresCodeIntentStore(database,policy,both,detailCrypto()).stage(ACTOR,input(UUID.randomUUID(),'b'*64))
         then: def failure=thrown(Failure);failure.error()==LoginProof.Error.UNAVAILABLE
         database.transaction{sql->sql.fetch('select * from sso_code_intent_admission order by actor_hash').intoMaps()}==before
     }
@@ -153,7 +154,7 @@ class CodeIntentIntegrationSpec extends Specification {
         given:
         store.stage(ACTOR,input())
         def otherPolicy=Policy.defaults([ISSUER] as Set,[CLIENT] as Set,['code1'] as Set,['different-provider'] as Set)
-        def other=new PostgresCodeIntentStore(database,otherPolicy,new CodeIntentRetentionKeys('original',['original':key]))
+        def other=new PostgresCodeIntentStore(database,otherPolicy,new CodeIntentRetentionKeys('original',['original':key]),detailCrypto())
         def before=database.transaction{sql->sql.fetch('select * from sso_code_intent_admission').intoMaps()}
         when: other.stage('different-provider',input(UUID.randomUUID(),'b'*64))
         then: def failure=thrown(Failure);failure.error()==LoginProof.Error.UNAVAILABLE
@@ -291,11 +292,12 @@ class CodeIntentIntegrationSpec extends Specification {
     }
     def 'exact stage replay after original fresh cutoff retains its original admission and expiry'(){
         given:
-        def w=input();def issued=w.issuedAt().minusSeconds(29)
+        def w=input();def issued=w.issuedAt().minusSeconds(27)
         def request=new Write(w.commandId(),w.codeDigest(),w.codeKeyId(),w.issuer(),w.subject(),w.clientId(),w.userSessionId(),w.authenticationSessionId(),issued,issued.plusSeconds(120),w.kind(),w.eventId(),issued)
         def first=store.stage(ACTOR,request)
         def original=database.transaction{sql->sql.fetch('select * from sso_code_intents').intoMaps()}
-        Thread.sleep(2200)
+        Thread.sleep(3200)
+        assert Instant.now().isAfter(request.issuedAt().plusSeconds(30))
         when: def replay=store.stage(ACTOR,request)
         then: replay==first
         database.transaction{sql->sql.fetch('select * from sso_code_intents').intoMaps()}==original

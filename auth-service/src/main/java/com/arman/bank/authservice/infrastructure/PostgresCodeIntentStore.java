@@ -19,9 +19,15 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
     private final Database database;
     private final LoginProof.Policy policy;
     private final CodeIntentRetentionKeys keys;
+    private final CodeIntentDetailCrypto crypto;
+    private final PostgresCodeIntentKeyCatalog catalog;
     private final Semaphore inFlight = new Semaphore(16);
     public PostgresCodeIntentStore(Database database, LoginProof.Policy policy, CodeIntentRetentionKeys keys) {
+        this(database,policy,keys,null);
+    }
+    public PostgresCodeIntentStore(Database database,LoginProof.Policy policy,CodeIntentRetentionKeys keys,CodeIntentDetailCrypto crypto){
         this.database=Objects.requireNonNull(database); this.policy=Objects.requireNonNull(policy); this.keys=Objects.requireNonNull(keys);
+        this.crypto=crypto;this.catalog=crypto==null?null:new PostgresCodeIntentKeyCatalog(crypto);
     }
     private <T> T transaction(Function<DSLContext,T> action) { return transaction(false,action); }
     private <T> T transaction(boolean bounded,Function<DSLContext,T> action) {
@@ -36,13 +42,35 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
         CodeIntent.validate(input,actor,policy);
         if(!inFlight.tryAcquire()) throw new LoginProof.Failure(Error.RATE_LIMITED);
         try {
-            // Admission is committed separately, including rejected requests; never refunded by rollback.
-            boolean admitted=transaction(sql -> admit(sql,actor,now(sql)));
-            if(!admitted) fail(Error.RATE_LIMITED);
-            return transaction(sql -> stage(sql,actor,input));
-        } finally { inFlight.release(); }
+            if(crypto==null)fail(Error.UNAVAILABLE);
+            return database.withSession(session->{
+                boolean admitted=owned(session,sql->admit(sql,actor,now(sql)));
+                if(!admitted)fail(Error.RATE_LIMITED);
+                // Every transaction finishes on this same exclusively owned physical session.
+                Outcome preparation=owned(session,sql->stage(sql,actor,input,null,null));
+                if(preparation.snapshot()!=null)return preparation.snapshot();
+                Prepared prepared=preparation.prepared();
+                if(Thread.currentThread().isInterrupted())fail(Error.UNAVAILABLE);
+                // Reaching here proves acknowledged nonce-reservation COMMIT. Any commit exception skips encryption.
+                byte[] encrypted=crypto.encrypt(prepared.reservation().keyId(),prepared.reservation().nonce(),input.authenticationSessionId(),aad(prepared,input));
+                return owned(session,sql->stage(sql,actor,input,prepared,encrypted)).snapshot();
+            });
+        } catch(LoginProof.Failure rejected){throw rejected;}
+        catch(RuntimeException unavailable){fail(Error.UNAVAILABLE);return null;}
+        finally { inFlight.release(); }
     }
-    private CodeIntent.Snapshot stage(DSLContext sql,String actor,LoginProof.Write input) {
+    private <T>T owned(Database.OwnedSession session,Function<DSLContext,T> action){
+        return session.transaction(sql->{
+            try{PostgresVerificationProjectionStore.lockControls(sql);}catch(com.arman.bank.authservice.domain.VerificationProjection.Failure unavailable){fail(Error.UNAVAILABLE);}
+            return action.apply(sql);
+        });
+    }
+    private record Prepared(UUID id,String retentionKey,byte[] binding,byte[] payload,byte[] authority,Instant admittedAt,PostgresCodeIntentKeyCatalog.Reservation reservation){}
+    private record Outcome(CodeIntent.Snapshot snapshot,Prepared prepared){}
+    private byte[] aad(Prepared p,LoginProof.Write input){return CodeIntentDetailCrypto.aad(p.id(),p.retentionKey(),p.binding(),p.payload(),input.codeKeyId(),input.issuedAt(),input.expiresAt());}
+    private Outcome stage(DSLContext sql,String actor,LoginProof.Write input,Prepared prepared,byte[] encrypted) {
+        catalog.synchronize(sql,true);
+        if(prepared!=null)catalog.fence(sql,prepared.reservation());
         Instant now=now(sql);
         var authority=sql.fetchOne("""
             select a.*,e.issuer,e.subject,e.expires_at as enrollment_deadline from verification_authorities a
@@ -77,14 +105,32 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
             finalAuthority(sql,key,authority,identity,stamp,input);
             LoginProof.unexpired(time(row,"expires_at"),now(sql));
             LoginProof.unexpired(time(authority,"expires_at"),now(sql)); LoginProof.unexpired(time(authority,"enrollment_deadline"),now(sql));
-            return snapshot(row);
+            var detail=sql.fetchOne("select * from sso_code_intent_details where intent_id=?",row.get("id",UUID.class));
+            if(!time(detail,"erase_at").equals(time(row,"expires_at").plusSeconds(300)))fail(Error.UNAVAILABLE);
+            catalog.requireActive(sql,detail.get("encryption_key_id",String.class),detail.get("encryption_generation",Long.class));
+            String opaque=crypto.decrypt(detail.get("encryption_key_id",String.class),detail.get("nonce",byte[].class),detail.get("ciphertext",byte[].class),aad(row));
+            if(!opaque.equals(input.authenticationSessionId()))fail(Error.UNAVAILABLE);
+            finalAuthority(sql,key,authority,identity,stamp,input);
+            Instant checked=now(sql);
+            LoginProof.unexpired(time(row,"expires_at"),checked);
+            LoginProof.unexpired(time(authority,"expires_at"),checked);
+            LoginProof.unexpired(time(authority,"enrollment_deadline"),checked);
+            return new Outcome(snapshot(row),null);
         }
         LoginProof.fresh(input,now); LoginProof.unexpired(input.expiresAt(),now);
         var health=sql.fetchOne("select swept_at,healthy from sso_code_intent_cleanup where id=1");
         if(health==null||!Boolean.TRUE.equals(health.get("healthy",Boolean.class))||health.get("swept_at")==null
             ||time(health,"swept_at").isBefore(now.minusSeconds(60))) fail(Error.UNAVAILABLE);
         if(count(sql,"sso_code_intents")>=100_000||count(sql,"sso_code_intent_commands")>=100_000) fail(Error.RATE_LIMITED);
-        UUID id=UUID.randomUUID();
+        if(prepared==null){
+            PostgresLoginCreationBudget.requireAvailable(sql,now,policy.maxHourly());
+            var reservation=catalog.reserve(sql);
+            return new Outcome(null,new Prepared(UUID.randomUUID(),key,
+                keys.hash(key,"armoney-intent-binding-v1",input.issuer(),input.subject(),input.clientId(),input.userSessionId()),payload,stamp,now,reservation));
+        }
+        same(prepared.payload(),payload);same(prepared.authority(),stamp);
+        if(!prepared.retentionKey().equals(key))fail(Error.CONFLICT);
+        UUID id=prepared.id();
         PostgresLoginCreationBudget.reserve(sql,id,"INTENT",now,policy.maxHourly());
         sql.execute("""
             insert into sso_code_intents(id,code_digest,code_key_id,retention_key_id,actor_hash,payload_hash,binding_hash,authority_hash,
@@ -92,13 +138,37 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
             values(?,?,?,?,?,?,?,?,cast(? as timestamptz),cast(? as timestamptz),cast(? as timestamptz),cast(? as timestamptz),cast(? as timestamptz))
             """,id,input.codeDigest(),input.codeKeyId(),key,actorHash,payload,
             keys.hash(key,"armoney-intent-binding-v1",input.issuer(),input.subject(),input.clientId(),input.userSessionId()),stamp,
-            input.issuedAt().toString(),input.expiresAt().toString(),now.toString(),input.issuedAt().plusSeconds(30).toString(),input.expiresAt().plusSeconds(604800).toString());
-        sql.execute("insert into sso_code_intent_details values(?,?,cast(? as timestamptz),cast(? as timestamptz))",id,input.eventId(),input.passwordAuthenticatedAt().toString(),input.expiresAt().plusSeconds(300).toString());
+            input.issuedAt().toString(),input.expiresAt().toString(),prepared.admittedAt().toString(),input.issuedAt().plusSeconds(30).toString(),input.expiresAt().plusSeconds(604800).toString());
+        sql.execute("insert into sso_code_intent_details values(?,?,cast(? as timestamptz),cast(? as timestamptz),?,?,?,?)",id,input.eventId(),input.passwordAuthenticatedAt().toString(),input.expiresAt().plusSeconds(300).toString(),prepared.reservation().keyId(),prepared.reservation().generation(),prepared.reservation().nonce(),encrypted);
         alias(sql,id,actorHash,input.commandId());
         finalAuthority(sql,key,authority,identity,stamp,input);
         LoginProof.fresh(input,now(sql)); LoginProof.unexpired(input.expiresAt(),now(sql));
         LoginProof.unexpired(time(authority,"expires_at"),now(sql)); LoginProof.unexpired(time(authority,"enrollment_deadline"),now(sql));
-        return new CodeIntent.Snapshot(id,input.codeKeyId(),input.issuedAt(),input.expiresAt());
+        return new Outcome(new CodeIntent.Snapshot(id,input.codeKeyId(),input.issuedAt(),input.expiresAt()),null);
+    }
+    private byte[] aad(Record row){return CodeIntentDetailCrypto.aad(row.get("id",UUID.class),row.get("retention_key_id",String.class),row.get("binding_hash",byte[].class),row.get("payload_hash",byte[].class),row.get("code_key_id",String.class),time(row,"issued_at"),time(row,"expires_at"));}
+    /** Internal caller-owned reconstruction only. It neither confirms authority nor creates a proof. */
+    public LoginProof.Write reconstructInTransaction(DSLContext sql,String actor,LoginProof.Resolve trusted){
+        PostgresVerificationProjectionStore.requireLocked(sql);LoginProof.writer(actor,policy);LoginProof.validate(trusted,policy);
+        if(catalog==null)fail(Error.UNAVAILABLE);
+        catalog.synchronize(sql,true);
+        var row=sql.fetchOne("select * from sso_code_intents where code_digest=? for update",trusted.codeDigest());
+        if(row==null)fail(Error.MISSING);
+        String key=row.get("retention_key_id",String.class);
+        same(row.get("actor_hash",byte[].class),actor(key,actor));
+        same(row.get("binding_hash",byte[].class),keys.hash(key,"armoney-intent-binding-v1",trusted.issuer(),trusted.subject(),trusted.clientId(),trusted.userSessionId()));
+        if(!trusted.codeKeyId().equals(row.get("code_key_id",String.class)))fail(Error.CONFLICT);
+        LoginProof.unexpired(time(row,"expires_at"),now(sql));
+        var detail=sql.fetchOne("select * from sso_code_intent_details where intent_id=? for update",row.get("id",UUID.class));
+        var first=sql.fetchOne("select command_id from sso_code_intent_commands where intent_id=? and alias_slot=1",row.get("id",UUID.class));
+        if(detail==null||first==null)fail(Error.UNAVAILABLE);
+        if(!time(detail,"erase_at").equals(time(row,"expires_at").plusSeconds(300)))fail(Error.UNAVAILABLE);
+        catalog.requireActive(sql,detail.get("encryption_key_id",String.class),detail.get("encryption_generation",Long.class));
+        String opaque=crypto.decrypt(detail.get("encryption_key_id",String.class),detail.get("nonce",byte[].class),detail.get("ciphertext",byte[].class),aad(row));
+        var write=new LoginProof.Write(first.get("command_id",UUID.class),trusted.codeDigest(),trusted.codeKeyId(),trusted.issuer(),trusted.subject(),trusted.clientId(),trusted.userSessionId(),opaque,time(row,"issued_at"),time(row,"expires_at"),LoginProof.Kind.INTERACTIVE,detail.get("event_id",UUID.class),time(detail,"password_authenticated_at"));
+        try{LoginProof.validate(write,actor,policy);}catch(LoginProof.Failure malformed){fail(Error.UNAVAILABLE);}
+        if(!MessageDigest.isEqual(row.get("payload_hash",byte[].class),payload(key,write)))fail(Error.UNAVAILABLE);
+        LoginProof.unexpired(write.expiresAt(),now(sql));return write;
     }
     private void finalAuthority(DSLContext sql,String key,Record original,UUID identity,byte[] expected,LoginProof.Write input){
         var current=sql.fetchOne("select a.*,e.expires_at as enrollment_deadline from verification_authorities a join verification_enrollments e on e.id=a.enrollment_id where a.enrollment_id=?",original.get("enrollment_id",UUID.class));
@@ -168,6 +238,7 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
         int removed=0;
         for(int pass=0;pass<10;pass++)removed+=transaction(true,sql->{
             int deleted=0;
+            if(catalog!=null)catalog.synchronize(sql,false);
             // Parent locks precede all child locks. 25 parents imply at most 100 command aliases.
             var victims=sql.fetch("""
                 select i.id,i.retained_until from sso_code_intents i
@@ -190,6 +261,7 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
             boolean capacityAlert=count(sql,"sso_code_intents")>=80_000||count(sql,"sso_code_intent_commands")>=80_000;
             boolean healthy=!sql.fetchExists(sql.selectOne().from("sso_code_intents").where(org.jooq.impl.DSL.condition("retained_until<clock_timestamp()-interval '5 minutes'")))
                 &&!sql.fetchExists(sql.selectOne().from("sso_code_intent_details").where(org.jooq.impl.DSL.condition("erase_at<clock_timestamp()-interval '5 minutes'")));
+            if(catalog!=null)catalog.cleanup(sql);
             sql.execute("update sso_code_intent_cleanup set swept_at=clock_timestamp(),healthy=?,capacity_alert=? where id=1",healthy,capacityAlert);
             return deleted;
         });

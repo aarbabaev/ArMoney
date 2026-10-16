@@ -30,6 +30,7 @@ class CodeIntentConfigurationSpec extends Specification {
         AUTH_VERIFICATION_PROJECTION_WRITER_ID:'auth-projection',AUTH_TO_USER_VERIFICATION_PROJECTION_KEY:'synthetic-projection-credential-unique',
         AUTH_VERIFICATION_PROJECTION_RETENTION_KEY:encoded(14),USER_BASE_URL:'http://user-service:8080',AUTH_REGISTRATION_ELIGIBILITY_GRANTS_ENABLED:'true',
         AUTH_SSO_CODE_INTENT_STAGE_ENABLED:'true',SSO_LOGIN_PROOF_RETENTION_HMAC_KEY_ID:'stage-v1',SSO_LOGIN_PROOF_RETENTION_HMAC_KEY:encoded(15),
+        SSO_CODE_INTENT_DETAIL_ENCRYPTION_KEY_ID:'aead-v1',SSO_CODE_INTENT_DETAIL_ENCRYPTION_KEY:encoded(16),
         SSO_CODE_INTENT_ISSUERS:'https://issuer.example/sso/realms/armoney',SSO_CODE_INTENT_CLIENTS:'armoney-web',SSO_CODE_INTENT_CODE_KEY_IDS:'code-v1',SSO_CODE_INTENT_ACTORS:'sso-provider']}
     def 'complete explicit configuration can construct dormant factory without starting resources'(){
         expect: new CodeIntentConfiguration(environment()).enabled
@@ -38,13 +39,22 @@ class CodeIntentConfigurationSpec extends Specification {
         given: def env=environment();env.remove(name)
         when: new CodeIntentConfiguration(env)
         then: thrown(IllegalArgumentException)
-        where: name << ['SSO_LOGIN_PROOF_RETENTION_HMAC_KEY_ID','SSO_LOGIN_PROOF_RETENTION_HMAC_KEY','SSO_CODE_INTENT_ISSUERS','SSO_CODE_INTENT_CLIENTS','SSO_CODE_INTENT_CODE_KEY_IDS','SSO_CODE_INTENT_ACTORS']
+        where: name << ['SSO_LOGIN_PROOF_RETENTION_HMAC_KEY_ID','SSO_LOGIN_PROOF_RETENTION_HMAC_KEY','SSO_CODE_INTENT_ISSUERS','SSO_CODE_INTENT_CLIENTS','SSO_CODE_INTENT_CODE_KEY_IDS','SSO_CODE_INTENT_ACTORS','SSO_CODE_INTENT_DETAIL_ENCRYPTION_KEY_ID','SSO_CODE_INTENT_DETAIL_ENCRYPTION_KEY']
     }
     def 'retention keys cannot equal other cryptographic or transport material #foreign'(){
         given: def env=environment();env[foreign]=env.SSO_LOGIN_PROOF_RETENTION_HMAC_KEY
         when: new CodeIntentConfiguration(env)
         then: thrown(IllegalArgumentException)
         where: foreign << ['SSO_LOGIN_CODE_HMAC_KEY','SSO_LOGIN_PROOF_WRITE_KEY','SSO_LOGIN_PROOF_RESOLVE_KEY','MAILTRAP_SMTP_PASSWORD']
+    }
+    def 'detail encryption cannot reuse current or retained HMAC material or retire its current key'(){
+        when: new CodeIntentConfiguration(environment()+change)
+        then: thrown(IllegalArgumentException)
+        where:
+        change << [[SSO_CODE_INTENT_DETAIL_ENCRYPTION_KEY:encoded(15)],
+                   [SSO_CODE_INTENT_DETAIL_ENCRYPTION_PREVIOUS_KEYS:'old:'+encoded(15)],
+                   [SSO_LOGIN_PROOF_RETENTION_HMAC_PREVIOUS_KEYS:'old:'+encoded(16)],
+                   [SSO_CODE_INTENT_DETAIL_ENCRYPTION_RETIRED_KEY_IDS:'aead-v1']]
     }
     def 'retention ring rejects invalid or more than eight keys'(){
         when: new CodeIntentRetentionKeys('one',ring)

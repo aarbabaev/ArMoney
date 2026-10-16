@@ -18,11 +18,28 @@ CREATE TABLE sso_code_intents (
  CHECK(retained_until=expires_at+interval '7 days')
 );
 CREATE INDEX sso_code_intent_retention ON sso_code_intents(retained_until);
+CREATE TABLE sso_code_intent_encryption_keys (
+ key_id varchar(32) PRIMARY KEY CHECK(key_id ~ '^[A-Za-z0-9_-]{1,32}$'),
+ material_fingerprint bytea NOT NULL UNIQUE CHECK(octet_length(material_fingerprint)=32),
+ state varchar(8) NOT NULL CHECK(state IN ('ACTIVE','RETIRED')),
+ generation bigint NOT NULL CHECK(generation>0)
+);
+CREATE TABLE sso_code_intent_nonces (
+ encryption_key_id varchar(32) NOT NULL REFERENCES sso_code_intent_encryption_keys(key_id),
+ nonce bytea NOT NULL CHECK(octet_length(nonce)=12),
+ PRIMARY KEY(encryption_key_id,nonce)
+);
 CREATE TABLE sso_code_intent_details (
  intent_id uuid PRIMARY KEY REFERENCES sso_code_intents(id),
  event_id uuid NOT NULL,
  password_authenticated_at timestamptz NOT NULL,
- erase_at timestamptz NOT NULL
+ erase_at timestamptz NOT NULL,
+ encryption_key_id varchar(32) NOT NULL,
+ encryption_generation bigint NOT NULL CHECK(encryption_generation>0),
+ nonce bytea NOT NULL CHECK(octet_length(nonce)=12),
+ ciphertext bytea NOT NULL CHECK(octet_length(ciphertext) BETWEEN 16 AND 1024),
+ UNIQUE(encryption_key_id,nonce),
+ FOREIGN KEY(encryption_key_id,nonce) REFERENCES sso_code_intent_nonces(encryption_key_id,nonce)
 );
 CREATE INDEX sso_code_intent_detail_retention ON sso_code_intent_details(erase_at);
 CREATE TABLE sso_code_intent_commands (
@@ -69,3 +86,30 @@ END $$;
 CREATE TRIGGER sso_code_intent_no_change BEFORE UPDATE OR DELETE ON sso_code_intents FOR EACH ROW EXECUTE FUNCTION sso_code_intent_immutable();
 CREATE TRIGGER sso_code_intent_detail_no_change BEFORE UPDATE OR DELETE ON sso_code_intent_details FOR EACH ROW EXECUTE FUNCTION sso_code_intent_immutable();
 CREATE TRIGGER sso_code_intent_command_no_change BEFORE UPDATE OR DELETE ON sso_code_intent_commands FOR EACH ROW EXECUTE FUNCTION sso_code_intent_immutable();
+
+-- Permanent nonpersonal catalog prevents key-ID or material resurrection after nonce erasure.
+CREATE FUNCTION sso_code_intent_key_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='DELETE' OR NEW.key_id<>OLD.key_id OR NEW.material_fingerprint<>OLD.material_fingerprint
+    OR OLD.state<>'ACTIVE' OR NEW.state<>'RETIRED' OR NEW.generation<>OLD.generation+1 THEN
+   RAISE EXCEPTION 'immutable intent encryption catalog' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER sso_code_intent_key_no_reuse BEFORE UPDATE OR DELETE ON sso_code_intent_encryption_keys FOR EACH ROW EXECUTE FUNCTION sso_code_intent_key_guard();
+CREATE FUNCTION sso_code_intent_nonce_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE key_state varchar(8);
+BEGIN
+ IF TG_OP='UPDATE' THEN RAISE EXCEPTION 'immutable intent nonce' USING ERRCODE='23514'; END IF;
+ IF TG_OP='INSERT' THEN
+   SELECT state INTO key_state FROM sso_code_intent_encryption_keys WHERE key_id=NEW.encryption_key_id FOR UPDATE;
+   IF key_state IS DISTINCT FROM 'ACTIVE' THEN RAISE EXCEPTION 'inactive intent nonce key' USING ERRCODE='23514'; END IF;
+   RETURN NEW;
+ END IF;
+ SELECT state INTO key_state FROM sso_code_intent_encryption_keys WHERE key_id=OLD.encryption_key_id FOR UPDATE;
+ IF key_state IS DISTINCT FROM 'RETIRED' OR EXISTS(SELECT 1 FROM sso_code_intent_details WHERE encryption_key_id=OLD.encryption_key_id) THEN
+   RAISE EXCEPTION 'retained intent nonce' USING ERRCODE='23514';
+ END IF;
+ RETURN OLD;
+END $$;
+CREATE TRIGGER sso_code_intent_nonce_permanent BEFORE INSERT OR UPDATE OR DELETE ON sso_code_intent_nonces FOR EACH ROW EXECUTE FUNCTION sso_code_intent_nonce_guard();
