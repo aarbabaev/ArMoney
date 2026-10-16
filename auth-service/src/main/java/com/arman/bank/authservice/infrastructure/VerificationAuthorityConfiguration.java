@@ -12,6 +12,7 @@ import java.util.*;
 public final class VerificationAuthorityConfiguration {
     public final boolean enabled;
     public final boolean completionEnabled;
+    public final boolean eligibilityGrantsEnabled;
     private final VerificationProjectionConfiguration completionProjection;
     private final String bridgeKey,statusKey;
     private final URI origin;
@@ -19,9 +20,13 @@ public final class VerificationAuthorityConfiguration {
     private final VerificationCrypto crypto;
     private final byte[] retentionKey;
     public VerificationAuthorityConfiguration(Map<String,String> environment){
+        String grants=environment.getOrDefault("AUTH_REGISTRATION_ELIGIBILITY_GRANTS_ENABLED","false");
+        if(!"true".equals(grants)&&!"false".equals(grants))invalid();
+        eligibilityGrantsEnabled="true".equals(grants);
         String completion=environment.getOrDefault("AUTH_REGISTRATION_AUTHORITY_COMPLETION_ENABLED","false");
         if(!Set.of("true","false").contains(completion))invalid();
         completionEnabled=completion.equals("true");
+        if(eligibilityGrantsEnabled&&!completionEnabled)invalid();
         completionProjection=completionEnabled?new VerificationProjectionConfiguration(environment):null;
         String flag=environment.getOrDefault("AUTH_VERIFICATION_AUTHORITY_BRIDGE_ENABLED","false");
         if(!Set.of("true","false").contains(flag))invalid();enabled=flag.equals("true");
@@ -58,7 +63,7 @@ public final class VerificationAuthorityConfiguration {
         try{
             var reader=new PostgresIdentityVerificationStore(database,crypto,retentionKey,policy,null);
             var projections=completionEnabled?completionProjection.store(database,sql->(identity,now)->reader.projectionAuthorityInTransaction(sql,identity,now)):null;
-            var store=new PostgresIdentityVerificationStore(database,crypto,retentionKey,policy,projections,completionEnabled?completionProjection.writer():null);
+            var store=new PostgresIdentityVerificationStore(database,crypto,retentionKey,policy,projections,completionEnabled?completionProjection.writer():null,eligibilityGrantsEnabled);
             var routes=new VerificationRoutes(new IdentityVerificationService(store,observer,policy),bridgeKey);
             return new Resources(routes,observer,completionEnabled?completionProjection.worker(projections,store):null);
         }catch(RuntimeException failure){observer.close();throw failure;}
