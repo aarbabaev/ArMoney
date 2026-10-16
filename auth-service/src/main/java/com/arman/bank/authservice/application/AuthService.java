@@ -62,6 +62,7 @@ public final class AuthService {
     }
 
     private void provision(Identity identity) {
+        store.requireBankingAccess(identity.id());
         // Historical identities remain compatible. Never enroll them from an unverified retry.
         if (identity.registrationPhone() != null) profiles.provision(identity.id(), identity.registrationPhone());
     }

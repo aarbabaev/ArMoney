@@ -1135,7 +1135,7 @@ Gateway keeps the original bank bearer and internal bank key; assistant receives
 The planner selects a finite policy intent; application code supplies fixed retrieval questions and filters relevant sections. Policy selection returns citation identifiers, never free-form answer prose. Application code renders exact demonstration source excerpts with document/version/section and explicit conflicting or insufficient evidence. Bank facts never enter model context. Prompts and documents are untrusted data; deterministic code validates tools, authorization and budgets. Runtime provider/embedding ports use external OpenAI despite local Docker hosting; owner authorized minimal egress. No personal server conversation is persisted; Android clears displayed turns on session change and rejects stale results. Provider store=false is not a zero-retention guarantee. The ai_assistant_owner configures a Codex developer, distinct from runtime assistant roles and containers. Local and required CI checks, measured model evaluation, independent review and local deployment readiness passed. Authenticated actual-provider acceptance ran in a matching disposable stack; no live-owner message or physical-device UX pass is claimed. See the versioned [learning-outcome evidence](docs/ai-assistant-learning-outcomes.md) for scope and limitations.
 
 
-### Auth pre-token observation bridge: default-disabled source, delivery pending
+### Auth pre-token observation bridge: deployed, default-disabled
 
 The observation client and explicit authority-mode routes are implemented under
 [ADR 0037](docs/adr/0037-auth-verification-observation.md) and the
@@ -1151,5 +1151,8 @@ responses. Main owns client startup/shutdown cleanup. No gateway route, principa
 materialization, positive projection/proof eligibility or bank session/notice is added.
 Independent focused transport/configuration/routes (84) and PostgreSQL operation (2)
 checks passed; the full Auth check passed 599 tests with no failures or skips.
-Exact-head CI and deployment remain pending. Separate two-node provider committed-state,
-removal and expiry evidence remains required before activation; no deployment is claimed.
+PR #70 passed exact-head CI and was deployed at af1f7975 with the bridge disabled. Existing native PKCE login, profile, AED wallet read and logout passed; this was not new registration activation. Separate two-node provider committed-state, removal and expiry evidence remains required before activation.
+
+### Default-off banking eligibility barrier
+
+Auth includes the independent strict AUTH_BANKING_ELIGIBILITY_ENFORCED switch, default false. Its deny-only path rejects all authority-associated V9 staging identities before profile provisioning and during session creation/validation under the authority control lock. Off preserves legacy compatibility, including populated staging. Unassociated identities remain compatible: this is not complete dual-OTP enforcement, new-principal materialization, provider proof or activation. Source and checks are tracked separately; no deployment enables the switch. See [ADR 0038](docs/adr/0038-default-off-banking-eligibility.md).
