@@ -81,7 +81,7 @@ class LoginRequestScopeIntegrationSpec extends Specification {
         when:
         target.inRequest(ACTOR){request->
             escaped=request
-            assert executor.submit({try{request.admitCreate(command());null}catch(L.Failure denied){denied.error()}} as Callable).get(3,TimeUnit.SECONDS)==L.Error.UNAVAILABLE
+            assert executor.submit({try{request.admitCreate(command());null}catch(L.Failure wrongThread){wrongThread.error()}} as Callable).get(3,TimeUnit.SECONDS)==L.Error.UNAVAILABLE
             def admission=request.admitCreate(command())
             assert admission.startedAt()!=null
         }

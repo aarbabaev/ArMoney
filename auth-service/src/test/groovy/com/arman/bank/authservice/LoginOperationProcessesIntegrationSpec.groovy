@@ -227,7 +227,8 @@ class LoginOperationProcessesIntegrationSpec extends Specification {
     }
     def 'two actual AuthMain processes share all sixteen slots and reject before parse or admission'(){
         given:
-        int first=start(true),second=start(true)
+        int first=start(true)
+        int second=start(true)
         assert post(first,'wrong-synthetic-key').statusCode()==401
         assert post(second,null).statusCode()==401
         assert rows('sso_login_proof_admission')==0
