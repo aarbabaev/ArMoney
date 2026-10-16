@@ -51,12 +51,18 @@ is no longer usable. Exact internal replay cannot resurrect the code or authoriz
 an invalid token replay; a fresh authorization flow may be required. A record
 alone never creates a banking session or dispatches a notice.
 
-The replacement observer must bind the specific client and a trusted validity
-deadline. The current eight-field status response is insufficient and cannot be
+The replacement observer must bind the specific client, observed_at and a trusted
+valid_until in an exact 12-field response. Convert its same-clock relative
+duration conservatively to the original Auth DB start; do not assume synchronized
+host clocks or renew the budget. The current eight-field status response is insufficient and cannot be
 accepted as a fallback. Required-action OIDC_CONTINUATION is distinct from ACTIVE;
 managed banking denial remains unconditional until its separate consumer passes
 all gates. No provider factory, route, credential or runtime flag is enabled here.
 
-Freeze requires independent Auth/SSO source assessment, QA/security review and
-resolution of the observer-deadline derivation below. Implementation then needs
+The draft fixes the proposed one-owner lock order, separates committed denial
+from positive-proof rollback, bounds retention/cleanup/capacity and strips all
+three proof claims from both refreshed access and refresh tokens. These choices
+remain proposals, not deployed guarantees. Freeze requires independent Auth/SSO
+source assessment and QA/security review of the complete choices, including
+clock-continuity assumptions and retention/privacy constraints. Implementation then needs
 exact-head full checks, disposable multi-node acceptance and independent review.

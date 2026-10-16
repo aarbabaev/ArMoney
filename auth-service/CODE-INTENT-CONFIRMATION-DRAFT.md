@@ -113,9 +113,17 @@ Only the validated authorization-code grant hook may submit it. Keycloak must
 first validate the code, client, redirect, expiry, PKCE, user and session. The
 original authentication-session identity and intent metadata come from the
 immutable stored intent, not unavailable or browser-supplied grant parameters.
-The internal confirmation identity is deterministic from authenticated confirmer
-scope plus the immutable intent ID and full CodeBinding; persist its canonical
-hash. Separate directional credentials do not relax issuer/client allowlists.
+The internal confirmation identity is a deterministic 32-byte HMAC using a
+separate retention HMAC key and domain `armoney-code-confirmation-v1`. Input is
+the length-prefixed authenticated logical actor scope, immutable intent UUID and
+canonical full CodeBinding in the field order above. Keep that identity stable
+through credential rotation; persist the canonical request hash. Provisioning,
+key `SSO_LOGIN_PROOF_RETENTION_HMAC_KEY` is exactly 32 random bytes in canonical
+base64, distinct from every credential and code-digest key. Keep the original
+key/key ID available until its last tombstone expires; rotation must not change
+the identity of an existing intent. Key-ring provisioning, rotation and equality
+checks remain disabled configuration gates. Separate directional credentials do not relax
+issuer/client allowlists.
 
 Exact 200 response is the existing immutable six-field proof snapshot:
 
@@ -149,17 +157,18 @@ using existing AUTH_TO_SSO_STATUS_KEY / X-ArMoney-Auth-Status-Key. Exact request
 The provider resolves the allowlisted public client to its own internal ID and
 checks the actual authenticated client membership of that exact user session.
 
-Exact success response (11 fields):
+Exact success response (12 fields; no fallback to the earlier 11-field draft):
 
 ```text
 issuer, subject, client_id, user_session_id: exact request binding strings
 username: bounded string
 email, phone_number: canonical strings or explicit null
 enabled, user_session_active, client_session_active: literal booleans
-valid_until: RFC3339 UTC integer-second timestamp
+observed_at, valid_until: RFC3339 UTC integer-second timestamps
 ```
 
-The provider's own clock and trusted realm/client/session models determine time;
+The provider captures one observed_at before session checks; its own clock and
+trusted realm/client/session models determine time;
 the caller supplies none. A positive response requires enabled user, exact
 user ownership, valid user session and valid authenticated client session. A
 negative observation may invalidate existing authority, never grant it. A disabled
@@ -168,9 +177,10 @@ binding and nonnull future deadline; positive consumers require all three flags
 true. Missing/inactive/foreign sessions fail closed without a fabricated deadline.
 Missing
 objects, uncertainty or unsupported deadline derivation fail closed. Auth rejects
-binding/type mismatch, negative flags, absent/null/nonfuture deadline, excessive
-clock skew, and evidence older than its original local observation budget.
-The old eight-field response MUST NOT satisfy this operation. Enrollment status
+binding/type mismatch, negative flags, absent/null/invalid relative deadline,
+and evidence older than its original local observation budget.
+Neither the old eight-field response nor the earlier 11-field draft satisfies
+this operation. Enrollment status
 and its pre-token authentication_session_active field are different contracts.
 
 **Proposed pinned calculation, requiring independent verification:** run both
@@ -185,9 +195,35 @@ both validity checks and a strictly future result. Initially reject unsupported,
 offline or transient sessions. Unknown policy or failed derivation rejects;
 never substitute token expiry, access-token lifespan or guessed session lifetime.
 The observer's deadline is a conservative evidence-use bound, never a provider
-lease or distributed revocation guarantee. Auth also records DB observation start
-before I/O; after locks and at the final application check, DB now must be no
-earlier than that start and strictly before both start+5s and valid_until.
+lease or distributed revocation guarantee.
+
+### Relative deadline conversion: pending independent proof review
+
+No provider-to-PostgreSQL clock-offset bound is inferred or required by this
+proposed relative conversion. Both provider timestamps use the same clock and
+are floored to whole seconds. Define delta = valid_until - observed_at in integer
+seconds and require 1 <= delta <= 5. The difference of two floors can overstate
+the underlying duration by less than one second, so subtract one second when
+converting to Auth's DB clock. The provider captures observed_at only after Auth's
+original DB start; anchoring the remaining duration at that earlier start is
+conservative under the clock-continuity assumptions below.
+
+Auth records immutable DB start before remote I/O and DB receive afterward.
+Reject receive < start or receive - start > four seconds. Compute once:
+effective_db_deadline = min(start + 5s, start + (delta - 1)s).
+After locks and at the final application check, DB now must be >= original start
+and strictly < effective_db_deadline. delta=1 leaves no usable window and denies.
+No absolute provider timestamp is compared with DB time as synchronization proof.
+Equality, an empty window, backward time or uncertainty rejects.
+No resampling, polling, inline retry or reread may replace the original start or
+renew the observation budget. Fresh negative observations use the same checks.
+The final application check is not a durable COMMIT/fsync deadline guarantee.
+This proof assumes trustworthy continuously advancing provider/DB clock rates
+during the operation, no undetected time jumps, and the same provider clock for
+capture and session deadline calculations. Detected discontinuity/range error
+fails closed. Relative conversion removes cross-host offset dependence; it does
+not prove absence of clock jumps or concurrent provider revocation. Independent
+security/SSO must validate these assumptions and floor/unit edge cases before freeze.
 
 ## Owning transaction and replay/invalidation
 
@@ -214,6 +250,71 @@ ACTIVE. The managed banking marker remains unconditionally denied until its
 separate authorized consumer is independently verified. An intent, V7 event or
 successful OIDC code exchange alone is not banking authority.
 
+### Exact transaction ownership and lock order
+
+One owner uses the same DSL transaction context and transaction ID for
+lockControls in V -> projection -> proof order. The ordered business locks are:
+authority; identity/mapping; candidate/receipt/challenge rows sorted by stable
+purpose and UUID; projection command/tombstone; intent; stage/confirmation
+idempotency keys; event/proof/command rows. No later lock path may acquire an
+earlier class. Extract the caller-owned write core rather than call owning
+writeObserved from inside this transaction. No nested transaction and no remote
+I/O while holding any of these locks.
+
+Before HTTP, commit an opaque admission anchor binding authenticated logical
+actor, intent, full code binding/request hash, DB start and authority identity,
+epoch and revision. It is not authority or a renewable grant. After observation,
+re-read the same authority stamp while locked; never apply a negative observation
+to an identity/revision different from the captured stamp.
+
+### Denial commit is distinct from positive-proof rollback
+
+A fresh, authenticated, correctly bound negative observation at the SAME current
+authority stamp may suspend the authority monotonically once. It writes no proof,
+event, confirmation or optional audit side effects. Return an internal
+DENIED_COMMITTED outcome, commit that denial, THEN produce generic HTTP 409
+outside the transaction. Already-SUSPENDED state does not advance epoch again.
+A changed authority stamp denies without applying old negative facts. Recheck
+observation freshness after the suspension update and before commit; if stale,
+roll back only that attempted transaction and report unavailable. Missing, 503,
+malformed, mismatched or stale evidence is UNAVAILABLE, not revocation evidence.
+Positive proof/event/confirmation writes remain atomic and all roll back on any
+failed final owned-evidence/deadline check. These are different outcomes; a
+generic thrown proof error must not accidentally undo a required committed denial.
+
+### Capacity, retained identity and bounded cleanup
+
+Shared durable admission uses burst 20 and refill two requests per second per
+logical actor; at most 16 configured actors and 16 in-flight operations globally.
+New intent plus existing legacy-proof creation share a limit of 1,000 per hour,
+charged once per intent; confirmation does not charge a second creation.
+Each of intent, stage-command tombstone, confirmation tombstone, proof and proof
+command has a 100,000-row capacity. At most four stage-command aliases bind one
+intent. Authenticated exact unexpired replay is compared before capacity rejection
+and remains usable at capacity; aliases/new payloads cannot bypass the limit.
+
+Retain minimal pseudonymous intent/idempotency tombstones until ORIGINAL code
+expiry + seven days. They contain original bounds, hashes and outcome ID, never
+raw subject, user/authentication-session identifiers, contacts, redeemable codes,
+tokens or canonical request JSON. Retention-HMAC identity is separate from stored
+short-lived details; do not retain an authority foreign key that pins personal
+data or a permanent marker beyond deletion. The separate detail record contains
+event/password time, binding and authority hash without recipient, and is deleted
+at original code expiry + five minutes. Missing details before code expiry return
+503 and never recreate the intent. V7 historical metadata remains seven days;
+recipient/identity fields become NULL after 24 hours independently of pending
+notice delivery. These limits do not authorize a new notice worker or erasure
+claim during DB outage.
+
+Cleanup wakes every 30 seconds, at most ten transactions per wake and 100 rows
+per table per transaction, with a one-second lock timeout. It takes the same
+control/business lock prefix/order as writers and deletes children before parents;
+it must not reverse that order to obtain a purge. Report overdue purge > five
+minutes or any table >=80% capacity. Unhealthy cleanup gates NEW creation;
+authenticated exact unexpired replay remains allowed at capacity. No scheduler,
+alert provider or runtime setting is enabled here. Cleanup outage, concurrent
+confirmation and purged tombstone boundaries require actual PostgreSQL acceptance.
+
 Stage/confirm errors use generic 400 malformed, 401 invalid credential, 404 absent
 intent/proof, 409 conflicting/currently denied, 410 expired, 429 bounded capacity
 with Retry-After and 503 unavailable/uncertain. No error body reveals bindings or
@@ -232,11 +333,13 @@ idempotency does not guarantee a repeated `/token` request reaches confirmation.
 Never resurrect a code, reinsert cache state or issue a token from invalid replay;
 require a fresh authorization flow when the result cannot safely complete.
 Orphan intents/confirmed records grant no banking session or notice and expire
-without renewal. Cleanup must be bounded and preserve confirmed-proof retention
-and notice deduplication; exact scheduling/retention is a freeze gate.
+without renewal. Cleanup must follow the bounded retention and deduplication
+rules above; it must not remove an unexpired confirmation under an active writer.
 
-Refresh performs no intent, confirmation or event creation. Its claim preservation
-policy must be frozen separately before activation. Introspection copies validated
+Refresh STRIPS ALL THREE login-proof claims from both newly issued access and
+refresh tokens and performs no intent, confirmation, event or notice creation.
+It must not copy the interactive event or eligibility from the old refresh token.
+Introspection copies validated
 original signed claims only, without confirmation or mutable eligibility lookup.
 REUSE event claim is absent (not explicit null), kind is "reuse", eligibility false.
 
@@ -253,7 +356,11 @@ REUSE event claim is absent (not explicit null), kind is "reuse", eligibility fa
 | New-flow reuse, legacy or ambiguous classification | Reject without creating an interactive event; existing legacy/reuse paths unchanged |
 | Concurrent redemption/confirmation, including lost commit acknowledgement | One code redemption and one immutable result/event; no duplicate notice or token resurrection |
 | Disabled/deleted user; missing/foreign/expired client membership | Fail closed; existing invalidation independently verified |
-| Stale status, clock skew, missing/expired deadline, old eight-field DTO | Deny without mutation/authority; no fallback |
+| Stale status, missing/expired deadline, old eight/11-field DTO | Deny without mutation/authority; no fallback |
+| Constant cross-host clock offsets, backward DB time or exchange >4s | Offset cancels in relative duration; backward/slow/uncertain operation denies |
+| Relative delta=1..5, floor differences, all four minimum deadlines, remember-me and client overrides | Verify exact provider calculation and conservative DB-start conversion |
+| Maximum -1 sentinel, floor-to-seconds, equality, idle grace, offline/transient/foreign membership | Reject invalid/unsupported cases; preserve finite idle bounds and exact membership |
+| Lock/final check crosses effective_db_deadline | Atomic denial; never renew original DB start |
 | Each receipt/contact version/epoch, each of six ACK fields, recovery mismatch | Independently exercise each mismatch; atomic denial/rollback, no stale snapshot acceptance |
 | Successful confirmation followed by suspension, then exact replay and historical resolve | Replay/current token release deny; historical metadata cannot bypass invalidation |
 | Negative provider observation becomes stale during a blocked lock | No stale positive authorization or uncontrolled repeated invalidation; preserve owned epoch semantics |
@@ -261,9 +368,16 @@ REUSE event claim is absent (not explicit null), kind is "reuse", eligibility fa
 | Wrong directional credential/public ingress/oversize/duplicate JSON | Reject before unauthorized capability/fanout; no sensitive logs |
 | Refresh, introspection, cookie reuse | No new interactive event/confirmation; original-claim and reuse rules preserved |
 | Intent cleanup, Auth restart, provider-node change, missing integration | Bounded retention/idempotency preserved; unavailable never grants access |
+| Real PostgreSQL lock contention, expiry after inserted rows/final-check trigger | One owning transaction; all positive effects roll back at each final boundary |
+| Fresh negative, already suspended, changed authority stamp and stale-after-update negative | Commit valid denial once; no epoch storm/old-fact application; stale attempt alone rolls back |
+| Cleanup vs confirmation/replay, capacity full, alias cap and unhealthy purge | Same lock order, no deadlock/unexpired purge or admission bypass; exact replay remains bounded |
+| Detail deletion, minimal tombstone replay, retention expiry and credential rotation | No intent resurrection or lifetime renewal; stable HMAC identity, no retained raw identifiers |
+| Refresh carrying each/all three old claims in access and refresh outputs | Strip all three in BOTH output token types; no intent, confirmation, event or notice |
 
 No row is established by this draft. Existing SSO-VIS-001 proves only its recorded
 fixture observations; all new production ports, schemas, routes and hooks remain
 unimplemented and default-off. Joint freeze must resolve deadline derivation,
-cleanup retention/scheduling, actual transaction ownership and refresh preservation
-before a separately scoped implementation assignment.
+clock continuity, retention/privacy implementation and actual transaction/lock
+ownership against these proposed choices before a separately scoped implementation
+assignment. QA/security must recheck the consolidated draft; none of these proposed
+decisions is an implemented or runtime-verified guarantee.
