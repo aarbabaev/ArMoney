@@ -76,10 +76,31 @@ runs (64/7 and 64/5) remain retained; fixes corrected strict test-model policy
 inputs and pinned Profile lifecycle without changing production checks.
 The later null-reload durable-provenance correction passed a fresh provider
 `check jar --rerun-tasks` on 2026-10-17: 65 tests across 13 suites, zero failures,
-errors or skips. Its actual two-node acceptance remains pending.
+errors or skips.
+
+The separate disposable two-node code-session acceptance passed on 2026-10-17
+(Asia/Dubai), tested source `c8a8dda`, with an outer elapsed time of 270.469 seconds.
+The harness consists of `compose.sso-code-session.yaml`,
+`scripts/run-sso-code-session.sh`, `scripts/sso-code-session-acceptance.py` and
+`scripts/test-sso-code-session-diagnostics.py`. It reuses the dedicated visibility
+fixture image and provenance; it does not enable the production configuration.
+The CI-guarded runner creates a unique owned project/image, enables this observer
+only on node B, and leaves node A off. Actual cases covered the cross-node
+12-field baseline, HTTP/authentication/strict-body boundaries, foreign binding,
+the same allowlisted client changed to confidential and restored, disabled-user
+negative observation, explicit null contacts after admin clear/readback and
+restore, session deletion, and short-policy expiry. Per-exchange HTTP/body bounds
+are four seconds and 12 KiB. The runner's 540-second acceptance-phase limit does
+not bound image build or node startup. Inner and outer cleanup were verified;
+the root independently verified no owned containers, volumes or networks remain.
+The retained evidence prefix is
+`D:/ArMoneyDockerRecovery/2026-10-16/code-session-verification/armoney-code-session-manual-5b43c1e505174c569469fcb30067e9d7`.
+This result does not establish Auth confirmation, code redemption, clock
+continuity/equal rates, or production activation.
 The first isolated harness run at `fa5049f` failed at BASELINE after completed
 callback; the saved log lacked endpoint status, so that failure's cause is not
-established by source inspection. Exact-head required CI remains pending.
+established by source inspection. Later diagnostic failures also do not establish
+their earlier causes retroactively. Exact-head required CI remains pending.
 No production flag, realm, route consumer, proof
 hook registration or banking eligibility is activated by this implementation.
 
