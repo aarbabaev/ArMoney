@@ -1278,6 +1278,16 @@ positive proof authority, legacy backfill or activation is introduced. Managed
 banking denial remains in force in every mode. No automatic renewal, suspension
 recovery or general retention/erasure guarantee is supplied. See
 [ADR 0041](docs/adr/0041-internal-managed-eligibility-grants.md).
+### Authenticated token context: metadata only
+
+Auth retains optional client/session/time and login-proof claim context after its
+existing mandatory introspection checks. Each field distinguishes absence,
+malformation and valid format. Format classification grants no proof authority or
+banking eligibility. Malformed optional context preserves unmanaged legacy login
+compatibility; permanent managed-principal denial remains unconditional.
+The public HTTP contract and production proof wiring are unchanged. See
+[the token context contract](docs/auth-token-context.md). The full local Auth check passed 847 tests across 43 suites on 2026-10-17 with zero failures, errors or skips. Independent evidence audit and exact-head CI remain separate gates; this does not establish deployment or activation.
+
 ### Bounded replica observation follow-up
 
 Ledger can optionally observe explicitly named primary WAL senders for metrics only.

@@ -73,17 +73,64 @@ public final class KeycloakTokens implements SsoTokens, AutoCloseable {
                 !expiry.isIntegralNumber() || !expiry.canConvertToLong() || expiry.longValue() <= clock.instant().getEpochSecond() ||
                 (body.has("nbf") && (!body.path("nbf").isIntegralNumber() || !body.path("nbf").canConvertToLong() || body.path("nbf").longValue() > clock.instant().getEpochSecond())))
                 throw new AuthFailure(UNAUTHORIZED);
+            Instant capturedNow=clock.instant();
+            var context=new TokenContext(Metadata.present(issuingClient),sessionId(body),issuedAt(body,expiry.longValue(),capturedNow),expiryView(expiry),proofMetadata(body));
             var phone = body.path("phone_number");
             if (!phone.isMissingNode() && !phone.isNull() && !phone.isTextual()) throw new AuthFailure(UNAUTHORIZED);
             // Auth persistence applies required/immutable phone rules using the existing mapping.
             var email = body.path("email");
             var verified = body.path("email_verified");
             return new Principal(issuer, subject.textValue(), phone.textValue(), email.textValue(),
-                verified.isBoolean() && verified.booleanValue());
+                verified.isBoolean() && verified.booleanValue(),context);
         } catch (AuthFailure e) { throw e; }
         catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new AuthFailure(UNAVAILABLE); }
         catch (Exception e) { throw new AuthFailure(UNAVAILABLE); }
         finally { if (pending != null && !pending.isDone()) pending.cancel(true); slots.release(); }
+    }
+    private static Metadata<String> sessionId(JsonNode body){
+        var value=body.get("sid");
+        if(value==null)return Metadata.absent();
+        if(value.isNull())return Metadata.malformed(Malformation.NULL_VALUE);
+        if(!value.isTextual())return Metadata.malformed(Malformation.WRONG_TYPE);
+        String id=value.textValue();
+        if(id.isEmpty()||id.length()>255||id.codePoints().anyMatch(c->Character.isWhitespace(c)||Character.isSpaceChar(c)||Character.isISOControl(c)||Character.getType(c)==Character.FORMAT||(c>=0xD800&&c<=0xDFFF)))
+            return Metadata.malformed(Malformation.INVALID_VALUE);
+        return Metadata.present(id);
+    }
+    private static Metadata<Instant> issuedAt(JsonNode body,long expiry,Instant capturedNow){
+        var value=body.get("iat");
+        if(value==null)return Metadata.absent();
+        if(value.isNull())return Metadata.malformed(Malformation.NULL_VALUE);
+        if(!value.isIntegralNumber())return Metadata.malformed(Malformation.WRONG_TYPE);
+        if(!value.canConvertToLong())return Metadata.malformed(Malformation.OUT_OF_RANGE);
+        long seconds=value.longValue();
+        if(seconds<0||seconds>expiry||seconds>capturedNow.getEpochSecond())return Metadata.malformed(Malformation.OUT_OF_RANGE);
+        try{return Metadata.present(Instant.ofEpochSecond(seconds));}
+        catch(DateTimeException invalid){return Metadata.malformed(Malformation.OUT_OF_RANGE);}
+    }
+    private static Metadata<Instant> expiryView(JsonNode value){
+        try{return Metadata.present(Instant.ofEpochSecond(value.longValue()));}
+        catch(DateTimeException invalid){return Metadata.malformed(Malformation.OUT_OF_RANGE);}
+    }
+    private static Metadata<ProofClaims> proofMetadata(JsonNode body){
+        var kind=body.get("armoney_login_kind");var notice=body.get("armoney_login_notice_eligible");var event=body.get("armoney_login_event_id");
+        if(kind==null&&notice==null&&event==null)return Metadata.absent();
+        if((kind!=null&&kind.isNull())||(notice!=null&&notice.isNull())||(event!=null&&event.isNull()))return Metadata.malformed(Malformation.NULL_VALUE);
+        if(kind==null||notice==null)return Metadata.malformed(Malformation.INVALID_VALUE);
+        if(!kind.isTextual()||!notice.isBoolean())return Metadata.malformed(Malformation.WRONG_TYPE);
+        if("reuse".equals(kind.textValue())){
+            // Signed JWT claims omit the event entirely for reuse; bridge Write's explicit null is a different DTO.
+            if(event!=null||notice.booleanValue())return Metadata.malformed(Malformation.INVALID_VALUE);
+            return Metadata.present(new ProofClaims("reuse",null,false));
+        }
+        if(!"interactive".equals(kind.textValue())||event==null)return Metadata.malformed(Malformation.INVALID_VALUE);
+        if(!event.isTextual())return Metadata.malformed(Malformation.WRONG_TYPE);
+        try{
+            var id=java.util.UUID.fromString(event.textValue());
+            if(!id.toString().equals(event.textValue()))return Metadata.malformed(Malformation.INVALID_VALUE);
+            // Either literal boolean is valid format. Notice metadata never authorizes banking access.
+            return Metadata.present(new ProofClaims("interactive",id,notice.booleanValue()));
+        }catch(IllegalArgumentException invalid){return Metadata.malformed(Malformation.INVALID_VALUE);}
     }
     private static String encode(String value) { return URLEncoder.encode(value, StandardCharsets.UTF_8); }
     @Override public void close() { client.close(); }
