@@ -6,10 +6,21 @@ import com.arman.bank.authservice.infrastructure.AuthRoutes;
 import com.arman.bank.authservice.infrastructure.PostgresAuthStore;
 import com.arman.bank.runtime.Database;
 import com.arman.bank.runtime.ServiceRuntime;
+import com.arman.bank.runtime.OperationalMetrics;
+import com.arman.bank.runtime.OperationalMetricsHttp;
 import java.time.Clock;
 
 public final class Main {
     private Main() {}
+    static void configureMetrics(io.javalin.config.JavalinConfig config,
+            java.util.Map<String, String> environment, OperationalMetrics metrics,
+            java.util.function.BooleanSupplier readiness) {
+        var key = environment.get("INTERNAL_METRICS_KEY");
+        if (key == null) return;
+        if (key.isBlank()) throw new IllegalArgumentException("INTERNAL_METRICS_KEY must not be blank");
+        OperationalMetricsHttp.configure(config, key, metrics, readiness);
+    }
+
     public static void main(String[] args) throws Exception {
         var deliveryConfig = new com.arman.bank.authservice.infrastructure.VerificationDeliveryConfiguration(System.getenv());
         var projectionConfig = new com.arman.bank.authservice.infrastructure.VerificationProjectionConfiguration(System.getenv());
@@ -45,10 +56,13 @@ public final class Main {
                     serviceKey, provider == null ? token -> {
                         throw new com.arman.bank.authservice.application.AuthFailure(com.arman.bank.authservice.application.AuthFailure.Kind.UNAVAILABLE);
                     } : provider);
+            java.util.function.BooleanSupplier readiness = database::ready;
+            var metrics = new OperationalMetrics();
             var runtime = ServiceRuntime.start("auth-service", Integer.parseInt(System.getenv().getOrDefault("PORT", "8080")),
-                    database, config -> {
+                    readiness, database, config -> {
                         routes.configure(config);
                         if (verificationAuthority != null) verificationAuthority.routes().configure(config);
+                        configureMetrics(config, System.getenv(), metrics, readiness);
                     });
             startedRuntime = runtime;
             if (verificationWorker != null) verificationWorker.start();

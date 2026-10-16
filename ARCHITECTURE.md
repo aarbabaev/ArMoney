@@ -39,6 +39,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | AI assistant | Implemented read-only C# service, local policy RAG, constrained bank reads and Android screen; local rollout verified on 2026-10-13 | Finite demonstration topics, English extracts, at most six wallets and first-page history of 50; physical-device/live-owner acceptance not run |
 | Gateway | Auth, profile/phone, wallets/balances, P2P and notifications | Further hardening |
 | Local SMS sandbox | Optional authenticated capture API and web inbox, bounded persistent file storage; no carrier delivery | Identity OTP and transaction producers are separate integration tasks |
+| Operational metrics (#22) | Source: six-service private readiness, payment recovery/email backlog counts, bounded local collector and finite stdout alerts | Deployment/key provisioning and integrated failure acceptance pending; worker counters, queue age and replica lag remain unknown |
 | Kafka infrastructure | Optional source-defined three-controller/three-broker KRaft cluster, mutual TLS, exact service ACLs and cold snapshot helper | Real-cluster acceptance and deployment pending; service adapters and financial Saga recovery remain planned |
 
 A payment email presentation candidate adds HTML/plain text and a frozen optional
@@ -193,7 +194,7 @@ flowchart TB
 | wallet-service | Owner, currency, lifecycle and durable ledger mapping | Not the source of balances |
 | payment-service | Transfer intent, client idempotency, recovery, notifications and email outbox/dispatcher | Completion requires matching ledger confirmation; email failure never changes money |
 | ledger-service | Accounts, balances, immutable paired postings | No public funding API |
-| platform-runtime | HTTP lifecycle, DB wiring, migrations, health | A library, not a separate service; no shared business entities |
+| platform-runtime | HTTP lifecycle, DB wiring, migrations, health and opt-in operational metrics adapter | A library, not a separate service; no shared business entities or collection from service databases |
 
 ### Code boundaries
 
@@ -422,6 +423,51 @@ The shared service key does not isolate compromised services from one another.
 A persistent service's readiness checks its own database; user-service checks the
 primary directory and all configured profile shards. Gateway readiness checks
 only the gateway itself. `UP` does not prove downstream availability or P2P correctness.
+
+### Opt-in operational metrics
+
+Six Java services register `GET /internal/metrics` on their existing listeners only
+when `INTERNAL_METRICS_KEY` is present. There is no fallback to
+`INTERNAL_AUTH_KEY`; blank, non-printable/non-ASCII or whitespace keys and keys
+outside 32â€“256 characters fail startup.
+Business routes are configured first, followed by `OperationalMetricsHttp` in
+its declared `(config, key, metrics, readiness)` order. Business authorization
+middleware applies to `/v1/`; the metrics adapter checks its own `X-Service-Key`
+without requiring an owner identity. Unauthorized scrapes return a generic 401
+before invoking readiness or service observations. The endpoint must remain outside public gateway and
+edge routes; listener isolation and dedicated key provisioning remain integration
+responsibilities.
+
+Each metrics adapter shares the actual readiness supplier used by
+`/health/ready`. Authorized scrapes return Prometheus text format 0.0.4 with
+`Cache-Control: no-store` and HTTP 200, including `armoney_ready` zero when the
+probe fails or throws a runtime exception. The technical registry accepts fixed
+enum measurements without caller-controlled labels; unobserved measurements are
+omitted. Gateway readiness is local-only. Payment uses read-only bounded queries
+for mapped pending payments and pending email outbox rows, including delayed and
+leased work; failed collection removes those observations.
+
+The local collector authenticates fixed private targets, refuses redirects and
+environment proxies, bounds I/O and emits expiring atomic status snapshots plus
+finite stdout state-transition alerts. Missing/stale data stays unknown; no
+external notification provider is used. Worker counters, queue age and replica
+lag remain unobserved. An explicit `compose.metrics.yaml` override provides a
+nonroot collector without published ports; private deployment and key provisioning
+are pending. CI source includes an isolated UUID-project fixture with owned-resource
+cleanup, real edge exclusion and a reversible payment-database outage.
+Combined business middleware, actual database failure, full integrated
+CI, independent verification and runtime acceptance still require evidence;
+source wiring does not establish deployment. See [operational metrics](docs/operational-metrics.md)
+and [ADR 0027](docs/adr/0027-local-operational-metrics.md).
+
+```mermaid
+flowchart LR
+    S["Six Java services: private keyed metrics"] --> C["Local collector: bounded reads"]
+    C --> J["Expiring atomic status snapshot"]
+    C --> A["Finite local stdout alerts"]
+    P["Payment-owned read-only backlog queries"] --> S
+    E["Public edge: no metrics route"] -.-> S
+```
 
 ## Data and ledger
 
