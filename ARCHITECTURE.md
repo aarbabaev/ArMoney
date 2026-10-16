@@ -39,7 +39,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | AI assistant | Implemented read-only C# service, local policy RAG, constrained bank reads and Android screen; local rollout verified on 2026-10-13 | Finite demonstration topics, English extracts, at most six wallets and first-page history of 50; physical-device/live-owner acceptance not run |
 | Gateway | Auth, profile/phone, wallets/balances, P2P and notifications | Further hardening |
 | Local SMS sandbox | Optional authenticated capture API and web inbox, bounded persistent file storage; no carrier delivery | Identity OTP and transaction producers are separate integration tasks |
-| Operational metrics (#22) | Source: six-service private readiness, payment backlog counts, process-local worker failure counters, optional named-replica observations and local collector | Baseline deployed and independently verified on 2026-10-16; worker counters reset/are unknown until first failure; worker and replica deployment pending; queue age absent |
+| Operational metrics (#22) | Source: six-service private readiness, payment backlog counts/oldest unresolved ages, process-local worker failure counters, optional named-replica observations and local collector | Baseline and replica observations deployed with bounded independent audits on 2026-10-16; age local checks passed 272 tests; worker/age exact-head CI and rollout remain pending; counters reset and are unknown until first failure |
 | Kafka infrastructure | Optional source-defined three-controller/three-broker KRaft cluster, mutual TLS, exact service ACLs and cold snapshot helper | Real-cluster acceptance and deployment pending; service adapters and financial Saga recovery remain planned |
 
 A payment email presentation candidate adds HTML/plain text and a frozen optional
@@ -452,7 +452,11 @@ environment proxies, bounds I/O and emits expiring atomic status snapshots plus
 finite stdout state-transition alerts. Missing/stale data stays unknown; no
 external notification provider is used. Payment worker failure counters are
 process-local observations and remain unknown until the first failure; they
-reset on restart. Queue age is absent and replica lag is a separate integration.
+reset on restart. Oldest unresolved age is source-implemented with a database
+anchor and unknown-on-invalid-time behavior. On 2026-10-16 its affected Java/PG
+checks passed 272 tests with zero failures, errors or skips; exact-head CI,
+actual Compose acceptance and rollout remain pending. Replica lag is a
+separately verified operational observation.
 An explicit `compose.metrics.yaml` override provides a
 nonroot collector without published ports. The baseline from `a0fab1b` was
 deployed and independently verified on 2026-10-16 with a dedicated private key,
