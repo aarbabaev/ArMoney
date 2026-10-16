@@ -17,15 +17,16 @@ public final class IdentityVerificationService {
     private final Policy policy;
     private final Semaphore inFlight=new Semaphore(16);
     public IdentityVerificationService(IdentityVerificationStore store,IdentityVerificationStore.Observations observations,Policy policy){this.store=Objects.requireNonNull(store);this.observations=Objects.requireNonNull(observations);this.policy=Objects.requireNonNull(policy);}
-    private <T>T observed(String writer,Flow flow,BiFunction<Observation,Instant,T> operation){return bounded(()->{
+    private <T>T observed(String writer,Flow flow,BiFunction<Observation,Instant,T> operation){return observed(writer,flow,operation,false);}
+    private <T>T observed(String writer,Flow flow,BiFunction<Observation,Instant,T> operation,boolean status){return bounded(()->{
         IdentityVerification.validate(flow,policy);if(!policy.writers().contains(writer))throw new Verification.Failure(Verification.Error.BINDING);
         Instant startedAt=store.admit(writer,flow);if(startedAt==null)throw new Verification.Failure(Verification.Error.UNAVAILABLE);
-        Observation result=observations.observe(flow,startedAt);
+        Observation result=status?observations.observeStatus(flow,startedAt):observations.observe(flow,startedAt);
         if(result==null||!startedAt.equals(result.observationStartedAt()))throw new Verification.Failure(Verification.Error.UNAVAILABLE);
         return operation.apply(result,startedAt);
     });}
     public Verification.Result enroll(String writer,Enrollment command){if(command==null||command.commandId()==null)bad();return observed(writer,command.flow(),(evidence,started)->accepted(store.enroll(writer,command,evidence,started)));}
-    public Verification.Result status(String writer,UUID enrollment,Flow flow){if(enrollment==null)bad();return observed(writer,flow,(evidence,started)->accepted(store.status(writer,enrollment,flow,evidence,started)));}
+    public Verification.Result status(String writer,UUID enrollment,Flow flow){if(enrollment==null)bad();return observed(writer,flow,(evidence,started)->accepted(store.status(writer,enrollment,flow,evidence,started)),true);}
     public Verification.Result issue(String writer,Issue command){if(command==null)bad();validate(command.commandId(),command.enrollmentId(),command.purpose(),command.contactVersion());return observed(writer,command.flow(),(evidence,started)->accepted(store.issue(writer,command,evidence,started)));}
     public Verification.Result consume(String writer,Consume command){if(command==null||command.challengeId()==null||command.code()==null||!command.code().matches("[0-9]{6}"))bad();validate(command.commandId(),command.enrollmentId(),command.purpose(),command.contactVersion());return observed(writer,command.flow(),(evidence,started)->accepted(store.consume(writer,command,evidence,started)));}
     public VerificationProjection.Status prepare(String writer,UUID command,UUID enrollment,Flow flow){if(command==null||enrollment==null)bad();return observed(writer,flow,(evidence,started)->store.prepare(writer,command,enrollment,flow,evidence,started));}

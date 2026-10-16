@@ -27,10 +27,16 @@ public final class PostgresIdentityVerificationStore implements IdentityVerifica
     private final Policy policy;
     private final PostgresVerificationProjectionStore projections;
     private final String completionWriter;
+    private final boolean eligibilityGrantsEnabled;
     public PostgresIdentityVerificationStore(Database database,VerificationCrypto crypto,byte[] retentionKey,Policy policy,PostgresVerificationProjectionStore projections){
         this(database,crypto,retentionKey,policy,projections,null);
     }
     public PostgresIdentityVerificationStore(Database database,VerificationCrypto crypto,byte[] retentionKey,Policy policy,PostgresVerificationProjectionStore projections,String completionWriter){
+        this(database,crypto,retentionKey,policy,projections,completionWriter,false);
+    }
+    public PostgresIdentityVerificationStore(Database database,VerificationCrypto crypto,byte[] retentionKey,Policy policy,PostgresVerificationProjectionStore projections,String completionWriter,boolean eligibilityGrantsEnabled){
+        if(eligibilityGrantsEnabled&&completionWriter==null)throw new IllegalArgumentException("Eligibility grants require completion");
+        this.eligibilityGrantsEnabled=eligibilityGrantsEnabled;
         if(completionWriter!=null&&(projections==null||!completionWriter.matches("[A-Za-z0-9_-]{1,64}")))throw new IllegalArgumentException("Invalid completion writer" );
         this.completionWriter=completionWriter;
         this.database=Objects.requireNonNull(database);this.crypto=Objects.requireNonNull(crypto);this.policy=Objects.requireNonNull(policy);this.projections=projections;
@@ -47,8 +53,19 @@ public final class PostgresIdentityVerificationStore implements IdentityVerifica
         return action.apply(sql,now(sql));
     });}
     private <T>T observed(Flow flow,Observation observation,Instant startedAt,BiFunction<DSLContext,Instant,T> action){
+        return observed(flow,observation,startedAt,action,null,false);
+    }
+    private <T>T observed(Flow flow,Observation observation,Instant startedAt,BiFunction<DSLContext,Instant,T> action,Consumer<DSLContext> finalAction,boolean statusObservation){
         if(startedAt==null||observation==null||!startedAt.equals(observation.observationStartedAt()))fail(Error.UNAVAILABLE);
-        return transaction((sql,now)->{
+        ObservationOutcome<T> outcome=transaction((sql,now)->{
+        if((statusObservation||(observation.enabled()&&observation.sessionActive()))&&grantFlowCurrent(sql,flow,observation,startedAt)){
+            var e=sql.fetchOne("select id from verification_enrollments where issuer=? and subject=?",flow.issuer(),flow.subject());
+            PostgresBankingEligibilityStore.authorizedFlow(sql,e.get("id",UUID.class),flow,observation,startedAt,tuple(flow));
+            if(new PostgresBankingEligibilityStore(sql).invalidateIfChanged(e.get("id",UUID.class),flow,observation,startedAt)){
+                if(!grantFlowCurrent(sql,flow,observation,startedAt))fail(Error.UNAVAILABLE);
+                return new ObservationOutcome<T>(null,true);
+            }
+        }
         IdentityVerification.evidence(flow,observation,now);T result=action.apply(sql,now);
         // Controls already serialize flow writers/cleanup. Re-read without acquiring locks in reverse
         // order after projection work, then sample time AFTER every potentially waiting operation.
@@ -65,8 +82,27 @@ public final class PostgresIdentityVerificationStore implements IdentityVerifica
                 ||!MessageDigest.isEqual(expected,binding.get("tuple_digest",byte[].class))
                 ||!MessageDigest.isEqual(expected,barrier.get("tuple_digest",byte[].class))
                 ||!checked.isBefore(time(binding,"expires_at"))||!checked.isBefore(time(barrier,"expires_at"))))fail(Error.UNAVAILABLE);
-        return result;
-    });}
+        if(finalAction!=null)finalAction.accept(sql);
+        return new ObservationOutcome<T>(result,false);
+    });
+        if(outcome.invalidated())fail(Error.CONFLICT);
+        return outcome.value();
+    }
+    private record ObservationOutcome<T>(T value,boolean invalidated) {}
+    /** Reuses the current tuple HMAC/barriers and DB anchor; unavailable evidence is not revocation. */
+    private boolean grantFlowCurrent(DSLContext sql,Flow flow,Observation observation,Instant startedAt){
+        Instant checked=now(sql);
+        com.arman.bank.authservice.domain.BankingEligibility.fresh(flow,observation,startedAt,checked);
+        IdentityVerification.statusEvidence(flow,observation,checked);
+        var e=sql.fetchOne("select id,expires_at from verification_enrollments where issuer=? and subject=?",flow.issuer(),flow.subject());
+        if(e==null||!checked.isBefore(time(e,"expires_at")))return false;
+        var binding=sql.fetchOne("select * from verification_flows where context_fingerprint=?",IdentityVerification.contextFingerprint(flow));
+        var barrier=sql.fetchOne("select * from verification_flow_barriers where context_fingerprint=?",IdentityVerification.contextFingerprint(flow));
+        return binding!=null&&barrier!=null&&e.get("id").equals(binding.get("enrollment_id"))
+                &&MessageDigest.isEqual(tuple(flow),binding.get("tuple_digest",byte[].class))
+                &&MessageDigest.isEqual(tuple(flow),barrier.get("tuple_digest",byte[].class))
+                &&checked.isBefore(time(binding,"expires_at"))&&checked.isBefore(time(barrier,"expires_at"));
+    }
     @Override public Instant admit(String writer,Flow flow){
         validate(writer,flow);
         boolean allowed=transaction((sql,now)->{
@@ -159,7 +195,11 @@ public final class PostgresIdentityVerificationStore implements IdentityVerifica
             });
         });
     }
-    @Override public Verification.Result status(String writer,UUID id,Flow flow,Observation observation,Instant startedAt){validate(writer,flow);if(id==null)fail(Error.BAD_INPUT);return observed(flow,observation,startedAt,(sql,now)->{var e=enrollment(sql,id);authorize(sql,e,flow,observation,now,false);return response(sql,e,null);});}
+    @Override public Verification.Result status(String writer,UUID id,Flow flow,Observation observation,Instant startedAt){
+        validate(writer,flow);if(id==null)fail(Error.BAD_INPUT);
+        return observed(flow,observation,startedAt,(sql,now)->{var e=enrollment(sql,id);authorize(sql,e,flow,observation,now,false);return response(sql,e,null);},
+                eligibilityGrantsEnabled?sql->{PostgresBankingEligibilityStore.authorizedFlow(sql,id,flow,observation,startedAt,tuple(flow));new PostgresBankingEligibilityStore(sql).record(id,flow,observation,startedAt);}:null,true);
+    }
     @Override public Verification.Result issue(String writer,Issue input,Observation observation,Instant startedAt){
         if(input==null||input.commandId()==null||input.enrollmentId()==null||input.purpose()==null||input.contactVersion()<1)fail(Error.BAD_INPUT);validate(writer,input.flow());
         return observed(input.flow(),observation,startedAt,(sql,now)->{var e=enrollment(sql,input.enrollmentId());authorize(sql,e,input.flow(),observation,now,false);
@@ -318,7 +358,7 @@ public final class PostgresIdentityVerificationStore implements IdentityVerifica
         for(String table:List.of("verification_phone_claims","verification_authority_phone_claims")){var claim=sql.fetchOne("select enrollment_id from "+table+" where phone=?",phone);if(claim!=null&&!Objects.equals(enrollment,claim.get("enrollment_id",UUID.class)))return true;}return false;
     }
     private static void reservePhone(DSLContext sql,UUID id,String phone){sql.execute("insert into verification_authority_phone_claims(phone,enrollment_id) values (?,?) on conflict(phone) do nothing",phone,id);}
-    private static void advance(DSLContext sql,UUID id){sql.execute("update verification_authorities set revision=revision+1,verification_epoch=verification_epoch+1,state='PENDING_CONTACTS' where enrollment_id=?",id);}
+    private void advance(DSLContext sql,UUID id){sql.execute("update verification_authorities set revision=revision+1,verification_epoch=verification_epoch+1,state='PENDING_CONTACTS' where enrollment_id=?",id);new PostgresBankingEligibilityStore(sql).invalidateAfterMutation(id);}
     private static Binding binding(Flow flow){return new Binding(flow.issuer(),flow.subject(),flow.authenticationSessionId());}
     private UUID coreCommand(String writer,Flow flow,UUID command){return UUID.nameUUIDFromBytes(digest("core-command",writer,Base64.getEncoder().encodeToString(tuple(flow)),command.toString()));}
     private static Verification.Result response(DSLContext sql,Record e,Verification.Result result){
