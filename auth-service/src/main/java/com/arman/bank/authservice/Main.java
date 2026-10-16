@@ -25,6 +25,7 @@ public final class Main {
         var deliveryConfig = new com.arman.bank.authservice.infrastructure.VerificationDeliveryConfiguration(System.getenv());
         var projectionConfig = new com.arman.bank.authservice.infrastructure.VerificationProjectionConfiguration(System.getenv());
         var authorityConfig = new com.arman.bank.authservice.infrastructure.VerificationAuthorityConfiguration(System.getenv());
+        var bankingEligibilityConfig = new com.arman.bank.authservice.infrastructure.BankingEligibilityConfiguration(System.getenv());
         var database = new Database(ServiceRuntime.required("DB_URL"), ServiceRuntime.required("DB_USER"), ServiceRuntime.required("DB_PASSWORD"));
         com.arman.bank.authservice.infrastructure.KeycloakTokens sso = null;
         com.arman.bank.authservice.infrastructure.HttpRegistrationProfiles profiles = null;
@@ -48,7 +49,7 @@ public final class Main {
             var projectionWorker = verificationProjection;
             authorityResources = authorityConfig.open(database);
             var verificationAuthority = authorityResources;
-            var routes = new AuthRoutes(new AuthService(new PostgresAuthStore(database), new Argon2Passwords(), Clock.systemUTC(), registrationProfiles),
+            var routes = new AuthRoutes(new AuthService(bankingEligibilityConfig.store(database), new Argon2Passwords(), Clock.systemUTC(), registrationProfiles),
                     serviceKey, provider == null ? token -> {
                         throw new com.arman.bank.authservice.application.AuthFailure(com.arman.bank.authservice.application.AuthFailure.Kind.UNAVAILABLE);
                     } : provider);

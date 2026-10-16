@@ -14,6 +14,8 @@ public interface AuthStore {
         @Override public String toString() { return "EmailContact[REDACTED]"; }
     }
     Optional<EmailContact> emailContact(UUID identityId);
+    /** Deny-only gate before profile side effects; session persistence rechecks. */
+    default void requireBankingAccess(UUID identityId) {}
     record Credentials(Identity identity, String passwordHash) {}
     Identity register(Identity identity, String passwordHash);
     Optional<Credentials> findByEmail(String email);

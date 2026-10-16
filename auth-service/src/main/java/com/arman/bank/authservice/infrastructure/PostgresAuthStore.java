@@ -14,7 +14,24 @@ import java.util.UUID;
 
 public final class PostgresAuthStore implements AuthStore {
     private final Database database;
-    public PostgresAuthStore(Database database) { this.database = database; }
+    private final boolean eligibilityEnforced;
+    public PostgresAuthStore(Database database) { this(database, false); }
+    public PostgresAuthStore(Database database, boolean eligibilityEnforced) {
+        this.database = java.util.Objects.requireNonNull(database);
+        this.eligibilityEnforced = eligibilityEnforced;
+    }
+    private void lockEligibility(org.jooq.DSLContext sql) {
+        if (eligibilityEnforced && sql.fetchOne("select id from verification_control where id=1 for update") == null)
+            throw new AuthFailure(AuthFailure.Kind.UNAVAILABLE);
+    }
+    private void requireBankingAccess(org.jooq.DSLContext sql, UUID identityId) {
+        if (eligibilityEnforced && sql.fetchOne("select enrollment_id from verification_authorities where mapped_identity_id=? or pending_identity_id=?", identityId, identityId) != null)
+            throw new AuthFailure(AuthFailure.Kind.UNAUTHORIZED);
+    }
+    @Override public void requireBankingAccess(UUID identityId) {
+        if (!eligibilityEnforced) return;
+        database.transaction(sql -> { lockEligibility(sql); requireBankingAccess(sql, identityId); return null; });
+    }
     private static OffsetDateTime time(Instant value) { return value.atOffset(ZoneOffset.UTC); }
 
     @Override public Identity externalIdentity(SsoTokens.Principal principal) {
@@ -119,6 +136,8 @@ public final class PostgresAuthStore implements AuthStore {
 
     @Override public void saveSession(String tokenHash, UUID identityId, Instant now, Instant expiresAt) {
         database.transaction(sql -> {
+            lockEligibility(sql);
+            requireBankingAccess(sql, identityId);
             sql.execute("delete from sessions where expires_at <= cast(? as timestamptz)", time(now));
             return sql.execute("insert into sessions(token_hash, identity_id, created_at, expires_at) values (?, ?, cast(? as timestamptz), cast(? as timestamptz))",
                 tokenHash, identityId, time(now), time(expiresAt));
@@ -127,11 +146,14 @@ public final class PostgresAuthStore implements AuthStore {
 
     @Override public Optional<Identity> findSession(String tokenHash, Instant now) {
         return database.transaction(sql -> {
+            lockEligibility(sql);
             var row = sql.fetchOne("""
                 select i.id, i.email, i.registration_phone from identities i join sessions s on s.identity_id = i.id
                 where s.token_hash = ? and s.expires_at > cast(? as timestamptz)
                 """, tokenHash, time(now));
-            return row == null ? Optional.empty() : Optional.of(identity(row));
+            if (row == null) return Optional.empty();
+            requireBankingAccess(sql, row.get("id", UUID.class));
+            return Optional.of(identity(row));
         });
     }
 

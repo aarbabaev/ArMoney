@@ -1,6 +1,6 @@
 # ADR 0037: default-disabled authentication-session observation bridge
 
-Status: default-disabled source implemented and locally tested; exact-head CI and deployment pending.
+Status: default-disabled source merged in PR #70 and deployed at af1f7975. Exact-head CI passed; activation remains gated by separate provider acceptance.
 
 Auth requires a current, server-owned authentication-session observation before changing staged registration state. Add a bounded HTTP adapter to the existing provider observation protocol and explicitly wire it through `IdentityVerificationService`. Provider observations do not certify contact possession, identify an auth principal, reserve an epoch or grant banking eligibility.
 
