@@ -1305,7 +1305,14 @@ response includes both session flags and observed/deadline timestamps. Existing
 status/enrollment contracts and production factory registrations are unchanged.
 Canonical contacts, LOGGED_IN online persistence, exact client membership and
 pinned user/client idle/max validity are required. This is observation only,
-not Auth receipts/projection/ACTIVE authority. Local provider checks passed
+not Auth receipts/projection/ACTIVE authority.
+Null adapter-local persistence state requires an independent exact durable online
+realm/session/subject LOGGED_IN tuple from Keycloak's session persister; explicit
+TRANSIENT and unavailable/mismatched provenance deny. That follow-up passed
+65 local provider tests across 13 suites; real two-node verification remains
+pending. No failure cause or successful activation is
+inferred from the earlier BASELINE failure.
+Earlier local provider checks passed
 64 tests across 13 suites, independently bound to unchanged source and packaged
 SPI evidence. Two-node runtime acceptance and exact-head required CI remain
 pending. See the provider README and scoped frozen contract in

@@ -69,10 +69,26 @@ final class CodeSessionObservationTest {
             assertThrows(Bridge.Unavailable.class,()->CodeSessionObservation.observe(invalid.session(),invalid.binding,Clock.systemUTC()));
         }
     }
+    @Test void nullReloadRequiresExactDurableOnlineTupleAndNeverQueriesForExplicitTransient() {
+        Fixture trusted=new Fixture(); trusted.us.put("getPersistenceState",null);
+        assertTrue(CodeSessionObservation.observe(trusted.session(),trusted.binding,Clock.systemUTC()).path("user_session_active").booleanValue());
+        assertEquals(1,trusted.durableReads);
+        for(String fault:List.of("provider","row","realm","session","subject","offline","logout","exception")) {
+            Fixture invalid=new Fixture(); invalid.us.put("getPersistenceState",null); invalid.durableFault=fault;
+            assertThrows(Bridge.Unavailable.class,()->CodeSessionObservation.observe(invalid.session(),invalid.binding,Clock.systemUTC()),fault);
+            assertEquals(fault.equals("provider")?0:1,invalid.durableReads,fault);
+        }
+        Fixture transientSession=new Fixture(); transientSession.us.put("getPersistenceState",UserSessionModel.SessionPersistenceState.TRANSIENT);
+        assertThrows(Bridge.Unavailable.class,()->CodeSessionObservation.observe(transientSession.session(),transientSession.binding,Clock.systemUTC()));
+        assertEquals(0,transientSession.durableReads);
+        Fixture explicit=new Fixture(); CodeSessionObservation.observe(explicit.session(),explicit.binding,Clock.systemUTC()); assertEquals(0,explicit.durableReads);
+    }
     private static Set<String> keys(com.fasterxml.jackson.databind.JsonNode node) { Set<String> keys=new HashSet<>(); node.fieldNames().forEachRemaining(keys::add); return keys; }
     static final class Fixture {
         final Map<String,Object> user=new HashMap<>(),us=new HashMap<>(),cs=new HashMap<>();
         boolean publicClient=true;
+        String durableFault="";
+        int durableReads;
         final CodeSessionObservation.Binding binding=new CodeSessionObservation.Binding("https://issuer.example/realms/armoney","subject","armoney-ios","session");
         KeycloakSession session() {
             int now=org.keycloak.common.util.Time.currentTime();
@@ -87,7 +103,7 @@ final class CodeSessionObservationTest {
             us.putIfAbsent("getId","session"); us.put("getRealm",realm); us.put("getUser",userModel);
             us.putIfAbsent("isOffline",false); us.put("isRememberMe",false); us.put("getNote",(Call)args->null);
             us.putIfAbsent("getState",UserSessionModel.State.LOGGED_IN);
-            us.putIfAbsent("getPersistenceState",UserSessionModel.SessionPersistenceState.PERSISTENT);
+            if(!us.containsKey("getPersistenceState")) us.put("getPersistenceState",UserSessionModel.SessionPersistenceState.PERSISTENT);
             us.put("getStarted",now); us.putIfAbsent("getLastSessionRefresh",now);
             var userSession=model(UserSessionModel.class,us);
             cs.putIfAbsent("getClient",client); cs.putIfAbsent("getUserSession",userSession); cs.putIfAbsent("getStarted",now); cs.putIfAbsent("getTimestamp",now);
@@ -100,7 +116,20 @@ final class CodeSessionObservationTest {
             var context=model(KeycloakContext.class,Map.of("getRealm",realm,"getUri",uri));
             var users=model(UserProvider.class,Map.of("getUserById",(Call)args->userModel));
             var sessions=model(UserSessionProvider.class,Map.of("getUserSession",(Call)args->userSession));
-            return model(KeycloakSession.class,Map.of("getContext",context,"users",users,"sessions",sessions));
+            var persister=model(org.keycloak.models.session.UserSessionPersisterProvider.class,Map.of("loadUserSession",(Call)args->{
+                durableReads++;
+                assertSame(realm,args[0]); assertEquals("session",args[1]); assertEquals(false,args[2]);
+                if(durableFault.equals("exception")) throw new IllegalStateException("synthetic");
+                if(durableFault.equals("row")) return null;
+                var durableRealm=durableFault.equals("realm")?model(RealmModel.class,Map.of("getId","foreign")):realm;
+                var durableUser=durableFault.equals("subject")?model(UserModel.class,Map.of("getId","foreign")):userModel;
+                return model(UserSessionModel.class,Map.of("getRealm",durableRealm,"getId",durableFault.equals("session")?"foreign":"session",
+                        "getUser",durableUser,"isOffline",durableFault.equals("offline"),"getState",durableFault.equals("logout")?UserSessionModel.State.LOGGED_OUT:UserSessionModel.State.LOGGED_IN));
+            }));
+            return model(KeycloakSession.class,Map.of("getContext",context,"users",users,"sessions",sessions,"getProvider",(Call)args->{
+                assertEquals(org.keycloak.models.session.UserSessionPersisterProvider.class,args[0]);
+                return durableFault.equals("provider")?null:persister;
+            }));
         }
     }
     @Test void allFourBoundsFloorAndOnlyMaximumMinusOneIsUnbounded() {
