@@ -49,6 +49,12 @@ public final class HttpVerificationObservations implements Observations, AutoClo
     static void credential(String value){if(value==null||value.length()<32||value.length()>512||value.chars().anyMatch(c->c<33||c>126))invalid();}
     private static void invalid(){throw new IllegalArgumentException("Invalid verification observation configuration");}
     @Override public Observation observe(Flow flow,Instant startedAt){
+        return exchange(flow,startedAt,false);
+    }
+    @Override public Observation observeStatus(Flow flow,Instant startedAt){
+        return exchange(flow,startedAt,true);
+    }
+    private Observation exchange(Flow flow,Instant startedAt,boolean status){
         IdentityVerification.validate(flow,policy);if(closed||startedAt==null)throw unavailable();
         byte[] requestBytes=null,responseBytes=null;CompletableFuture<HttpResponse<byte[]>> pending=null;var body=new BoundedBody();
         try{
@@ -61,7 +67,7 @@ public final class HttpVerificationObservations implements Observations, AutoClo
             var response=pending.get(4,TimeUnit.SECONDS);responseBytes=response.body();
             var types=response.headers().allValues("Content-Type");
             if(response.statusCode()!=200||types.size()!=1||!types.getFirst().matches("(?i)application/json(?:\\s*;\\s*charset=utf-8)?"))throw unavailable();
-            return decode(flow,startedAt,responseBytes);
+            return decode(flow,startedAt,responseBytes,status);
         }catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw unavailable();}
         catch(Exception rejected){throw unavailable();}
         finally{
@@ -69,7 +75,7 @@ public final class HttpVerificationObservations implements Observations, AutoClo
             if(requestBytes!=null)Arrays.fill(requestBytes,(byte)0);if(responseBytes!=null)Arrays.fill(responseBytes,(byte)0);
         }
     }
-    private Observation decode(Flow expected,Instant startedAt,byte[] bytes)throws Exception{
+    private Observation decode(Flow expected,Instant startedAt,byte[] bytes,boolean status)throws Exception{
         if(bytes==null||bytes.length>LIMIT)throw unavailable();
         String source=StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
         var body=JSON.readTree(source);if(body==null||!body.isObject()||body.size()!=FIELDS.size())throw unavailable();
@@ -79,11 +85,12 @@ public final class HttpVerificationObservations implements Observations, AutoClo
         if(!expected.issuer().equals(echoed.issuer())||!expected.subject().equals(echoed.subject())||!expected.clientId().equals(echoed.clientId())
                 ||!expected.rootSessionId().equals(echoed.rootSessionId())||!expected.tabId().equals(echoed.tabId())
                 ||!MessageDigest.isEqual(Base64.getUrlDecoder().decode(expected.authenticationSessionId()),Base64.getUrlDecoder().decode(echoed.authenticationSessionId())))throw unavailable();
-        for(String field:List.of("enabled","authentication_session_active"))if(!body.path(field).isBoolean()||!body.path(field).booleanValue())throw unavailable();
+        for(String field:List.of("enabled","authentication_session_active"))if(!body.path(field).isBoolean()||(!status&&!body.path(field).booleanValue()))throw unavailable();
         String timestamp=text(body,"authentication_session_expires_at",40);Instant expiry=Instant.parse(timestamp);
         if(!expiry.toString().equals(timestamp)||!timestamp.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}T.*Z"))throw unavailable();
-        var result=new Observation(expected,text(body,"username",13),text(body,"email",254),text(body,"phone_number",13),true,true,expiry,startedAt);
-        IdentityVerification.evidence(expected,result,startedAt);return result;
+        var result=new Observation(expected,text(body,"username",13),text(body,"email",254),text(body,"phone_number",13),body.path("enabled").booleanValue(),body.path("authentication_session_active").booleanValue(),expiry,startedAt);
+        if(status)IdentityVerification.statusEvidence(expected,result,startedAt);else IdentityVerification.evidence(expected,result,startedAt);
+        return result;
     }
     private static String text(JsonNode body,String field,int max){var value=body.get(field);if(value==null||!value.isTextual()||value.textValue().isBlank()||value.textValue().length()>max)throw unavailable();return value.textValue();}
     private static Verification.Failure unavailable(){return new Verification.Failure(Verification.Error.UNAVAILABLE);}
