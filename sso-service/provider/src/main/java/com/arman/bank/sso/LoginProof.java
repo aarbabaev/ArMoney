@@ -34,8 +34,10 @@ final class LoginProof {
             var result = binding.fields(); result.put("command_id", command.toString()); result.put("code_digest", digest);
             result.put("code_key_id", keyId); result.put("authentication_session_id", authenticationSession);
             result.put("issued_at", issued.toString()); result.put("expires_at", expires.toString()); result.put("kind", kind);
-            result.put("event_id", event == null ? null : event.toString());
-            result.put("password_authenticated_at", passwordTime == null ? null : passwordTime.toString()); return result;
+            // The pinned Keycloak mapper omits Java-null map entries. These two
+            // explicit JSON nulls are required both on HTTP and in pending retry notes.
+            result.put("event_id", event == null ? com.fasterxml.jackson.databind.node.NullNode.getInstance() : event.toString());
+            result.put("password_authenticated_at", passwordTime == null ? com.fasterxml.jackson.databind.node.NullNode.getInstance() : passwordTime.toString()); return result;
         }
         @Override public String toString() { return "LoginProofWrite[REDACTED]"; }
     }
