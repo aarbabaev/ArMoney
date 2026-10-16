@@ -55,6 +55,9 @@ final class MailtrapSmtp {
         return p;
     }
     Result send(String recipient,String subject,String text) throws InterruptedException {
+        return send(recipient,subject,text,null);
+    }
+    Result send(String recipient,String subject,String text,String html) throws InterruptedException {
         // Closing this underlying socket also aborts a wrapped STARTTLS socket. The
         // caller returns on the deadline even if platform DNS resolution is delayed.
         var socket=new Socket();
@@ -63,7 +66,7 @@ final class MailtrapSmtp {
         var writes=new ScheduledThreadPoolExecutor(1,
             Thread.ofPlatform().name("mailtrap-smtp-write-timeout").daemon(false).factory());
         writes.setRemoveOnCancelPolicy(true);
-        var task=new FutureTask<Result>(() -> exchange(socket,writes,recipient,subject,text));
+        var task=new FutureTask<Result>(() -> exchange(socket,writes,recipient,subject,text,html));
         Thread.startVirtualThread(task);
         try { return task.get(deadlineMillis,TimeUnit.MILLISECONDS); }
         catch (TimeoutException | ExecutionException e) { return Result.TRANSIENT_FAILURE; }
@@ -73,7 +76,7 @@ final class MailtrapSmtp {
             writes.shutdownNow();
         }
     }
-    private Result exchange(Socket socket,ScheduledExecutorService writes,String recipient,String subject,String text) {
+    private Result exchange(Socket socket,ScheduledExecutorService writes,String recipient,String subject,String text,String html) {
         var p=properties();
         p.put("mail.smtp.executor.writetimeout",writes);
         p.put("mail.smtp.socketFactory",new AttemptSocketFactory(socket));
@@ -94,7 +97,17 @@ final class MailtrapSmtp {
             if (address.isGroup()) return Result.PERMANENT_FAILURE;
             message.setRecipient(Message.RecipientType.TO,address);
             message.setSubject(subject,"UTF-8");
-            message.setText(text,"UTF-8");
+            if (html==null) message.setText(text,"UTF-8");
+            else {
+                var alternatives=new MimeMultipart("alternative");
+                var plain=new MimeBodyPart();
+                plain.setText(text,"UTF-8");
+                alternatives.addBodyPart(plain);
+                var rich=new MimeBodyPart();
+                rich.setText(html,"UTF-8","html");
+                alternatives.addBodyPart(rich);
+                message.setContent(alternatives);
+            }
             message.saveChanges();
             transport.connect(host,port,config.smtpUsername,config.smtpPassword);
             transport.sendMessage(message,message.getAllRecipients());

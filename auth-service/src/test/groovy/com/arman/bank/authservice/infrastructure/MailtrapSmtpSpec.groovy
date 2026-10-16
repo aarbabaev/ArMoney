@@ -94,6 +94,31 @@ class MailtrapSmtpSpec extends Specification {
         'auth' | 535 | NotificationDelivery.Result.PERMANENT_FAILURE
 
     }
+    def 'registration SMTP serializes a plain then HTML alternative with matching code'() {
+        given:
+        def fixture=new SmtpFixture(serverTls,'data',250)
+        def delivery=new MailtrapSmtp(new EmailConfiguration(env()),'localhost',fixture.port,clientTls.socketFactory,15000)
+        def email=VerificationEmail.render('012345')
+        when:
+        def result=delivery.send('recipient@example.test',email.subject(),email.text(),email.html())
+        fixture.done.get(5,TimeUnit.SECONDS)
+        def message=new jakarta.mail.internet.MimeMessage(jakarta.mail.Session.getInstance(new Properties()),
+            new ByteArrayInputStream(fixture.message.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+        then:
+        result==NotificationDelivery.Result.ACCEPTED
+        message.isMimeType('multipart/alternative')
+        message.subject==email.subject()
+        def parts=(jakarta.mail.Multipart)message.content
+        parts.count==2
+        parts.getBodyPart(0).isMimeType('text/plain')
+        parts.getBodyPart(1).isMimeType('text/html')
+        parts.getBodyPart(0).content.toString().replace('\r\n','\n').trim()==email.text()
+        parts.getBodyPart(1).content.toString().replace('\r\n','\n').trim()==email.html().trim()
+        fixture.commands.indexOf('STARTTLS')<fixture.commands.findIndexOf { it.startsWith('AUTH ') }
+        fixture.failure==null
+        cleanup:
+        fixture?.close()
+    }
     def 'TLS omission or refusal never sends credentials or content'() {
         given:
         def fixture=new SmtpFixture(serverTls,stage,454)
