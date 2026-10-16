@@ -27,13 +27,78 @@ except Exception:
                       'category': 'internal', 'cleanup': 'not_needed'}), file=sys.stderr)
     raise SystemExit(1) from None
 STATE = {'phase': 'guard', 'cleanup': 'not_needed', 'child': None}
+KNOWN_SERVICES = frozenset(smoke.SERVICES + ('auth-db', 'user-db', 'wallet-db', 'payment-db', 'ledger-db', 'metrics-collector', 'edge'))
+
+
+class CommandFailure(ValueError):
+    def __init__(self, category, reason):
+        super().__init__('Bounded command failed')
+        self.category, self.reason = category, reason
+
+
+def failure_reason(stderr):
+    text = stderr.lower()
+    for reason, markers in (
+        ('image_unavailable', ('manifest unknown', 'pull access denied', 'failed to resolve reference', 'no matching manifest')),
+        ('mount_failure', ('invalid mount config', 'error while mounting', 'bind source path does not exist')),
+        ('port_unavailable', ('address already in use', 'port is already allocated')),
+        ('container_unhealthy', ('unhealthy',)),
+        ('container_exited', ('exited', 'is not running'))):
+        if any(marker in text for marker in markers):
+            return reason
+    return 'unknown'
 
 
 def command(arguments, environment, timeout=40, check=True):
     result = subprocess.run(arguments, env=environment, capture_output=True, text=True, timeout=timeout, check=False)
-    smoke.require(len(result.stdout) <= 1048576)
+    if len(result.stdout) > 1048576 or len(result.stderr) > 1048576:
+        raise CommandFailure('output_bound', 'unknown')
     if check:
-        smoke.require(result.returncode == 0)
+        if result.returncode != 0:
+            raise CommandFailure('command_nonzero', failure_reason(result.stderr))
+    return result
+
+
+def create_failure_snapshot(project, environment, error):
+    category = error.category if isinstance(error, CommandFailure) else 'other'
+    reason = error.reason if isinstance(error, CommandFailure) else 'unknown'
+    if category not in ('output_bound', 'command_nonzero', 'other'):
+        category = 'other'
+    if reason not in ('image_unavailable', 'mount_failure', 'port_unavailable', 'container_unhealthy', 'container_exited', 'unknown'):
+        reason = 'unknown'
+    result = {'code': 'METRICS_CREATE_STATE', 'category': category, 'reason': reason,
+              'inspection': 'unavailable', 'services': []}
+    try:
+        smoke.require(smoke.re.fullmatch(r'armoney-metrics-test-[a-f0-9]{32}', project) is not None)
+        ids = command(['docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + project],
+                      environment, timeout=15).stdout.split()
+        smoke.require(len(ids) <= 30 and all(smoke.re.fullmatch(r'[a-f0-9]{12,64}', value) for value in ids))
+        items = json.loads(command(['docker', 'inspect', *ids], environment, timeout=15).stdout) if ids else []
+        smoke.require(isinstance(items, list) and len(items) == len(ids))
+        services = []
+        for item in items:
+            labels = item['Config'].get('Labels') or {}
+            service = labels.get('com.docker.compose.service')
+            smoke.require(labels.get('com.docker.compose.project') == project and service in KNOWN_SERVICES)
+            smoke.require(item.get('Name') == '/' + project + '-' + service + '-1')
+            smoke.require(isinstance(item.get('Id'), str) and smoke.re.fullmatch(r'[a-f0-9]{64}', item['Id']) and
+                          any(item['Id'].startswith(value) for value in ids))
+            state = item.get('State', {})
+            status = state.get('Status')
+            health = (state.get('Health') or {}).get('Status', 'absent')
+            services.append({'service': service,
+                             'state': status if status in ('created', 'running', 'paused', 'restarting', 'removing', 'exited', 'dead') else 'unknown',
+                             'health': health if health in ('absent', 'starting', 'healthy', 'unhealthy') else 'unknown',
+                             'exit': ('zero' if state['ExitCode'] == 0 else 'nonzero') if type(state.get('ExitCode')) is int else 'unknown'})
+        smoke.require(len({item['service'] for item in services}) == len(services))
+        result.update(inspection='checked', services=sorted(services, key=lambda item: item['service']))
+    except (ValueError, KeyError, TypeError, AssertionError):
+        result['inspection'] = 'rejected'
+    except (OSError, subprocess.SubprocessError):
+        pass
+    except Exception:
+        # Diagnostic parsing must never replace the original startup failure.
+        result['inspection'] = 'rejected'
     return result
 
 
@@ -169,6 +234,10 @@ def main():
                     item['cleanup'] in smoke.CLEANUP_STATES):
                     STATE['child'] = item
             smoke.require(False)
+    except Exception as error:
+        if STATE['phase'] == 'create':
+            print(json.dumps(create_failure_snapshot(project, environment, error)), file=sys.stderr)
+        raise
     finally:
         original_failure = sys.exc_info()[0] is not None
         original_phase = STATE['phase']
