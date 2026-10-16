@@ -120,6 +120,9 @@ def fixture_text(images, port, root):
               '      - ' + json.dumps((root / 'infra/edge/Caddyfile').as_posix() + ':/etc/caddy/Caddyfile:ro'),
               '      - edge-data:/data', '      - edge-config:/config',
               '    read_only: true', '    tmpfs: [/tmp]', '    cap_drop: [ALL]',
+              # The pinned official Caddy binary carries this file capability;
+              # its bounding set must permit it even before binding HTTPS.
+              '    cap_add: [NET_BIND_SERVICE]',
               '    security_opt: [no-new-privileges:true]', '    networks: [bank]',
               'volumes:', '  edge-data:', '  edge-config:']
     return '\n'.join(lines) + '\n'

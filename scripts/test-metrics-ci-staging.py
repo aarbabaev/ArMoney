@@ -110,6 +110,28 @@ class StagingGuards(unittest.TestCase):
             with self.assertRaises(ValueError):
                 staging.fixture_text(images, 18443, ROOT)
 
+    def test_edge_grants_only_binary_bind_capability_and_retains_other_restrictions(self):
+        images = {service: 'sha256:' + 'a' * 64 for service in staging.smoke.SERVICES}
+        fixture = staging.fixture_text(images, 18443, ROOT)
+        edge = fixture.split('\n  edge:\n', 1)[1].split('\nvolumes:', 1)[0]
+        properties = {}
+        for key in ('image', 'cap_drop', 'cap_add', 'read_only', 'tmpfs', 'security_opt'):
+            matches = [line.partition(':')[2].strip() for line in edge.splitlines()
+                       if line.startswith('    ' + key + ':')]
+            self.assertEqual(len(matches), 1, 'Missing or duplicate edge restriction: ' + key)
+            properties[key] = matches[0]
+        def entries(value):
+            self.assertTrue(value.startswith('[') and value.endswith(']'))
+            return [entry.strip() for entry in value[1:-1].split(',')]
+        self.assertEqual(properties['image'], 'caddy:2.11.4-alpine')
+        self.assertEqual(entries(properties['cap_drop']), ['ALL'])
+        self.assertEqual(entries(properties['cap_add']), ['NET_BIND_SERVICE'])
+        self.assertEqual(properties['read_only'], 'true')
+        self.assertEqual(entries(properties['tmpfs']), ['/tmp'])
+        self.assertEqual(entries(properties['security_opt']), ['no-new-privileges:true'])
+        self.assertNotIn('privileged:', edge)
+        self.assertNotIn('network_mode:', edge)
+
     def test_existing_project_inventory_blocks_creation(self):
         result = types.SimpleNamespace(stdout='existing-owned-resource')
         with patch.object(staging, 'command', return_value=result) as run:
