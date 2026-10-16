@@ -1,7 +1,10 @@
 # Database backup and recovery
 
-Issue #21 full application recovery acceptance remains pending. Never run
-the local baseline apply commands against the persistent stack as part of CI.
+Disposable application recovery passed on 2026-10-16 at revision
+`960087d863fbd4e57d0c1b78109ae91fe277b64d`, within the synthetic scope below.
+This does not establish production recovery objectives or validation of a later
+integrated revision. Never run local baseline apply commands against the
+persistent stack as part of CI.
 
 ## Inventory from checked-in Compose definitions
 
@@ -82,8 +85,8 @@ restored application acceptance, including quorum and pool reconnection. Record
 phase durations separately; container readiness is not the endpoint. Measure
 recovery point by comparing acknowledged command IDs and WAL boundaries to the
 recovered set. Quiesced logical dumps provide no continuous PITR and cannot promise
-zero loss for writes outside the fence. Production and end-to-end application
-RTO/RPO remain unmeasured.
+zero loss for writes outside the fence. Production RTO/RPO remain unmeasured;
+the dated application experiment below measures only its disposable fixture.
 
 ### Disposable database evidence, 2026-10-14
 
@@ -115,8 +118,10 @@ comparison and database guards; it excludes source capture and cleanup. There
 were no missing captured marker rows or table fingerprints in these quiesced
 fixtures. Dataset sizes and same-host local images make these timings unsuitable
 as production objectives. Private synthetic dumps and owned resources were
-removed by the script. Full Keycloak startup, runtime-role grants, real
-application replay and end-to-end RTO/RPO remain required follow-up checks.
+removed by the script. That database-only run did not establish Keycloak startup,
+runtime-role grants or application replay. The later application experiment below
+covers synthetic Keycloak/application recovery; restricted production grants and
+production RTO/RPO remain unverified.
 
 The real `scripts/ledger-replication-smoke.py` run passed by `2026-10-14T15:18Z`
 on the same base and backup/recovery patch: streaming, replica read-only
@@ -136,7 +141,7 @@ replay. Same-host replicas are not host-level HA. Full Gradle/check, Compose
 application acceptance, independent financial/security review and hosted CI remain
 external delivery gates.
 
-### Application recovery source tool (acceptance unrun)
+### Disposable application recovery evidence, 2026-10-16
 
 `scripts/backup-application-recovery-smoke.py` is import-safe and defaults to an
 offline plan. Its new adapter, `scripts/recovery_fixture_runtime.py`, uses explicit
@@ -145,21 +150,53 @@ that execute at import or target fixed host ports. The HTTP, shard configuration
 PKCE and balanced clearing-account funding contracts come from the actual service
 source and existing SSO/P2P/ledger smoke fixtures. No host `CI=true` override is used.
 
-Source preparation has offline guard coverage only. Docker, Gradle, Keycloak,
-financial replay and full application recovery acceptance have **not** been run
-for this tool. An independent financial/security review and a reserved heavy-test
-lease are still required. Existing database-only evidence above remains separate.
+The real staged experiment passed on clean source revision
+`960087d863fbd4e57d0c1b78109ae91fe277b64d`. Independent QA audited the private
+stage receipt `recovery21-runtime-privatecopy-fixed.log` and standalone
+`recovery21-final-private-runner.log`: the nested acceptance reports are equal,
+and all three recorded tool SHA-256 values match that revision's Git source blobs.
+Windows checkout line endings can differ from those versioned bytes. Receipts
+remain in private operator storage and are not committed or published.
 
-The future apply invocation requires `--apply --daemon <explicit-local-endpoint>
---bank-images <outside-checkout-image-manifest>`. The endpoint must be a local
+| Versioned tool under `scripts/` | Recorded SHA-256 |
+| --- | --- |
+| `backup-application-recovery-smoke.py` | `2814242e79e225a488172e7674767e736b4786c82948fb581bd916bc64021292` |
+| `recovery_fixture_runtime.py` | `be844fab47aec2245718fa707c093e5e380986cd28a2a66707570b655557813a` |
+| `stage-application-recovery-ci.py` | `73b47d7b740f586ccecae412f16675eed339d57c2d2a0b192ac5e04fd3fed18b` |
+
+The run restored all nine stores, verified complete table fingerprints before
+starting target applications, and passed legacy password/session and real native
+PKCE/provider-refresh recovery, owner isolation, original payment/result/key
+replay, changed-payload rejection, AED balance/journal reconciliation and mutation
+rejection. The restored ledger's read-only physical standby passed live streaming,
+checkpoint replay, retained-volume restart and fresh-volume rebuild checks.
+Missing acknowledged fixture payments were **0**. Ownership-checked inner and
+outer cleanup completed; the outer success receipt is emitted only after cleanup.
+
+| Measurement | Seconds | Boundary |
+| --- | ---: | --- |
+| Fencing and capture | 78.216 | Final acknowledged fixture payment through quiesced capture and source shutdown |
+| Outage through all acceptance | 225.969 | Same start through restored application and standby acceptance, before subsequent cleanup |
+
+These are same-host synthetic measurements, excluding image provisioning/builds
+and initial fixture setup. They are not production RTO/RPO, PITR, HA, promotion,
+synchronous-quorum recovery or recovery of the 200-owner baseline. Assistant
+coverage is schema/index continuity only; there is no assistant model or production
+TLS recovery claim. Prior failed attempts are recorded below. Current-main
+integration, required CI, integrated review and any application deployment remain
+separate delivery gates; this evidence applies only to the recorded revision.
+
+The apply invocation requires `--apply --daemon <explicit-local-endpoint>
+--bank-images <outside-checkout-image-manifest> --dependency-images
+<private-dependency-provenance-manifest>`. The endpoint must be a local
 Unix socket or named pipe on a dedicated daemon whose daemon labels contain
 `io.armoney.disposable-recovery=true`, with zero containers initially. It must
 never be the persistent application daemon. The manifest has exactly `revision`
 and `images` fields: `revision` is the current checkout HEAD, and `images` maps
 each of the six bank service names to a local `sha256:` image ID. Each bank image
 must also carry the matching `org.opencontainers.image.revision` label. Preparing
-these trusted images and the disposable daemon belongs to the later leased
-acceptance stage; the script does not build, pull, label a daemon or add providers.
+these trusted images and the disposable daemon belongs to the leased staging
+entry point below; the application script does not build, pull, label a daemon or add providers.
 An image revision label is provenance supplied by that stage, not proof of image
 contents or of a clean working tree.
 
@@ -215,7 +252,7 @@ after restarting the retained volume and after rebuilding onto a second fresh
 volume. Neither standby is promoted; this is manual replica recovery coverage,
 not synchronous-quorum restoration or an application failover test.
 
-### Isolated source and image provisioning (acceptance unrun)
+### Isolated source and image provisioning
 
 `scripts/stage-application-recovery-ci.py` defaults to an offline plan. Its
 `--apply --outer-daemon <explicit-local-endpoint> --source <clean-checkout>
@@ -235,7 +272,13 @@ ownership before operations and removes only individually verified project
 containers, volumes and network; failure cannot invoke a broad Compose teardown.
 Private source bundles are temporary; logs and archives are not published. A
 failed/uncertain resource creation may retain resources and fails acceptance;
-cleanup never guesses ownership. Runtime attempts have exercised staging but have not passed application recovery. Windows Compose discovery and exact named-volume serialization guards were corrected; cross-store image provenance acceptance remains pending. Success requires real application acceptance and cleanup checks to finish.
+cleanup never guesses ownership. Earlier runtime attempts failed before acceptance:
+Windows Compose discovery needed the installation-path environment variable,
+Compose named volumes required exact safe serialization checks, containerd versus
+classic image IDs required configuration-digest provenance, and Windows-to-Linux
+copy required explicit private file modes. Those failures are not passing evidence.
+After the fixes, the 2026-10-16 revision above passed real application acceptance
+and cleanup; later revisions still require their own checks.
 
 Offline guards can be run with bundled Python using `-B` from a temporary copy
 outside the checkout: `test-recovery-fixture-runtime.py` and
@@ -245,8 +288,9 @@ port/mount/privilege restrictions and removal of ambient Docker/Compose/CI
 overrides. These tests never simulate financial success.
 
 Documentation impact: this adds a source acceptance entry point and its limitations;
-it changes no application HTTP/schema/runtime contract. The maintained architecture
-status remains application recovery pending until actual acceptance evidence exists.
+it changes no application HTTP/schema/runtime contract. The architecture records
+dated synthetic recovery acceptance separately from production recovery and
+delivery/deployment status.
 
 The stopped runner receives a private `recovery-dependencies.json` manifest with
 exact source revision, `linux/amd64` platform and the seven allowlisted dependency
@@ -257,10 +301,17 @@ dependency whose repository digest may not survive classic Docker import. Temuri
 FROM tags must resolve to the verified configuration immediately before each build.
 No ambient Docker context or dependency map is accepted.
 
+The dependency manifest is copied as one explicit regular USTAR entry with mode
+0600 and root ownership, then checked before starting the owned runner. Copyback
+uses a 128-KiB byte cap and 30-second watchdog; raw header, checksum, path, type,
+ownership, mode and content checks reject hidden extensions or additional entries.
+This avoids trusting Windows host chmod results as Linux container permissions.
+
 Image transfer has no disk archive spool. A bounded TAR observer rejects unsupported
 extended/link/sparse entries, traversal, duplicates, truncation and trailing data;
 limits are 8 GiB per stream, 4,096 members, 1 MiB per metadata file and 8 MiB
 aggregate metadata. A 600-second watchdog terminates both exporter and loader.
 Full image configuration stays private in memory; handoff evidence contains only
 known references, platform and digests. These implementation limits and offline
-guards do not establish successful recovery or a measured recovery objective.
+guards supplement the dated real experiment; they do not establish a production
+recovery objective.
