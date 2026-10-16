@@ -589,5 +589,95 @@ class StorageGate(unittest.TestCase):
         self.assert_restored()
 
 
+class FormatDiagnostics(unittest.TestCase):
+    def diagnostic(self, result, phase='format'):
+        return kafka.safe_docker_failure(
+            ['compose', 'run', 'kafka-controller-1'], result, phase,
+            {'KAFKA_CLIENT_PRINCIPAL': 'denied'})
+
+    def test_only_complete_allowlisted_stage_and_guard_messages_are_returned(self):
+        secret = 'synthetic-private-password-and-client-properties'
+        result = subprocess.CompletedProcess([], 1, secret,
+            'ARMONEY_KAFKA_FORMAT_STAGE=CONFIG\n'
+            'ARMONEY_KAFKA_FORMAT_STAGE=OWNERSHIP\n'
+            'Storage preparation requires uid/gid 1000\n' + secret)
+        output = self.diagnostic(result)
+        self.assertIn('format_stage=OWNERSHIP format_reason=UID_GID', output)
+        self.assertNotIn(secret, output)
+        self.assertIn('exit=1', output)
+
+    def test_unknown_or_decorated_labels_never_become_diagnostic_values(self):
+        secret = 'unsafe-$(command)-password'
+        for line in ('ARMONEY_KAFKA_FORMAT_STAGE=' + secret,
+                     'ARMONEY_KAFKA_FORMAT_STAGE=CONFIG ' + secret,
+                     'prefix ARMONEY_KAFKA_FORMAT_STAGE=CONFIG',
+                     'Required node configuration missing ' + secret):
+            with self.subTest(line=line):
+                output = self.diagnostic(subprocess.CompletedProcess([], 1, '', line))
+                self.assertIn('format_stage=UNKNOWN format_reason=UNCLASSIFIED', output)
+                self.assertNotIn(secret, output)
+
+    def test_format_labels_cannot_classify_an_unrelated_phase_or_override_failure(self):
+        result = subprocess.CompletedProcess([], 17, '',
+            'ARMONEY_KAFKA_FORMAT_STAGE=STORAGE_TOOL\nInvalid cluster identity')
+        output = self.diagnostic(result, 'baseline')
+        self.assertNotIn('format_stage=', output)
+        self.assertNotIn('format_reason=', output)
+        self.assertIn('exit=17', output)
+
+    def test_actual_format_script_config_failure_is_finite_and_redacted(self):
+        self.run_format_failure('CONFIG', 'UNCLASSIFIED', 'config')
+
+    def test_actual_format_script_cluster_guard_keeps_its_failure(self):
+        self.run_format_failure('CLUSTER_ID', 'CLUSTER_ID', 'cluster')
+
+    def test_actual_format_script_nonempty_storage_guard_keeps_its_failure(self):
+        self.run_format_failure('EMPTY_ROOT', 'NONEMPTY_STORAGE', 'nonempty')
+
+    def test_actual_format_script_ownership_guard_keeps_its_failure(self):
+        self.run_format_failure('OWNERSHIP', 'UID_GID', 'ownership')
+
+    def test_actual_format_script_storage_tool_failure_is_not_reclassified_as_success(self):
+        self.run_format_failure('STORAGE_TOOL', 'UNCLASSIFIED', 'tool')
+
+    def run_format_failure(self, stage, reason, failure):
+        secret = 'synthetic-private-format-output'
+        bash = os.environ.get('KAFKA_GUARD_BASH') or (
+            'C:/Program Files/Git/bin/bash.exe' if os.name == 'nt' else shutil.which('bash'))
+        self.assertTrue(bash and Path(bash).is_file(), 'Bash required for actual format regression')
+        with tempfile.TemporaryDirectory(prefix='armoney-kafka-format-') as directory:
+            root = Path(directory)
+            data = root / 'data'
+            data.mkdir()
+            (root / 'prepare.sh').write_text(
+                "printf '%s\\n' '" + secret + "' >&2; exit 1\n" if failure == 'config' else 'exit 0\n', newline='\n')
+            (root / 'cluster.id').write_text(secret if failure == 'cluster' else 'A' * 22, newline='\n')
+            (root / 'empty.sh').write_text(
+                "echo 'Storage preparation requires uid/gid 1000' >&2; exit 1\n" if failure == 'ownership' else 'exit 0\n', newline='\n')
+            (root / 'tool.sh').write_text("#!/bin/bash\nprintf '%s\\n' '" + secret + "' >&2; exit 17\n", newline='\n')
+            (root / 'tool.sh').chmod(0o700)
+            if failure == 'nonempty':
+                (data / 'unrecognized').write_text('preserved synthetic data')
+            source = (kafka.ROOT / 'infra/kafka/format.sh').read_text()
+            for before, after in {
+                '/opt/armoney/prepare-config.sh': (root / 'prepare.sh').as_posix(),
+                '/run/kafka-secrets/cluster.id': (root / 'cluster.id').as_posix(),
+                '/var/lib/kafka/data': data.as_posix(),
+                '/opt/armoney/prepare-empty-storage.sh': (root / 'empty.sh').as_posix(),
+                '/opt/kafka/bin/kafka-storage.sh': (root / 'tool.sh').as_posix(),
+            }.items():
+                self.assertIn(before, source)
+                source = source.replace(before, after)
+            result = subprocess.run([bash, '-s'], input=source, capture_output=True, text=True,
+                                    timeout=15, env=dict(os.environ, KAFKA_NODE_ROLE='broker'))
+            self.assertEqual(result.returncode, 17 if failure == 'tool' else 1)
+            output = self.diagnostic(result)
+            self.assertIn('format_stage=' + stage + ' format_reason=' + reason, output)
+            self.assertNotIn(secret, output)
+            self.assertNotIn(str(root), output)
+            if failure == 'nonempty':
+                self.assertEqual((data / 'unrecognized').read_text(), 'preserved synthetic data')
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

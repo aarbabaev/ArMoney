@@ -11,17 +11,30 @@ sequenceDiagram
     participant DB as Payment database
     participant E as Email worker
     participant A as Auth service
+    participant U as User service
     participant M as Mailtrap
     W->>L: Post or recover original payment ID
     L-->>W: Authoritative result
     W->>DB: Commit payment, notification and email outbox
     E->>DB: Claim due event with fenced lease
-    E->>A: Resolve private owner email
-    A-->>E: Email and verification flag
-    E->>DB: Persist destination snapshot
-    E->>M: Submit message outside database transaction
-    M-->>E: Acceptance or failure
-    E->>DB: Record acceptance, retry or terminal outcome
+    alt No frozen destination
+        E->>A: Resolve outbox owner email with service key
+        A-->>E: Authoritative email and verification flag
+        opt Valid non-null email
+            E->>U: GET own profile with service key and outbox owner identity
+            U-->>E: Optional owner-matched display name
+            E->>DB: Freeze email, verification and optional name under lease
+        end
+    else Frozen destination exists
+        DB-->>E: Reuse frozen email, verification and name
+    end
+    alt Eligible recipient and successful snapshot freeze or reuse
+        E->>M: Submit message outside database transaction
+        M-->>E: Acceptance or failure
+        E->>DB: Record acceptance, retry or terminal outcome
+    else Missing email or ineligible sending recipient
+        E->>DB: Record skipped outcome without provider send
+    end
 ```
 
 ## Events and recipients
@@ -36,6 +49,11 @@ Messages contain the event, payment ID and exact AED amount. They do not expose 
 counterparty's email or full phone number. Only newly completed/rejected payments
 enqueue email; migration does not email historical transactions. Existing in-app
 notification APIs and mobile screens are unchanged.
+
+Messages use equivalent HTML/plain text content. An optional owner profile display
+name personalizes the greeting; missing or invalid names use `Hello,`. This is
+user-supplied presentation data, not a verified legal or full name. HTML text is
+escaped, and no external images, tracking pixels or remote fonts are included.
 
 ## Configure Mailtrap
 
@@ -114,6 +132,33 @@ Provider contact changes are observed at SSO exchange, not continuously. A selec
 destination is frozen for retries; operators must account for that snapshot when
 handling address revocation and delayed delivery.
 
+For personalization, payment-service calls `USER_BASE_URL` + `/v1/users/me` with
+`X-Service-Key` and `X-Identity-Id` from the claimed outbox owner. Auth remains
+authoritative for the email address; profile contact fields cannot redirect mail.
+The profile must match the requested owner and provide a nonempty stripped name
+of at most 100 Unicode code points without ISO control characters. The request
+timeout is 3 seconds. Unavailable or invalid profile data yields a neutral greeting;
+interruption propagates. The email, verification and optional name, including a
+null fallback, freeze together before send and remain unchanged on retries.
+Existing names are not backfilled. SMTP/API calls occur outside database
+transactions; provider acceptance does not determine the financial outcome.
+
+## Recorded payment styling rollout
+
+The [October 15 rollout checkpoint](https://github.com/aarbabaev/ArMoney/issues/47#issuecomment-6191496123)
+records deployed payment styling merge
+`6ab2bddb34d16832103fc757febcaf422d733d33`, successful V5 migration and preserved
+existing financial data. One sandbox notice was SMTP-accepted; another became
+`DEAD/provider_rejected` after attempt 1. Its original cause remains UNKNOWN.
+The [later reviewer checkpoint](https://github.com/aarbabaev/ArMoney/issues/47#issuecomment-6192770636)
+records receipt-backed diagnostic deployment
+`a3be1ed1de7f69ce08b756d02b83e70ba8a9094e` with readiness HTTP 200 and preserved
+rows/environment, without new financial/mail probes or historical requeue.
+These are recorded operator/reviewer receipts, not a fresh live verification.
+SMTP acceptance does not confirm mailbox rendering. Confirmed rendering and
+separate auth login/registration styling acceptance remain outstanding in that
+checkpoint; issue47 is not completed by the payment rollout.
+
 ## Reliability and operational limits
 
 Network calls never hold a payment database transaction. Expired leases allow
@@ -149,3 +194,7 @@ considering an operator-reviewed replay, and consider possible prior acceptance.
 There is no public retry/admin API. Do not print outbox rows containing addresses
 into logs or issue descriptions. A row's delivery mode is pinned when first claimed;
 switching configuration must not turn an existing Sandbox retry into real mail.
+
+## Registration verification presentation
+
+The Auth registration verification email renderer supplies a plain-text part followed by an HTML alternative using the existing Mailtrap Sandbox SMTP transport. It accepts only a six-digit code and uses a generic greeting; it does not infer a profile or legal name before identity verification. SMS content is unchanged. This source change retains the existing default-off delivery gate. Sixty focused renderer/transport/SMTP tests and thirteen isolated SMTP/TLS/PostgreSQL acceptance tests passed. Full Auth checks passed 633 tests across 37 suites with no failures, errors or skips. Exact-head CI and runtime/mailbox rendering remain unverified, and it does not add or activate login notification persistence or workers.

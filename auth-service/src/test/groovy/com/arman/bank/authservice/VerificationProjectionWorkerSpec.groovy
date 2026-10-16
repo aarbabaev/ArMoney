@@ -81,4 +81,20 @@ class VerificationProjectionWorkerSpec extends Specification {
         1*transport.close()
         0*store._
     }
+    def 'completion callback owns fenced finish instead of standalone projection finish'(){
+        given:
+        def item=claim()
+        def result=Result.retry()
+        def completed=[]
+        worker.close()
+        worker=new VerificationProjectionWorker(store,transport,'auth',Clock.fixed(NOW,ZoneOffset.UTC),{c,r->completed.add([c,r]);true})
+        when:
+        worker.tick()
+        then:
+        1*store.cleanup()
+        1*store.claim('auth')>>Optional.of(item)
+        1*transport.send(item)>>result
+        0*store.finish(_,_)
+        completed==[[item,result]]
+    }
 }

@@ -87,7 +87,7 @@ class LoginProofIntegrationSpec extends Specification {
         database.transaction { sql ->
             assert snapshots(sql) == preserved
             assert sql.fetch('select version,script,checksum from flyway_schema_history where cast(version as integer) <= ? order by installed_rank', 6).intoMaps() == history
-            assert sql.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '9'
+            assert sql.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '10'
             ['verification_authorities','verification_candidates','verification_authority_phone_claims','verification_flow_barriers','verification_flows','verification_authority_admission','verification_authority_commands'].each { table ->
                 assert sql.fetchOne('select count(*) as n from ' + table).get('n', Long) == 0
             }
@@ -95,7 +95,7 @@ class LoginProofIntegrationSpec extends Specification {
             ['verification_challenges','verification_receipts'].each { table ->
                 assert sql.fetchOne('select count(*) as n from ' + table + ' where candidate_id is not null').get('n', Long) == 0
             }
-            assert sql.fetch('select version from flyway_schema_history order by installed_rank').getValues('version', String) == ['1','2','3','4','5','6','7','8','9']
+            assert sql.fetch('select version from flyway_schema_history order by installed_rank').getValues('version', String) == ['1','2','3','4','5','6','7','8','9','10']
             ['sso_login_proofs','sso_login_events','sso_login_proof_commands','sso_login_proof_admission',
              'auth_verification_projection_commands','auth_verification_projection_tombstones','auth_verification_projection_admission'].each { table ->
                 assert sql.fetchOne('select count(*) as n from ' + table).get('n', Long) == 0

@@ -77,7 +77,21 @@ class VerificationDeliverySmtpTlsAcceptanceSpec extends Specification {
         new MimeMessage(Session.getInstance(new Properties()), new ByteArrayInputStream(fixture.message.getBytes('UTF-8')))
     }
 
-    def 'verification email uses real authenticated STARTTLS and exact plain OTP content'() {
+    static boolean exactAlternatives(MimeMessage parsed) {
+        assert parsed.isMimeType('multipart/alternative')
+        def parts = (jakarta.mail.Multipart) parsed.content
+        assert parts.count == 2
+        assert parts.getBodyPart(0).isMimeType('text/plain')
+        assert parts.getBodyPart(1).isMimeType('text/html')
+        assert parts.getBodyPart(0).content.toString().replace('\r\n', '\n').strip() == TEXT
+        String html = parts.getBodyPart(1).content.toString().replace('\r\n', '\n').strip()
+        assert html == VerificationEmail.render(CODE).html().strip()
+        assert html.contains(CODE)
+        assert html.contains('It expires in 5 minutes. Do not share this code.')
+        return true
+    }
+
+    def 'verification email uses real authenticated STARTTLS and exact plain and HTML OTP alternatives'() {
         given:
         def fixture = new MailtrapSmtpSpec.SmtpFixture(serverTls, 'data', 250)
         def sender = transport(fixture)
@@ -93,8 +107,7 @@ class VerificationDeliverySmtpTlsAcceptanceSpec extends Specification {
         fixture.commands.indexOf('STARTTLS') < fixture.commands.findIndexOf { it.startsWith('AUTH ') }
         fixture.authenticatedWithSyntheticCredentials
         parsed.subject == 'ArMoney registration verification'
-        parsed.isMimeType('text/plain')
-        parsed.content.toString().strip() == TEXT
+        exactAlternatives(parsed)
         parsed.allRecipients*.toString() == [ADDRESS]
         !fixture.commands.any { it.contains(CODE) || it.contains('synthetic-password') }
         cleanup:
@@ -176,7 +189,7 @@ class VerificationDeliverySmtpTlsAcceptanceSpec extends Specification {
         1 * outbox.finish(intent.deliveryId(), intent.fence(), false) >> true
         redacted(observed)
         fixture.authenticatedWithSyntheticCredentials
-        message(fixture).content.toString().strip() == TEXT
+        exactAlternatives(message(fixture))
         fixture.failure == null
         cleanup:
         worker?.close(); fixture?.close()

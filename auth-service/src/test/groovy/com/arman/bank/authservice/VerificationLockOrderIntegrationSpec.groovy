@@ -84,14 +84,14 @@ class VerificationLockOrderIntegrationSpec extends Specification {
         where:
         operation << ['projection_allocate','projection_status','projection_claim','projection_finish','projection_cleanup',
             'legacy_enroll','legacy_status','legacy_issue','legacy_consume','legacy_claim','legacy_finish','legacy_expire',
-            'authority_admit','authority_status','authority_cleanup','authority_enroll','authority_issue','authority_consume','authority_prepare','authority_attach']
+            'authority_admit','authority_status','authority_cleanup','authority_enroll','authority_issue','authority_consume','authority_prepare','authority_attach','proof_admit','proof_cleanup','auth_gate','auth_validate','auth_revoke']
     }
 
     def 'concurrent claim finish admission status cleanup and receipt writers complete without deadlock or banking side effects'() {
         given:
         def operations = ['projection_claim','projection_finish','projection_status','projection_cleanup',
             'legacy_status','legacy_issue','legacy_consume','legacy_claim','legacy_finish','legacy_expire',
-            'authority_admit','authority_cleanup','authority_enroll','authority_issue','authority_consume','authority_prepare','authority_attach']
+            'authority_admit','authority_cleanup','authority_enroll','authority_issue','authority_consume','authority_prepare','authority_attach','proof_admit','proof_cleanup','auth_gate','auth_validate','auth_revoke']
         def executor = Executors.newFixedThreadPool(operations.size())
         def gate = new CountDownLatch(1)
         when:
@@ -151,7 +151,13 @@ class VerificationLockOrderIntegrationSpec extends Specification {
         Instant startedAt = database.transaction { it.fetchOne('select clock_timestamp() as now').get('now',OffsetDateTime).toInstant() }
         def evidence = observation(startedAt)
         try {
+            def proof=new PostgresLoginProofStore(database,com.arman.bank.authservice.domain.LoginProof.Policy.defaults([ISSUER] as Set,['armoney-web'] as Set,['test'] as Set,[WRITER] as Set),([42]*32) as byte[],{sql -> {bindingValue,time -> throw new com.arman.bank.authservice.domain.LoginProof.Failure(com.arman.bank.authservice.domain.LoginProof.Error.UNAVAILABLE)} as com.arman.bank.authservice.application.LoginProofStore.EligibilityPort})
             switch (operation) {
+                case 'proof_admit': proof.admit(WRITER); break
+                case 'proof_cleanup': proof.cleanup(); break
+                case 'auth_gate': new PostgresAuthStore(database,false).requireBankingAccess(UUID.randomUUID()); break
+                case 'auth_validate': new PostgresAuthStore(database,false).findSession('a'*64,Instant.now()); break
+                case 'auth_revoke': new PostgresAuthStore(database,false).revoke('a'*64); break
                 case 'projection_allocate': projections.allocate(WRITER, input); break
                 case 'projection_status': projections.status(WRITER, UUID.randomUUID()); break
                 case 'projection_claim': projections.claim(WRITER); break

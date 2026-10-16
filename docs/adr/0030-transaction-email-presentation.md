@@ -33,7 +33,27 @@ on main457024e. Historical tests are evidence of that earlier execution, not a n
 integrated pass. On 2026-10-15, independent QA ran the current payment module check:
 129 unit and 39 PostgreSQL integration tests passed with no failures or skips.
 This includes the V4-to-V5 migration, frozen recipient routing and names, and
-TLS multipart UTF-8 SMTP delivery. CI, live Mailtrap delivery and deployment
-remain unverified. Auth login/registration email
-styling belongs to the separate auth notification integration; this payment slice
-alone does not complete issue47 or establish deployment readiness.
+TLS multipart UTF-8 SMTP delivery. These retained reports are historical evidence,
+not a new test execution on a later main revision.
+
+The [PR61 merge checkpoint](https://github.com/aarbabaev/ArMoney/issues/47#issuecomment-6191231378)
+records all seven exact-head CI checks green for
+`8cc9f7568eeaee970b7b20585cda3ac53af1fd24`, merged as
+`6ab2bddb34d16832103fc757febcaf422d733d33`. The subsequent
+[payment rollout checkpoint](https://github.com/aarbabaev/ArMoney/issues/47#issuecomment-6191496123)
+records deployment of that merge, successful V5 migration, preserved existing
+payment/notification fingerprints and captured recipient-name snapshots. It
+records one sandbox SMTP acceptance and one `DEAD/provider_rejected` after the
+first attempt. The original rejection cause remains UNKNOWN; later throttling
+handling and diagnostics do not prove its cause or recover that historical row.
+
+The [PR63 deployment-evidence checkpoint](https://github.com/aarbabaev/ArMoney/issues/47#issuecomment-6192770636)
+records receipt-backed deployment of diagnostic merge
+`a3be1ed1de7f69ce08b756d02b83e70ba8a9094e`, readiness HTTP 200 and preserved
+persistent rows/environment, without new financial/mail probes or historical
+requeue. Its reviewer checked receipt fields, not the live stack directly.
+Provider acceptance is not mailbox delivery or confirmation of rendered email.
+Confirmed mailbox rendering and the separate auth login/registration styling
+acceptance remain outstanding in that checkpoint; this payment slice alone does
+not complete issue47. An optional profile display name does not establish a
+verified legal or full name.
