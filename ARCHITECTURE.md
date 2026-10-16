@@ -454,12 +454,15 @@ external notification provider is used. Payment worker failure counters are
 process-local observations and remain unknown until the first failure; they
 reset on restart. Queue age is absent and replica lag is a separate integration.
 An explicit `compose.metrics.yaml` override provides a
-nonroot collector without published ports; private deployment and key provisioning
-are pending. CI source includes an isolated UUID-project fixture with owned-resource
+nonroot collector without published ports. The baseline from `a0fab1b` was
+deployed and independently verified on 2026-10-16 with a dedicated private key,
+six ready targets, two fresh snapshots and public internal-path 404. This does
+not establish deployment of worker counters or replica observations, which remain
+pending. CI source includes an isolated UUID-project fixture with owned-resource
 cleanup, real edge exclusion and a reversible payment-database outage.
-Combined business middleware, actual database failure, full integrated
-CI, independent verification and runtime acceptance still require evidence;
-source wiring does not establish deployment. See [operational metrics](docs/operational-metrics.md)
+Baseline exact-head CI and isolated failure acceptance passed in PR #73;
+each later integration still requires its own checks and rollout evidence.
+Source wiring does not establish deployment. See [operational metrics](docs/operational-metrics.md)
 and [ADR 0027](docs/adr/0027-local-operational-metrics.md).
 
 ```mermaid

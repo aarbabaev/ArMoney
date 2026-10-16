@@ -3,7 +3,16 @@
 Tracking: issue #22. Source includes the technical registry, private HTTP adapter,
 opt-in readiness for six Java services, two payment backlog measurements, and a
 local collector with finite alerts and runbooks. The main-based local full
-Gradle/PostgreSQL check passed. Baseline exact-head CI and Compose failure acceptance passed for PR #73 on 2026-10-16; persistent deployment remains pending. The replica-observation follow-up has its separate 93-test local evidence, while combined-revision CI and runtime acceptance remain pending.
+Gradle/PostgreSQL check passed. Baseline exact-head CI and Compose failure
+acceptance passed for PR #73 on 2026-10-16. The baseline was deployed from
+`a0fab1b0afa3ea98f6cb0d437550aedf3cf04c82` that day: six ready services,
+missing/wrong-key rejection, two advancing fresh collector snapshots and trusted
+HTTPS internal-path exclusion were independently verified. Existing environments
+were preserved except for the dedicated metrics key; no financial, delivery or
+outage probe was run on persistent data. This verifies the baseline only.
+The replica follow-up passed its separate exact-head CI in PR #78; replica and
+worker-observation deployment remain pending. This worker integration still
+requires its own exact-head CI and applicable acceptance.
 
 ## Service readiness opt-in
 
