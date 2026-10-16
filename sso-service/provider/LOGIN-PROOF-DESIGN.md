@@ -14,6 +14,23 @@ exchange/subscription cancellation; a headers-only JDK request timeout is
 insufficient. These fixes have lightweight regression evidence, not runtime
 activation approval or independent finding closure.
 
+## Dormant wire compatibility
+
+The disabled implementation preserves all 13 fields of the frozen create
+payload in both the outgoing HTTP body and its persisted retry command. Cookie
+reuse carries explicit JSON nulls for `event_id` and
+`password_authenticated_at`; the pinned Keycloak mapper otherwise omits null
+Java values. Retries retain the original command, binding and serialized bytes.
+Empty unavailable responses declare JSON media type and `no-store` so the pinned
+security-header filter preserves the intended empty 503 response.
+
+On 2026-10-16, the focused wire/retry/filter checks passed (17 tests), followed
+by a full provider `check jar --rerun-tasks` pass (53 tests; zero failures,
+errors or skips). These are provider unit/package checks; repository CI and
+applicable disposable runtime acceptance remain required. This compatibility correction does not establish positive proof-flow
+acceptance, callback visibility before redirect release, or activation readiness.
+The three extension factories remain unregistered. The independently accepted
+read-only observer flow does not prove these dormant protocol hooks.
 ## Minimal provider hooks
 
 1. Subclass the pinned `OIDCLoginProtocol` and override its public successful
