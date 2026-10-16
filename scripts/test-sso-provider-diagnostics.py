@@ -6,6 +6,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch, Mock
 import urllib.error
+import threading
+from types import SimpleNamespace
 
 SPEC = importlib.util.spec_from_file_location("observer_diagnostics", Path(__file__).with_name("sso-provider-acceptance.py"))
 HARNESS = importlib.util.module_from_spec(SPEC)
@@ -14,6 +16,81 @@ PRIVATE = "SYNTHETIC_SECRET_contact@example.invalid_provider_exception_identifie
 
 
 class DiagnosticsTest(unittest.TestCase):
+    def test_browser_submission_waits_for_complete_valid_http_response_before_baseline(self):
+        for status, content_type in ((200, "text/html; charset=utf-8"), (503, "text/html"), (200, "application/json")):
+            with self.subTest(status=status, content_type=content_type):
+                submitted, release, done = threading.Event(), threading.Event(), threading.Event()
+                frame = object()
+                request = SimpleNamespace(method="POST", url="http://sso-a:8080/realms/armoney/login-actions/required-action?private=" + PRIVATE,
+                    frame=frame, is_navigation_request=lambda: True,
+                    response=lambda: SimpleNamespace(status=status, headers={"content-type":content_type}))
+                class Finished:
+                    value = request
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *unused):
+                        if not release.wait(2):
+                            raise AssertionError("synthetic browser completion timeout")
+                class Page:
+                    main_frame = frame
+                    def expect_event(inner, name, predicate, timeout):
+                        self.assertEqual((name, timeout), ("requestfinished", 12000))
+                        self.assertTrue(predicate(request))
+                        self.assertFalse(predicate(SimpleNamespace(**{**request.__dict__, "method":"GET"})))
+                        self.assertFalse(predicate(SimpleNamespace(**{**request.__dict__, "frame":object()})))
+                        self.assertFalse(predicate(SimpleNamespace(**{**request.__dict__, "url":"http://foreign.invalid/realms/armoney/login-actions/required-action"})))
+                        return Finished()
+                    def locator(inner, selector):
+                        return SimpleNamespace(click=lambda **kw: submitted.set(), wait_for=lambda **kw: None)
+                    def get_by_text(inner, text, exact):
+                        self.assertEqual("Verification is unavailable. Please try again.", text)
+                        self.assertIs(exact, True)
+                        return SimpleNamespace(wait_for=lambda **kw: None)
+                failures, output = [], io.StringIO()
+                baseline = Mock()
+                def client():
+                    try:
+                        HARNESS.finish_browser_submission(Page(), "http://sso-a:8080")
+                        baseline()
+                    except Exception as error:
+                        failures.append(type(error))
+                    finally:
+                        done.set()
+                with contextlib.redirect_stdout(output):
+                    worker = threading.Thread(target=client)
+                    worker.start()
+                    try:
+                        self.assertTrue(submitted.wait(1))
+                        self.assertFalse(done.wait(0.03))
+                        baseline.assert_not_called()
+                    finally:
+                        release.set()
+                        worker.join(2)
+                self.assertFalse(worker.is_alive())
+                self.assertNotIn(PRIVATE, output.getvalue())
+                valid = status == 200 and content_type.startswith("text/html")
+                self.assertEqual([] if valid else [AssertionError], failures)
+                self.assertEqual(1 if valid else 0, baseline.call_count)
+
+    def test_committed_baseline_rebases_only_expiry_and_later_observer_mutation_still_fails(self):
+        flow = {key: "synthetic" for key in HARNESS.FLOW}
+        captured = dict(flow, username=PRIVATE, email=PRIVATE, phone_number=PRIVATE,
+                        enabled=True, authentication_session_active=True,
+                        authentication_session_expires_at="2026-10-16T00:00:30Z")
+        committed = dict(captured, authentication_session_expires_at="2026-10-16T00:00:31Z")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), patch.object(HARNESS,"observer",return_value=(200,committed,{})):
+            self.assertEqual(committed,HARNESS.committed_observation("node-b",flow,captured))
+        self.assertIn("FIELDS_SAME EXPIRY_LATER",output.getvalue())
+        self.assertNotIn(PRIVATE,output.getvalue())
+        mutated = dict(committed, authentication_session_expires_at="2026-10-16T00:00:32Z")
+        with contextlib.redirect_stdout(io.StringIO()), patch.object(HARNESS,"observer",return_value=(200,mutated,{})):
+            with self.assertRaises(AssertionError):
+                HARNESS.read_only_checks("node-b",flow,committed,{"root_timestamp":42})
+        with contextlib.redirect_stdout(io.StringIO()), patch.object(HARNESS,"observer",return_value=(200,dict(committed,email="changed"),{})):
+            with self.assertRaises(AssertionError):
+                HARNESS.committed_observation("node-b",flow,captured)
+
     def invoke(self, behavior, argv=None):
         output, errors = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors), \

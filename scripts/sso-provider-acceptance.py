@@ -327,11 +327,55 @@ def serve_bridge():
     server.serve_forever(poll_interval=0.2)
 
 
+def expiry_direction(previous, current):
+    # Only a finite direction is emitted, never either private timestamp.
+    try:
+        left = datetime.datetime.fromisoformat(previous.replace("Z", "+00:00"))
+        right = datetime.datetime.fromisoformat(current.replace("Z", "+00:00"))
+        return "SAME" if left == right else "LATER" if right > left else "EARLIER"
+    except (AttributeError, TypeError, ValueError):
+        return "INVALID"
+
+
+def finish_browser_submission(page, node):
+    origin = urllib.parse.urlsplit(node)
+    def expected(request):
+        parsed = urllib.parse.urlsplit(request.url)
+        return (request.method == "POST" and request.is_navigation_request()
+                and request.frame == page.main_frame
+                and (parsed.scheme, parsed.netloc) == (origin.scheme, origin.netloc)
+                and parsed.path == "/realms/armoney/login-actions/required-action")
+    # Bridge capture precedes the enclosing Keycloak transaction's commit. A
+    # requestfinished event waits for its complete response, unlike capture count.
+    with page.expect_event("requestfinished", predicate=expected, timeout=12000) as finished:
+        page.locator('button[name="operation"][value="send"]').click(timeout=12000)
+    response = finished.value.response()
+    valid = (response is not None and response.status == 200
+             and response.headers.get("content-type", "").split(";", 1)[0].strip() == "text/html")
+    print("BROWSER_POST: OBSERVER69 " + ("COMPLETE_VALID" if valid else "COMPLETE_INVALID"), flush=True)
+    require(valid, "completed expected browser response")
+    page.get_by_text("Verification is unavailable. Please try again.", exact=True).wait_for(timeout=12000)
+    page.locator('button[name="operation"][value="send"]').wait_for(timeout=12000)
+
+
+def committed_observation(node, flow, captured):
+    current = expect(200, observer(node, flow, diagnostic=observer_boundary), "committed node B observation")
+    require(set(current) == OBSERVATION and all(current[key] == flow[key] for key in FLOW),
+            "committed exact observation binding")
+    unchanged = all(current[key] == captured[key] for key in OBSERVATION - {"authentication_session_expires_at"})
+    direction = expiry_direction(captured["authentication_session_expires_at"], current["authentication_session_expires_at"])
+    print("BASELINE: OBSERVER69 " + ("FIELDS_SAME" if unchanged else "FIELDS_CHANGED") + " EXPIRY_" + direction, flush=True)
+    require(unchanged and direction != "INVALID", "committed baseline preserves non-expiry observation")
+    return current
+
+
 def read_only_checks(node, flow, first, initial_inspection):
     for _ in range(3):
         phase("READ_ONLY_RPC")
         current = expect(200, observer(node, flow, diagnostic=observer_boundary), "read-only observation")
         phase("READ_ONLY_EXPIRY")
+        print("EXPIRY_CHECK: OBSERVER69 " + expiry_direction(first["authentication_session_expires_at"],
+              current["authentication_session_expires_at"]), flush=True)
         require(current["authentication_session_expires_at"] == first["authentication_session_expires_at"],
                 "observer cannot refresh expiry")
         phase("READ_ONLY_DTO")
@@ -446,7 +490,7 @@ def acceptance():
                 page.locator('button[name="operation"][value="send"]').wait_for()
                 require(capture()["count"] == before and not callback_count, "initial render zero RPC/callback")
                 phase("SEND_RPC")
-                page.locator('button[name="operation"][value="send"]').click()
+                finish_browser_submission(page, a)
                 deadline = time.monotonic() + 12
                 while time.monotonic() < deadline:
                     item = capture()
@@ -457,7 +501,8 @@ def acceptance():
                     require(not item["error"], "bridge observation failed")
                     if item["count"] == before + 1:
                         require(not callback_count, "denied bridge cannot complete login")
-                        return page, item["flow"], item["observation"]
+                        committed = committed_observation(b, item["flow"], item["observation"])
+                        return page, item["flow"], committed
                     time.sleep(0.1)
                 raise AssertionError("bounded genuine bridge request missing")
 
