@@ -14,6 +14,10 @@ import spock.lang.Specification
 
 /** Synthetic loopback ports only; real database invariants are independently tested in IntegrationSpec. */
 class LoginProofRoutesSpec extends Specification {
+    static final class UnreadBody extends InputStream {
+        int reads
+        @Override int read(){reads++;throw new AssertionError('body must not be read')}
+    }
     static final String WRITE = 'synthetic-proof-write-key-32-characters'
     static final String RESOLVE = 'synthetic-proof-resolve-key-32-characters'
     static final String ISSUER = 'https://issuer.example/realm'
@@ -62,7 +66,7 @@ class LoginProofRoutesSpec extends Specification {
         given:
         def scheduler=Mock(org.eclipse.jetty.util.thread.Scheduler)
         def endpoint=Mock(org.eclipse.jetty.io.EndPoint)
-        def input=Mock(InputStream)
+        def input=new UnreadBody()
         endpoint.isOpen() >> true
         scheduler.isRunning() >>> [true,mode!='stopped']
         scheduler.schedule(_,_,_) >> {throw new RejectedExecutionException('synthetic stopped scheduler')}
@@ -70,7 +74,7 @@ class LoginProofRoutesSpec extends Specification {
         when:guard.read(input,12289)
         then:
         def denied=thrown(Failure);denied.error()==Error.UNAVAILABLE
-        0 * input._
+        input.reads==0
         0 * endpoint.close(_)
         cleanup:guard?.close()
         where:mode << ['stopped','rejecting']
@@ -96,7 +100,7 @@ class LoginProofRoutesSpec extends Specification {
         given:
         def scheduler=Mock(org.eclipse.jetty.util.thread.Scheduler)
         def endpoint=Mock(org.eclipse.jetty.io.EndPoint)
-        def input=Mock(InputStream)
+        def input=new UnreadBody()
         scheduler.isRunning() >> true;endpoint.isOpen() >> true
         def guard=deadline(scheduler,endpoint,System.nanoTime()-TimeUnit.SECONDS.toNanos(4))
         when:guard.read(input,12289)
@@ -104,7 +108,7 @@ class LoginProofRoutesSpec extends Specification {
         def denied=thrown(Failure);denied.error()==Error.BAD_INPUT
         1 * endpoint.close({it instanceof TimeoutException && it.message=='login_proof_body_deadline'})
         0 * scheduler.schedule(_,_,_)
-        0 * input._
+        input.reads==0
         cleanup:guard?.close()
     }
     def 'body completing after elapsed deadline is rejected even if scheduler callback was delayed'(){
