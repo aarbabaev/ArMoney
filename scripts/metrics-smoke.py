@@ -19,6 +19,29 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = ('app-gateway', 'auth-service', 'user-service', 'wallet-service', 'payment-service', 'ledger-service')
+PHASES = frozenset(('guard', 'inventory', 'images', 'staging', 'config', 'create', 'certificate',
+                    'application', 'edge', 'ready', 'auth', 'outage', 'recovery', 'cleanup'))
+CLEANUP_STATES = frozenset(('not_needed', 'checked', 'failed'))
+
+
+def diagnostic(phase, error, cleanup):
+    # Never derive output from exception text, command output or class names.
+    if isinstance(error, subprocess.TimeoutExpired):
+        category = 'timeout'
+    elif isinstance(error, subprocess.SubprocessError):
+        category = 'process'
+    elif isinstance(error, OSError):
+        category = 'transport'
+    elif isinstance(error, AssertionError):
+        category = 'assertion'
+    elif isinstance(error, (ValueError, KeyError, TypeError)):
+        category = 'prerequisite'
+    else:
+        category = 'internal'
+    return {'code': 'METRICS_ACCEPTANCE_FAILED',
+            'phase': phase if isinstance(phase, str) and phase in PHASES else 'guard',
+            'category': category,
+            'cleanup': cleanup if isinstance(cleanup, str) and cleanup in CLEANUP_STATES else 'failed'}
 
 
 def require(condition):
@@ -198,10 +221,16 @@ def main():
     args = parser.parse_args()
     stopped = None
     acceptance = None
+    phase = 'guard'
+    failure = None
+    failure_phase = None
+    cleanup = 'not_needed'
     try:
         guard(args.project, os.environ)
         acceptance = Acceptance(args.project)
+        phase = 'inventory'
         owned = acceptance.inventory()
+        phase = 'edge'
         endpoint = edge_target(args.edge_url, owned['edge'])
         # The subprocess deadline bounds even drip-fed TLS/headers. No proxy,
         # redirect or certificate bypass; URL and CA path stay out of argv.
@@ -210,30 +239,51 @@ def main():
             text=True, timeout=10, check=False)
         require(edge.returncode == 0 and edge.stdout == '')
         collector = owned['metrics-collector']['Id']
+        phase = 'ready'
         acceptance.wait_ready(collector)
+        phase = 'auth'
         acceptance.probe(collector, auth=True)
         # Revalidate ownership immediately before the only reversible mutation.
+        phase = 'inventory'
         current = acceptance.inventory()
         require(current['payment-db']['Id'] == owned['payment-db']['Id'])
         require(current['metrics-collector']['Id'] == collector)
         stopped = owned['payment-db']['Id']
+        phase = 'outage'
         acceptance.run('stop', '--time', '10', stopped)
         try:
             acceptance.probe(collector, failure=True)
+        except (OSError, ValueError, KeyError, TypeError, AssertionError, subprocess.SubprocessError) as error:
+            failure, failure_phase = error, phase
+            raise
         finally:
-            acceptance.restore(stopped)
-            stopped = None
+            phase = 'cleanup'
+            try:
+                acceptance.restore(stopped)
+                stopped = None
+                cleanup = 'checked'
+            except (OSError, ValueError, subprocess.SubprocessError):
+                cleanup = 'failed'
+                raise
+        phase = 'recovery'
         acceptance.wait_ready(collector)
-        print('Metrics disposable acceptance PASS')
-    except (OSError, ValueError, KeyError, TypeError, AssertionError, subprocess.SubprocessError):
-        raise SystemExit('Metrics disposable acceptance failed; no raw diagnostics emitted') from None
+    except (OSError, ValueError, KeyError, TypeError, AssertionError, subprocess.SubprocessError) as error:
+        if failure is None:
+            failure, failure_phase = error, phase
     finally:
         if stopped is not None and acceptance is not None:
             # Best-effort restore of the exact previously validated container.
             try:
                 acceptance.restore(stopped)
-            except (OSError, ValueError, subprocess.SubprocessError):
-                raise SystemExit('Metrics acceptance failed; owned payment DB restoration requires CI operator attention') from None
+                cleanup = 'checked'
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                cleanup = 'failed'
+                if failure is None:
+                    failure, failure_phase = error, 'cleanup'
+    if failure is not None:
+        print(json.dumps(diagnostic(failure_phase, failure, cleanup)), file=sys.stderr)
+        raise SystemExit(1) from None
+    print('Metrics disposable acceptance PASS')
 
 
 if __name__ == '__main__':

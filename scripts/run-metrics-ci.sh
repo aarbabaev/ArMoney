@@ -12,6 +12,7 @@ import signal
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -19,7 +20,13 @@ import uuid
 ROOT = Path.cwd().resolve()
 loader = importlib.util.spec_from_file_location('metrics_smoke', ROOT / 'scripts/metrics-smoke.py')
 smoke = importlib.util.module_from_spec(loader)
-loader.loader.exec_module(smoke)
+try:
+    loader.loader.exec_module(smoke)
+except Exception:
+    print(json.dumps({'code': 'METRICS_ACCEPTANCE_FAILED', 'phase': 'guard',
+                      'category': 'internal', 'cleanup': 'not_needed'}), file=sys.stderr)
+    raise SystemExit(1) from None
+STATE = {'phase': 'guard', 'cleanup': 'not_needed', 'child': None}
 
 
 def command(arguments, environment, timeout=40, check=True):
@@ -90,18 +97,21 @@ def change_owner(path, uid, gid, environment, recursive=False):
 
 
 def main():
+    STATE.update(phase='guard', cleanup='not_needed', child=None)
     project = 'armoney-metrics-test-' + uuid.uuid4().hex
     environment = dict(os.environ)
     smoke.guard(project, environment, ROOT)
-    print(json.dumps({'code': 'METRICS_CI_STARTED', 'project': project}), flush=True)
     # No default/implicit Compose files, profiles or caller project are allowed.
     for name in ('COMPOSE_FILE', 'COMPOSE_PROJECT_NAME', 'COMPOSE_PROFILES', 'COMPOSE_ENV_FILES'):
         environment.pop(name, None)
+    STATE['phase'] = 'inventory'
     inventory_empty(project, environment)
     images = {}
     for service in smoke.SERVICES:
+        STATE['phase'] = 'images'
         image = json.loads(command(['docker', 'image', 'inspect', 'arman-bank-' + service], environment).stdout)[0]
         images[service] = image['Id']
+    STATE['phase'] = 'staging'
     staging = Path(tempfile.mkdtemp(prefix='.metrics-ci-' + project + '-', dir=ROOT))
     compose = None
     created = False
@@ -126,11 +136,14 @@ def main():
             METRICS_CONFIG_PATH=str(config), METRICS_STATUS_DIR=str(status))
         compose = ['docker', 'compose', '--project-directory', str(ROOT), '--env-file', '/dev/null',
                    '-p', project, '-f', str(ROOT / 'compose.yaml'), '-f', str(ROOT / 'compose.metrics.yaml'), '-f', str(fixture)]
+        STATE['phase'] = 'config'
         command([*compose, 'config', '--quiet'], environment)
         # Generated project identity and inventory gate precede the first mutation.
         inventory_empty(project, environment)
         created = True
+        STATE['phase'] = 'create'
         command([*compose, 'up', '--no-build', '--pull', 'missing', '-d', '--wait', '--wait-timeout', '180'], environment, timeout=240)
+        STATE['phase'] = 'certificate'
         ca = staging / 'edge-root.crt'
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
@@ -139,23 +152,47 @@ def main():
                 break
             time.sleep(2)
         smoke.require(ca.is_file())
-        command(['python3', '-B', str(ROOT / 'scripts/metrics-smoke.py'), '--project', project,
-                 '--edge-url', 'https://localhost:' + str(port), '--edge-ca', str(ca)], environment, timeout=660)
-        print('Metrics CI acceptance PASS')
+        STATE['phase'] = 'application'
+        result = command(['python3', '-B', str(ROOT / 'scripts/metrics-smoke.py'), '--project', project,
+                 '--edge-url', 'https://localhost:' + str(port), '--edge-ca', str(ca)], environment, timeout=660, check=False)
+        if result.returncode != 0:
+            # Accept only a finite diagnostic tuple; raw child output stays private.
+            for line in result.stderr.splitlines():
+                try:
+                    item = json.loads(line)
+                except ValueError:
+                    continue
+                if (isinstance(item, dict) and set(item) == {'code', 'phase', 'category', 'cleanup'} and
+                    all(isinstance(value, str) for value in item.values()) and
+                    item['code'] == 'METRICS_ACCEPTANCE_FAILED' and item['phase'] in smoke.PHASES and
+                    item['category'] in ('timeout', 'process', 'transport', 'assertion', 'prerequisite', 'internal') and
+                    item['cleanup'] in smoke.CLEANUP_STATES):
+                    STATE['child'] = item
+            smoke.require(False)
     finally:
+        original_failure = sys.exc_info()[0] is not None
+        original_phase = STATE['phase']
+        STATE['phase'] = 'cleanup'
         if created:
             try:
                 cleanup_owned(project, environment, compose)
             except Exception:
                 cleanup_failed = True
-        if not cleanup_failed:
-            status = staging / 'status'
-            if status.exists():
-                change_owner(status, os.getuid(), os.getgid(), environment, recursive=True)
-            shutil.rmtree(staging)
+        try:
+            if not cleanup_failed:
+                status = staging / 'status'
+                if status.exists():
+                    change_owner(status, os.getuid(), os.getgid(), environment, recursive=True)
+                shutil.rmtree(staging)
+        except Exception:
+            cleanup_failed = True
+        STATE['cleanup'] = 'failed' if cleanup_failed else 'checked'
+        if original_failure:
+            STATE['phase'] = original_phase
         if cleanup_failed:
-            print(json.dumps({'code': 'METRICS_CI_CLEANUP_REQUIRED', 'project': project}), flush=True)
-            raise RuntimeError('Owned metrics CI cleanup requires operator attention')
+            if not original_failure:
+                raise RuntimeError('Owned metrics CI cleanup requires operator attention')
+    print('Metrics CI acceptance PASS')
 
 
 if __name__ == '__main__':
@@ -164,6 +201,10 @@ if __name__ == '__main__':
     signal.signal(signal.SIGTERM, interrupted)
     try:
         main()
-    except Exception:
-        raise SystemExit('Metrics CI acceptance failed; raw diagnostics suppressed; inspect isolated CI privately') from None
+    except Exception as error:
+        diagnostic = smoke.diagnostic(STATE['phase'], error, STATE['cleanup'])
+        if STATE['child'] is not None:
+            print(json.dumps(STATE['child']), file=sys.stderr)
+        print(json.dumps(diagnostic), file=sys.stderr)
+        raise SystemExit(1) from None
 PY

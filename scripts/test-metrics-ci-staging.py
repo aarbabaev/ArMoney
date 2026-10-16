@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import types
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -13,6 +14,38 @@ PROJECT = 'armoney-metrics-test-' + 'a' * 32
 
 
 class StagingGuards(unittest.TestCase):
+    def test_diagnostic_values_are_finite_and_exception_text_is_redacted(self):
+        private = 'https://private.invalid/secret /private/token INTERNAL_METRICS_KEY=secret'
+        for error, category in ((ValueError(private), 'prerequisite'), (OSError(private), 'transport'),
+                                (AssertionError(private), 'assertion'), (RuntimeError(private), 'internal'),
+                                (staging.subprocess.TimeoutExpired(private, 3), 'timeout')):
+            item = staging.smoke.diagnostic(private, error, private)
+            self.assertEqual(item['phase'], 'guard')
+            self.assertEqual(item['category'], category)
+            self.assertEqual(item['cleanup'], 'failed')
+            self.assertNotIn(private, json.dumps(item))
+
+    def test_cleanup_failure_preserves_original_failure_and_phase(self):
+        private = 'private-command-key-url'
+        def command(arguments, environment, **kwargs):
+            if 'inspect' in arguments:
+                return types.SimpleNamespace(stdout=json.dumps([{'Id': 'sha256:' + 'a' * 64}]))
+            if 'up' in arguments:
+                raise ValueError(private)
+            return types.SimpleNamespace(stdout='', stderr='', returncode=0)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'infra/observability').mkdir(parents=True)
+            (root / 'infra/observability/collector.example.json').write_text('{}')
+            with (patch.object(staging, 'ROOT', root), patch.object(staging.smoke, 'guard'),
+                  patch.object(staging, 'inventory_empty'), patch.object(staging, 'change_owner'),
+                  patch.object(staging, 'command', side_effect=command),
+                  patch.object(staging, 'cleanup_owned', side_effect=OSError('private cleanup path'))):
+                with self.assertRaisesRegex(ValueError, private):
+                    staging.main()
+            self.assertEqual(staging.STATE['phase'], 'create')
+            self.assertEqual(staging.STATE['cleanup'], 'failed')
+
     def test_fixture_uses_exact_built_image_ids_and_removes_gateway_port(self):
         images = {service: 'sha256:' + 'a' * 64 for service in staging.smoke.SERVICES}
         fixture = staging.fixture_text(images, 18443, ROOT)

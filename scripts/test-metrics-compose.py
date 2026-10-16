@@ -1,16 +1,41 @@
 """Offline metrics deployment/acceptance guards; never executes Docker."""
 import copy
 import importlib.util
+import io
+import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 ROOT = Path(__file__).resolve().parents[1]
 loader = importlib.util.spec_from_file_location('metrics_smoke', ROOT / 'scripts/metrics-smoke.py')
 smoke = importlib.util.module_from_spec(loader)
 loader.loader.exec_module(smoke)
 PROJECT = 'armoney-metrics-test-' + 'a' * 32
+
+
+class DiagnosticGuards(unittest.TestCase):
+    def test_outage_failure_phase_survives_failed_restore_without_private_output(self):
+        acceptance = MagicMock()
+        acceptance.inventory.return_value = {'metrics-collector': {'Id': 'a' * 64},
+                                              'payment-db': {'Id': 'b' * 64}, 'edge': {}}
+        acceptance.probe.side_effect = [None, ValueError('private key and URL')]
+        acceptance.restore.side_effect = OSError('private cleanup path')
+        edge = MagicMock(returncode=0, stdout='')
+        with (patch.object(smoke, 'guard'), patch.object(smoke, 'Acceptance', return_value=acceptance),
+              patch.object(smoke, 'edge_target', return_value='https://localhost:18443/internal/metrics'),
+              patch.object(smoke.subprocess, 'run', return_value=edge),
+              patch('sys.argv', ['metrics', '--project', PROJECT, '--edge-url', 'private', '--edge-ca', 'private']),
+              patch('sys.stderr', new_callable=io.StringIO) as output):
+            with self.assertRaises(SystemExit) as failure:
+                smoke.main()
+        self.assertEqual(failure.exception.code, 1)
+        diagnostic = json.loads(output.getvalue())
+        self.assertEqual(diagnostic['phase'], 'outage')
+        self.assertEqual(diagnostic['category'], 'prerequisite')
+        self.assertEqual(diagnostic['cleanup'], 'failed')
+        self.assertNotIn('private', output.getvalue())
 
 
 def inventory():
