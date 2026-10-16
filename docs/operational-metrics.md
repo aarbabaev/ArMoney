@@ -3,8 +3,7 @@
 Tracking: issue #22. Source includes the technical registry, private HTTP adapter,
 opt-in readiness for six Java services, two payment backlog measurements, and a
 local collector with finite alerts and runbooks. The main-based local full
-Gradle/PostgreSQL check passed; exact-head CI, Compose failure acceptance and
-persistent deployment remain pending.
+Gradle/PostgreSQL check passed. Baseline exact-head CI and Compose failure acceptance passed for PR #73 on 2026-10-16; persistent deployment remains pending. The replica-observation follow-up has its separate 93-test local evidence, while combined-revision CI and runtime acceptance remain pending.
 
 ## Service readiness opt-in
 
@@ -72,8 +71,83 @@ non-null recipient; legacy unmapped commands are excluded. Email outbox backlog
 counts all `PENDING` rows, excluding `SENT`, `SKIPPED` and `DEAD`. Both counts
 include delayed and leased work; neither measures age or due-only batches.
 Collection failure removes both gauges. Disabled email delivery does not hide
-existing pending rows. Worker failure counters and replica lag remain unknown
-until their owners provide actual observations.
+existing pending rows. Worker failure counters remain unknown until their owners
+provide actual observations. The optional ledger replica observer described below
+passed the affected local ledger checks described below. Earlier integration
+evidence in this document does not establish current-main verification of this delta.
+
+### Optional ledger replica observation
+
+Ledger can observe named, directly connected primary WAL senders after a metrics
+scrape authenticates. Enable the endpoint with its dedicated `INTERNAL_METRICS_KEY`
+and configure `LEDGER_METRICS_REPLICA_NAMES` as strict comma-separated sender
+application names. Each name must contain 1–64 printable ASCII characters, with
+no whitespace, empty members or duplicates. Names are case-sensitive and their
+count must equal the number of nonblank entries in `LEDGER_READ_DB_URLS`.
+For the existing two-standby overlay the value is
+`ledger_replica1,ledger_replica2`. This documents an explicit configuration value;
+the replication overlay does not automatically enable this observation.
+Invalid explicit names or a count mismatch fail startup with a generic error.
+Absent names leave the gauge unknown. With metrics disabled or names absent,
+the observer allocates no database pool.
+
+The observer owns a separate read-only Hikari pool against `DB_URL`, reusing
+`DB_USER`/`DB_PASSWORD`. It has maximum size one, minimum idle zero and no eager
+connection requirement. Acquisition and validation limits are 250 ms each;
+PostgreSQL driver connection and socket timeouts are one second each. Session
+options set `statement_timeout=500` ms and `default_transaction_read_only=on`.
+No Flyway migrations run through this pool. It closes before the business pools
+on shutdown and during startup failure cleanup. These are component timeout
+settings, not measured end-to-end timing evidence or a whole-scrape deadline;
+the existing readiness probe runs separately afterward.
+
+The role must be able to execute the observation functions and see the expected
+sender fields in `pg_stat_replication`. Restricted-role masking or denied access
+produces unknown, without granting privileges or weakening checks. Runtime
+observation failures expose no raw database diagnostics in the response.
+
+Every observation removes the previous gauge before querying primary. All
+expected names must appear exactly once with primary recovery mode false,
+`state=streaming`, a non-NULL replay LSN and WAL difference, and `reply_time`
+no more than 30 seconds old and no later than the primary observation timestamp.
+Unexpected names do not satisfy missing expected members. Classification is:
+
+| Sender observation | Result |
+| --- | --- |
+| Fresh streaming sender with zero flushed-WAL/replay difference | Zero, including a NULL idle `replay_lag` |
+| Positive WAL difference and positive `replay_lag` | Interval seconds rounded upward to an exact signed 64-bit integer |
+| Positive WAL difference with NULL, zero or negative interval | Unknown |
+| Missing, duplicate, stale, future-dated, nonstreaming, inaccessible or invalid expected sender; negative WAL difference; overflow | Unknown |
+
+The gauge is the maximum across all expected members only when each is known;
+otherwise it is omitted. Connection/query failure also removes any earlier zero.
+Positive values describe PostgreSQL's recent replay acknowledgment delay, not
+current backlog age or a catch-up estimate. Zero describes the fresh reported
+WAL positions at observation time, not an ongoing guarantee. No calculation uses
+time since the last transaction. See [PostgreSQL's measurement semantics](https://www.postgresql.org/docs/17/monitoring-stats.html#MONITORING-PG-STAT-REPLICATION-VIEW).
+
+Names identify primary-side cluster observations; matching their count to read
+URLs does not prove that those URLs reach those senders or validate their cluster,
+database or timeline identity. Existing read-routing fences, durability
+confirmation and readiness behavior are unchanged. This metric cannot confirm a
+payment outcome. [ADR 0040](adr/0040-replica-observation.md) records the decision.
+
+On 2026-10-16, `gradlew.bat :ledger-service:check --no-daemon` passed in 2 minutes
+13 seconds with Temurin Java 21.0.12.1 and process-local
+`JAVA_TOOL_OPTIONS=-Dapi.version=1.44`. The tested revision was base
+`f506069e83c6622f80834f4848866dd73a92a791` plus the recorded ledger observation
+source patch, not an integrated current-main revision. XML reports contain 93
+tests across 13 suites: 65 unit and 28 integration tests, with zero failures,
+errors or skips. The two real physical-standby scenarios passed, including the
+new observation assertions for catch-up, paused replay, restricted permissions
+and disconnects. The pre-run eight-file SHA256 manifest was unchanged after the
+run. The full log, exit code, XML/HTML reports, summary and source manifest are
+preserved privately at
+`D:/ArMoneyDockerRecovery/2026-10-15/ledger-replica-observation-check/`.
+This affected-module result does not establish integrated current-main CI, full
+repository checks, applicable Compose acceptance, independent verification,
+end-to-end timeout behavior or deployment. Those remain pending. No persistent
+database or Docker stack was operated for this check.
 
 The stdlib-only [local collector](../infra/observability/README.md) accepts fixed
 service/DNS or loopback targets and exact private paths, disables redirects and
@@ -188,3 +262,9 @@ runtime task was up-to-date; the payment fixture executed ten cases with zero
 failures/errors/skips. Reports: `payment-service/build/reports/tests/test/`.
 
 See [ADR 0027](adr/0027-local-operational-metrics.md).
+
+Replica observation is not injected by the optional Compose file. To enable it,
+set `LEDGER_METRICS_REPLICA_NAMES` explicitly in a private service environment
+override together with the matching Ledger read URLs. Leaving it absent disables
+the observation pool; an explicitly blank value is invalid and must not be used
+as an interpolation default.
