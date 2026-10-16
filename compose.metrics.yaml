@@ -1,0 +1,49 @@
+# Opt-in only: compose.yaml remains unchanged. Prepare private config/status paths.
+services:
+  app-gateway:
+    environment:
+      INTERNAL_METRICS_KEY: ${INTERNAL_METRICS_KEY:?Set an independent metrics key}
+  auth-service:
+    environment:
+      INTERNAL_METRICS_KEY: ${INTERNAL_METRICS_KEY:?Set an independent metrics key}
+  user-service:
+    environment:
+      INTERNAL_METRICS_KEY: ${INTERNAL_METRICS_KEY:?Set an independent metrics key}
+  wallet-service:
+    environment:
+      INTERNAL_METRICS_KEY: ${INTERNAL_METRICS_KEY:?Set an independent metrics key}
+  payment-service:
+    environment:
+      INTERNAL_METRICS_KEY: ${INTERNAL_METRICS_KEY:?Set an independent metrics key}
+  ledger-service:
+    environment:
+      INTERNAL_METRICS_KEY: ${INTERNAL_METRICS_KEY:?Set an independent metrics key}
+  metrics-collector:
+    image: python:3.13-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
+    user: "10001:10001"
+    environment:
+      INTERNAL_METRICS_KEY: ${INTERNAL_METRICS_KEY:?Set an independent metrics key}
+    command: ["python", "-B", "/collector/collector.py", "--config", "/config/collector.json", "--output", "/status/metrics-status.json"]
+    volumes:
+      - type: bind
+        source: ./infra/observability
+        target: /collector
+        read_only: true
+      - type: bind
+        source: ${METRICS_CONFIG_PATH:?Set an absolute private collector config path}
+        target: /config/collector.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${METRICS_STATUS_DIR:?Prepare a private directory writable by UID 10001}
+        target: /status
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    labels:
+      com.armoney.metrics.disposable: ${METRICS_DISPOSABLE_CI:-false}
+    networks: [bank]
