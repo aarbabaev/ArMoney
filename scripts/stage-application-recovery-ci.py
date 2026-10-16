@@ -71,7 +71,17 @@ class Stage:
         labels = data.get('Config', {}).get('Labels') or {}
         require(data.get('Name') == '/' + name and labels.get('com.docker.compose.project') == self.project
                 and labels.get('com.docker.compose.service') == service, 'Container ownership differs')
-        require(not data['HostConfig'].get('Binds') and not data['HostConfig'].get('PortBindings'), 'Host exposure rejected')
+        expected = {'daemon': {'recovery-data': '/var/lib/docker', 'recovery-socket': '/run/recovery-docker'},
+                    'runner': {'recovery-socket': '/run/recovery-docker', 'recovery-workspace': '/work'}}[service]
+        expected_mounts = {self.project + '_' + volume: target for volume, target in expected.items()}
+        binds = data['HostConfig'].get('Binds')
+        # Compose can serialize named volumes as Binds. Accept only these exact
+        # named-volume/target/rw tuples, then verify effective mounts and labels.
+        require(binds is None or binds == [] or (isinstance(binds, list) and len(binds) == len(expected_mounts) and
+                all(isinstance(value, str) for value in binds) and
+                set(binds) == {volume + ':' + target + ':rw' for volume, target in expected_mounts.items()}),
+                'Foreign bind or mount options rejected')
+        require(not data['HostConfig'].get('PortBindings'), 'Host exposure rejected')
         require(not data['HostConfig'].get('Devices') and not data['HostConfig'].get('CapAdd') and
                 data['HostConfig'].get('PidMode', '') == '' and
                 bool(data['HostConfig'].get('Privileged')) == (service == 'daemon'), 'Unexpected host privileges')
@@ -88,12 +98,12 @@ class Stage:
         require(network_data.get('Name') == network and network_data.get('Driver') == 'bridge' and
                 (network_data.get('Labels') or {}).get('com.docker.compose.project') == self.project,
                 'Project network ownership differs')
-        expected = {'daemon': {'recovery-data', 'recovery-socket'},
-                    'runner': {'recovery-socket', 'recovery-workspace'}}[service]
+        mounts = data.get('Mounts', [])
+        require(isinstance(mounts, list) and len(mounts) == len(expected_mounts), 'Unexpected mount count')
         require(all(m.get('Type') == 'volume' and m.get('Name') in
-                    {self.project + '_' + n for n in expected}
-                    for m in data.get('Mounts', [])), 'Foreign mount rejected')
-        require({m.get('Name') for m in data.get('Mounts', [])} == {self.project + '_' + n for n in expected},
+                    expected_mounts and m.get('Destination') == expected_mounts[m['Name']] and m.get('RW') is True
+                    for m in mounts), 'Foreign mount or target/options drift rejected')
+        require({m.get('Name') for m in mounts} == set(expected_mounts),
                 'Missing project mounts')
         for mount in data.get('Mounts', []):
             volume = json.loads(self.docker('volume', 'inspect', mount['Name']))[0]

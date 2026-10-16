@@ -31,14 +31,16 @@ class StageGuards(unittest.TestCase):
                 'HostConfig': {'Binds': [], 'PortBindings': {}, 'Privileged': service == 'daemon',
                                'NetworkMode': network if service == 'daemon' else 'container:daemon-synthetic-id'},
                 'NetworkSettings': {'Networks': {network: {}}},
-                'Mounts': [{'Type': 'volume', 'Name': self.subject.project + '_' + volume} for volume in volumes]}
+                'Mounts': [{'Type': 'volume', 'Name': self.subject.project + '_' + volume,
+                            'Destination': {'recovery-data': '/var/lib/docker', 'recovery-socket': '/run/recovery-docker',
+                                            'recovery-workspace': '/work'}[volume], 'RW': True} for volume in volumes]}
 
-    def inspection(self, runner=None):
+    def inspection(self, runner=None, daemon=None):
         def inspect(*args):
             kind, operation, name = args
             self.assertEqual(operation, 'inspect')
             if kind == 'container':
-                data = (runner if runner is not None else self.container()) if name == self.subject.names['runner'] else self.container('daemon')
+                data = (runner if runner is not None else self.container()) if name == self.subject.names['runner'] else (daemon if daemon is not None else self.container('daemon'))
             else:
                 data = {'Name': name, 'Driver': 'bridge' if kind == 'network' else 'local',
                         'Labels': {'com.docker.compose.project': self.subject.project}, 'Options': None}
@@ -50,6 +52,50 @@ class StageGuards(unittest.TestCase):
                 patch('subprocess.run', side_effect=AssertionError('Process invoked')):
             self.assertEqual(self.subject.owned('runner')['Id'], 'runner-synthetic-id')
             self.assertEqual(self.subject.owned('daemon')['Id'], 'daemon-synthetic-id')
+
+    def test_compose_named_volume_binds_pass_for_both_services(self):
+        runner, daemon = self.container(), self.container('daemon')
+        for item in (runner, daemon):
+            item['HostConfig']['Binds'] = [m['Name'] + ':' + m['Destination'] + ':rw' for m in item['Mounts']]
+        with patch.object(self.subject, 'docker', side_effect=self.inspection(runner, daemon)), \
+                patch('subprocess.run', side_effect=AssertionError('Process invoked')):
+            self.subject.owned('runner')
+            self.subject.owned('daemon')
+
+    def test_named_volume_bind_normalization_rejects_foreign_sources_targets_options_and_duplicates(self):
+        valid = [m['Name'] + ':' + m['Destination'] + ':rw' for m in self.container()['Mounts']]
+        invalids = [valid[:1], valid + [valid[0]], [valid[0], valid[0]],
+                    [valid[0].replace(':rw', ':ro'), valid[1]],
+                    [valid[0].replace(':rw', ':rw,z'), valid[1]],
+                    [valid[0].replace('/run/recovery-docker', '/var/run/docker.sock'), valid[1]],
+                    ['/var/run/docker.sock:/run/recovery-docker:rw', valid[1]],
+                    ['C:/private:/run/recovery-docker:rw', valid[1]],
+                    ['arman-bank_socket:/run/recovery-docker:rw', valid[1]], '', {}, 'private']
+        for binds in invalids:
+            data = self.container()
+            data['HostConfig']['Binds'] = binds
+            with self.subTest(binds=binds), patch.object(self.subject, 'docker', side_effect=self.inspection(data)):
+                with self.assertRaises(stage.GuardError):
+                    self.subject.owned('runner')
+
+    def test_effective_mounts_reject_drift_even_with_valid_compose_binds(self):
+        for change in ('target', 'readonly', 'type', 'duplicate', 'extra', 'label'):
+            data = self.container()
+            data['HostConfig']['Binds'] = [m['Name'] + ':' + m['Destination'] + ':rw' for m in data['Mounts']]
+            if change == 'target': data['Mounts'][0]['Destination'] = '/private'
+            if change == 'readonly': data['Mounts'][0]['RW'] = False
+            if change == 'type': data['Mounts'][0]['Type'] = 'bind'
+            if change == 'duplicate': data['Mounts'][1] = dict(data['Mounts'][0])
+            if change == 'extra': data['Mounts'].append(dict(data['Mounts'][0]))
+            original = self.inspection(data)
+            def inspect(*args):
+                result = json.loads(original(*args))
+                if change == 'label' and args[0] == 'volume':
+                    result[0]['Labels']['com.docker.compose.project'] = 'arman-bank'
+                return json.dumps(result).encode()
+            with self.subTest(change=change), patch.object(self.subject, 'docker', side_effect=inspect):
+                with self.assertRaises(stage.GuardError):
+                    self.subject.owned('runner')
 
     def test_default_plan_does_not_construct_stage_or_start_process(self):
         with (patch('sys.argv', ['stage']), patch.object(stage, 'Stage', side_effect=AssertionError('Stage created')),
