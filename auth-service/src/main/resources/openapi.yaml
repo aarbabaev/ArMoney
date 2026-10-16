@@ -4,6 +4,464 @@ info:
   version: 0.1.0
   description: Operational API and identity registration/session API. New registrations require an immutable unique UAE mobile claim. Local email and phone ownership are not verified. Trusted SSO email verification is retained separately for private notification contact lookup.
 paths:
+  /internal/enrollments:
+    {
+      "post": {
+        "operationId": "stageVerificationEnrollment",
+        "description": "Private default-disabled authority bridge. Full six-field server binding is mandatory in authority mode. No gateway exposure or ACTIVE/banking eligibility. Unregistered when the new flag is false; legacy constructor mode is separate. Body bounded to 12 KiB; credentials precede parsing.",
+        "security": [
+          {
+            "VerificationBridge": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthorityEnrollmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Operation result; not banking authorization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorityEnrollmentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid bounded request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bridge credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Route is unregistered when authority bridge is disabled; missing enrollment is not a 404 authority-mode contract",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict, stale or expired enrollment/contact/flow/challenge",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Admission, concurrency or attempt limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Observation or staged authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request body exceeds the 12 KiB bound",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  /internal/enrollments/{id}/status:
+    {
+      "post": {
+        "operationId": "stagedVerificationStatus",
+        "description": "Private default-disabled authority bridge. Full six-field server binding is mandatory in authority mode. No gateway exposure or ACTIVE/banking eligibility. Unregistered when the new flag is false; legacy constructor mode is separate. Body bounded to 12 KiB; credentials precede parsing.",
+        "security": [
+          {
+            "VerificationBridge": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthorityStatusRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Operation result; not banking authorization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorityEnrollmentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid bounded request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bridge credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Route is unregistered when authority bridge is disabled; missing enrollment is not a 404 authority-mode contract",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict, stale or expired enrollment/contact/flow/challenge",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Admission, concurrency or attempt limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Observation or staged authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request body exceeds the 12 KiB bound",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    }
+  /internal/enrollments/{id}/challenges:
+    {
+      "post": {
+        "operationId": "issueStagedVerificationChallenge",
+        "description": "Private default-disabled authority bridge. Full six-field server binding is mandatory in authority mode. No gateway exposure or ACTIVE/banking eligibility. Unregistered when the new flag is false; legacy constructor mode is separate. Body bounded to 12 KiB; credentials precede parsing.",
+        "security": [
+          {
+            "VerificationBridge": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthorityChallengeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Operation result; not banking authorization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorityChallengeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid bounded request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bridge credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Route is unregistered when authority bridge is disabled; missing enrollment is not a 404 authority-mode contract",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict, stale or expired enrollment/contact/flow/challenge",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Admission, concurrency or attempt limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Observation or staged authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request body exceeds the 12 KiB bound",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    }
+  /internal/enrollments/{id}/challenges/{challenge}/consume:
+    {
+      "post": {
+        "operationId": "consumeStagedVerificationChallenge",
+        "description": "Private default-disabled authority bridge. Full six-field server binding is mandatory in authority mode. No gateway exposure or ACTIVE/banking eligibility. Unregistered when the new flag is false; legacy constructor mode is separate. Body bounded to 12 KiB; credentials precede parsing.",
+        "security": [
+          {
+            "VerificationBridge": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthorityConsumeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Operation result; not banking authorization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorityConsumeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid bounded request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bridge credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Route is unregistered when authority bridge is disabled; missing enrollment is not a 404 authority-mode contract",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict, stale or expired enrollment/contact/flow/challenge",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Admission, concurrency or attempt limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Observation or staged authority unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request body exceeds the 12 KiB bound",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "challenge",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    }
   /health/live:
     get:
       operationId: liveness
@@ -210,6 +668,329 @@ paths:
           $ref: '#/components/responses/Unavailable'
 components:
   schemas:
+    AuthorityEnrollmentRequest:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "issuer",
+          "subject",
+          "client_id",
+          "provider_root_session_id",
+          "provider_tab_id",
+          "authentication_session_id",
+          "command_id",
+          "phone_number",
+          "email"
+        ],
+        "properties": {
+          "issuer": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "client_id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "provider_root_session_id": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "provider_tab_id": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "authentication_session_id": {
+            "type": "string",
+            "maxLength": 43
+          },
+          "command_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "phone_number": {
+            "type": "string",
+            "pattern": "^\\+9715[024568][0-9]{7}$"
+          },
+          "email": {
+            "type": "string",
+            "maxLength": 254
+          }
+        }
+      }
+    AuthorityStatusRequest:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "issuer",
+          "subject",
+          "client_id",
+          "provider_root_session_id",
+          "provider_tab_id",
+          "authentication_session_id"
+        ],
+        "properties": {
+          "issuer": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "client_id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "provider_root_session_id": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "provider_tab_id": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "authentication_session_id": {
+            "type": "string",
+            "maxLength": 43
+          }
+        }
+      }
+    AuthorityChallengeRequest:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "issuer",
+          "subject",
+          "client_id",
+          "provider_root_session_id",
+          "provider_tab_id",
+          "authentication_session_id",
+          "command_id",
+          "purpose",
+          "contact_version"
+        ],
+        "properties": {
+          "issuer": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "client_id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "provider_root_session_id": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "provider_tab_id": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "authentication_session_id": {
+            "type": "string",
+            "maxLength": 43
+          },
+          "command_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "REGISTRATION_EMAIL",
+              "REGISTRATION_PHONE"
+            ]
+          },
+          "contact_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    AuthorityConsumeRequest:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "issuer",
+          "subject",
+          "client_id",
+          "provider_root_session_id",
+          "provider_tab_id",
+          "authentication_session_id",
+          "command_id",
+          "purpose",
+          "contact_version",
+          "code"
+        ],
+        "properties": {
+          "issuer": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "client_id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "provider_root_session_id": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "provider_tab_id": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "authentication_session_id": {
+            "type": "string",
+            "maxLength": 43
+          },
+          "command_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "REGISTRATION_EMAIL",
+              "REGISTRATION_PHONE"
+            ]
+          },
+          "contact_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^[0-9]{6}$"
+          }
+        }
+      }
+    AuthorityEnrollmentResponse:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "enrollment_id",
+          "version",
+          "state",
+          "email_contact_version",
+          "phone_contact_version",
+          "email_verified",
+          "phone_verified"
+        ],
+        "properties": {
+          "enrollment_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "PENDING_CONTACTS",
+              "BLOCKED_MIGRATION",
+              "PROJECTION_PENDING",
+              "PROJECTED",
+              "SUSPENDED"
+            ]
+          },
+          "email_contact_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "phone_contact_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "email_verified": {
+            "type": "boolean"
+          },
+          "phone_verified": {
+            "type": "boolean"
+          }
+        }
+      }
+    AuthorityChallengeResponse:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "challenge_id",
+          "state",
+          "expires_at",
+          "resend_at",
+          "attempts_remaining"
+        ],
+        "properties": {
+          "challenge_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "PENDING_DELIVERY"
+            ]
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "resend_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "attempts_remaining": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5
+          }
+        }
+      }
+    AuthorityConsumeResponse:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "receipt_id",
+          "contact_version",
+          "state"
+        ],
+        "properties": {
+          "receipt_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "contact_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "CONSUMED"
+            ]
+          }
+        }
+      }
     Health:
       type: object
       required: [status]
@@ -291,6 +1072,12 @@ components:
         error:
           type: string
   securitySchemes:
+    VerificationBridge:
+      {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-ArMoney-SSO-Bridge-Key"
+      }
     BearerAuth:
       type: http
       scheme: bearer

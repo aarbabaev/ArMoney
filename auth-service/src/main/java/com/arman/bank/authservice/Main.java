@@ -13,11 +13,13 @@ public final class Main {
     public static void main(String[] args) throws Exception {
         var deliveryConfig = new com.arman.bank.authservice.infrastructure.VerificationDeliveryConfiguration(System.getenv());
         var projectionConfig = new com.arman.bank.authservice.infrastructure.VerificationProjectionConfiguration(System.getenv());
+        var authorityConfig = new com.arman.bank.authservice.infrastructure.VerificationAuthorityConfiguration(System.getenv());
         var database = new Database(ServiceRuntime.required("DB_URL"), ServiceRuntime.required("DB_USER"), ServiceRuntime.required("DB_PASSWORD"));
         com.arman.bank.authservice.infrastructure.KeycloakTokens sso = null;
         com.arman.bank.authservice.infrastructure.HttpRegistrationProfiles profiles = null;
         com.arman.bank.authservice.infrastructure.VerificationDeliveryWorker verificationDelivery = null;
         com.arman.bank.authservice.infrastructure.VerificationProjectionWorker verificationProjection = null;
+        com.arman.bank.authservice.infrastructure.VerificationAuthorityConfiguration.Resources authorityResources = null;
         ServiceRuntime startedRuntime = null;
         try {
             var serviceKey = ServiceRuntime.required("INTERNAL_AUTH_KEY");
@@ -33,12 +35,17 @@ public final class Main {
             var verificationWorker = verificationDelivery;
             verificationProjection = projectionConfig.worker(database);
             var projectionWorker = verificationProjection;
+            authorityResources = authorityConfig.open(database);
+            var verificationAuthority = authorityResources;
             var routes = new AuthRoutes(new AuthService(new PostgresAuthStore(database), new Argon2Passwords(), Clock.systemUTC(), registrationProfiles),
                     serviceKey, provider == null ? token -> {
                         throw new com.arman.bank.authservice.application.AuthFailure(com.arman.bank.authservice.application.AuthFailure.Kind.UNAVAILABLE);
                     } : provider);
             var runtime = ServiceRuntime.start("auth-service", Integer.parseInt(System.getenv().getOrDefault("PORT", "8080")),
-                    database, routes::configure);
+                    database, config -> {
+                        routes.configure(config);
+                        if (verificationAuthority != null) verificationAuthority.routes().configure(config);
+                    });
             startedRuntime = runtime;
             if (verificationWorker != null) verificationWorker.start();
             if (projectionWorker != null) projectionWorker.start();
@@ -46,10 +53,14 @@ public final class Main {
                 try { if (verificationWorker != null) verificationWorker.close(); }
                 finally {
                     try { if (projectionWorker != null) projectionWorker.close(); }
-                    finally { runtime.close(); registrationProfiles.close(); if (provider != null) provider.close(); }
+                    finally {
+                        try { if (verificationAuthority != null) verificationAuthority.close(); }
+                        finally { runtime.close(); registrationProfiles.close(); if (provider != null) provider.close(); }
+                    }
                 }
             }, "auth-shutdown"));
         } catch (Exception e) {
+            if (authorityResources != null) authorityResources.close();
             if (verificationProjection != null) verificationProjection.close();
             if (verificationDelivery != null) verificationDelivery.close();
             if (profiles != null) profiles.close();

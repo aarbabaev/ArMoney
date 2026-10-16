@@ -1,6 +1,8 @@
 package com.arman.bank.authservice.infrastructure;
 
 import com.arman.bank.authservice.application.VerificationService;
+import com.arman.bank.authservice.application.IdentityVerificationService;
+import com.arman.bank.authservice.domain.IdentityVerification;
 import com.arman.bank.authservice.domain.Verification.*;
 import com.arman.bank.authservice.domain.Verification.Error;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -17,10 +19,18 @@ public final class VerificationRoutes {
         .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
         .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private static final Set<String> BINDING = Set.of("issuer", "subject", "authentication_session_id");
+    private static final Set<String> AUTHORITY_BINDING = Set.of("issuer", "subject", "client_id", "provider_root_session_id", "provider_tab_id", "authentication_session_id");
     private final VerificationService service;
+    private final IdentityVerificationService authority;
     private final byte[] bridgeKey;
     public VerificationRoutes(VerificationService service, String bridgeKey) {
-        this.service = Objects.requireNonNull(service);
+        this(Objects.requireNonNull(service),null,bridgeKey);
+    }
+    public VerificationRoutes(IdentityVerificationService authority,String bridgeKey){
+        this(null,Objects.requireNonNull(authority),bridgeKey);
+    }
+    private VerificationRoutes(VerificationService service,IdentityVerificationService authority,String bridgeKey){
+        this.service=service;this.authority=authority;
         if (bridgeKey == null || bridgeKey.length() < 32 || bridgeKey.length() > 256
                 || bridgeKey.chars().anyMatch(c -> c < 33 || c > 126))
             throw new IllegalArgumentException("Invalid SSO_VERIFICATION_BRIDGE_KEY");
@@ -31,15 +41,21 @@ public final class VerificationRoutes {
         // Each handler authenticates before reading the body; unrelated auth handlers retain their errors.
         config.routes.post("/internal/enrollments", ctx -> handle(ctx, () -> {
             var body = body(ctx, "command_id", "phone_number", "email");
-            return enrollment(service.enroll(new EnrollmentCommand(uuid(body, "command_id"), binding(body), text(body, "phone_number", 13), text(body, "email", 254))));
+            String phone=text(body,"phone_number",13),email=text(body,"email",254);
+            if(authority!=null&&(!VerificationService.canonicalPhone(phone)||!email.equals(VerificationService.normalizeEmail(email))))throw new Failure(Error.BAD_INPUT);
+            return enrollment(authority==null?service.enroll(new EnrollmentCommand(uuid(body,"command_id"),binding(body),phone,email))
+                :authority.enroll("sso-provider",new IdentityVerification.Enrollment(uuid(body,"command_id"),flow(body),phone,email)));
         }));
         config.routes.post("/internal/enrollments/{id}/status", ctx -> handle(ctx, () -> {
             var body = body(ctx);
-            return enrollment(service.status(uuid(ctx.pathParam("id")), binding(body)));
+            return enrollment(authority==null?service.status(uuid(ctx.pathParam("id")),binding(body))
+                :authority.status("sso-provider",uuid(ctx.pathParam("id")),flow(body)));
         }));
         config.routes.post("/internal/enrollments/{id}/challenges", ctx -> handle(ctx, () -> {
             var body = body(ctx, "command_id", "purpose", "contact_version");
-            Result result = service.issue(new ChallengeCommand(uuid(body, "command_id"), uuid(ctx.pathParam("id")), binding(body), purpose(body), version(body)));
+            Result result = authority==null?service.issue(new ChallengeCommand(uuid(body,"command_id"),uuid(ctx.pathParam("id")),binding(body),purpose(body),version(body)))
+                :authority.issue("sso-provider",new IdentityVerification.Issue(uuid(body,"command_id"),uuid(ctx.pathParam("id")),flow(body),purpose(body),version(body)));
+            if(result.challengeId()==null||!"PENDING_DELIVERY".equals(result.state()))throw new Failure(Error.UNAVAILABLE);
             var response = new LinkedHashMap<String, Object>();
             response.put("challenge_id", result.challengeId()); response.put("state", safeState(result.state()));
             response.put("expires_at", result.expiresAt() == null ? null : result.expiresAt().toString());
@@ -49,8 +65,9 @@ public final class VerificationRoutes {
         }));
         config.routes.post("/internal/enrollments/{id}/challenges/{challenge}/consume", ctx -> handle(ctx, () -> {
             var body = body(ctx, "command_id", "purpose", "contact_version", "code");
-            Result result = service.consume(new ConsumeCommand(uuid(body, "command_id"), uuid(ctx.pathParam("id")), uuid(ctx.pathParam("challenge")),
-                binding(body), purpose(body), version(body), text(body, "code", 6)));
+            Result result = authority==null?service.consume(new ConsumeCommand(uuid(body,"command_id"),uuid(ctx.pathParam("id")),uuid(ctx.pathParam("challenge")),binding(body),purpose(body),version(body),text(body,"code",6)))
+                :authority.consume("sso-provider",new IdentityVerification.Consume(uuid(body,"command_id"),uuid(ctx.pathParam("id")),uuid(ctx.pathParam("challenge")),flow(body),purpose(body),version(body),text(body,"code",6)));
+            if(result.receiptId()==null||!"CONSUMED".equals(result.state())||result.contactVersion()!=version(body))throw new Failure(Error.UNAVAILABLE);
             return Map.of("receipt_id", result.receiptId(), "contact_version", result.contactVersion(), "state", safeState(result.state()));
         }));
     }
@@ -82,13 +99,13 @@ public final class VerificationRoutes {
             respond(ctx, 503, Map.of("error", "verification_unavailable"));
         }
     }
-    private static JsonNode body(Context ctx, String... extra) {
+    private JsonNode body(Context ctx, String... extra) {
         if (ctx.bodyAsBytes().length > 12288) throw new io.javalin.http.HttpResponseException(413, "Request too large");
         String type = ctx.contentType();
         if (type == null || !type.split(";", 2)[0].strip().equalsIgnoreCase("application/json")) throw new Failure(Error.BAD_INPUT);
         try {
             JsonNode body = JSON.readTree(ctx.body());
-            Set<String> allowed = new HashSet<>(BINDING); Collections.addAll(allowed, extra);
+            Set<String> allowed = new HashSet<>(authority==null?BINDING:AUTHORITY_BINDING); Collections.addAll(allowed, extra);
             if (body == null || !body.isObject() || body.size() != allowed.size()) throw new Failure(Error.BAD_INPUT);
             var names = body.fieldNames();
             while (names.hasNext()) if (!allowed.contains(names.next())) throw new Failure(Error.BAD_INPUT);
@@ -99,6 +116,7 @@ public final class VerificationRoutes {
     private static Binding binding(JsonNode body) {
         return new Binding(text(body, "issuer", 512), text(body, "subject", 255), text(body, "authentication_session_id", 255));
     }
+    private static IdentityVerification.Flow flow(JsonNode body){return new IdentityVerification.Flow(text(body,"issuer",512),text(body,"subject",255),text(body,"client_id",128),text(body,"provider_root_session_id",255),text(body,"provider_tab_id",255),text(body,"authentication_session_id",43));}
     private static String text(JsonNode body, String name, int max) {
         JsonNode value = body.get(name);
         if (value == null || !value.isTextual() || value.textValue().isBlank() || value.textValue().length() > max)
@@ -119,10 +137,13 @@ public final class VerificationRoutes {
         if (value == null || !value.isIntegralNumber() || !value.canConvertToInt() || value.intValue() < 1) throw new Failure(Error.BAD_INPUT);
         return value.intValue();
     }
-    private static Map<String, Object> enrollment(Result result) {
+    private Map<String, Object> enrollment(Result result) {
+        Set<String> states=authority==null?Set.of("PENDING_CONTACTS","VERIFIED","BLOCKED_MIGRATION")
+            :Set.of("PENDING_CONTACTS","PROJECTION_PENDING","PROJECTED","SUSPENDED","BLOCKED_MIGRATION");
+        if(result.enrollmentId()==null||result.version()<1||result.emailContactVersion()<1||result.phoneContactVersion()<1||!states.contains(result.state()))throw new Failure(Error.UNAVAILABLE);
         var response = new LinkedHashMap<String, Object>();
         response.put("enrollment_id", result.enrollmentId()); response.put("version", result.version());
-        response.put("state", safeState(result.state())); response.put("email_contact_version", result.emailContactVersion());
+        response.put("state", result.state()); response.put("email_contact_version", result.emailContactVersion());
         response.put("phone_contact_version", result.phoneContactVersion()); response.put("email_verified", result.emailVerified());
         response.put("phone_verified", result.phoneVerified());
         return response;
