@@ -47,9 +47,15 @@ eligibility. Positive enrollment/proof consumers still require both flags true.
 This does not establish ACTIVE enrollment, create a banking session or activate
 registration. On 2026-10-16, nine focused provider tests and the full provider check/package
 run (54 tests, zero failures/errors/skips; counts are not additive) passed.
-Fourteen offline diagnostic tests also passed. Actual pinned two-node disable/read
-acceptance remains pending; these checks do not prove that Keycloak retains the
-flow after disabling its user.
+Sixteen offline diagnostic tests passed after the committed-baseline fixture fix.
+Actual pinned two-node acceptance at `85d7cbd` passed: node B returned the exact
+12-field negative observation after node A disabled the existing user, retaining
+the same live flow, bindings and future deadline; subsequent deletion returned503.
+Independent QA, security and reviewer audits verified the retained standalone
+receipt and the hosted build job117102507642 in CI38932950571.
+See [the runtime checkpoint](https://github.com/aarbabaev/ArMoney/pull/81#issuecomment-6220625685).
+These results apply to that source revision. After integration of main's dormant
+proof-wire corrections, fresh combined-head CI remains required before approval.
 ## Private auth wire
 
 The destination is fixed by `ARMONEY_AUTH_BRIDGE_URL`: HTTPS, or the exact
