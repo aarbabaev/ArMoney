@@ -72,7 +72,7 @@ class LoginOperationProcessesIntegrationSpec extends Specification {
     }
     long locks(){database.transaction{it.fetchOne("select count(*) from pg_locks where locktype='advisory' and database=(select oid from pg_database where datname=current_database()) and classid=cast(? as oid) and objsubid=2",NAMESPACE).get(0,Long)}}
     long rows(String table){database.transaction{it.fetchOne('select count(*) from '+table).get(0,Long)}}
-    def awaitCondition(Closure condition){long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(6);while(!condition.call()&&System.nanoTime()<end)Thread.sleep(20);assert condition.call()}
+    boolean awaitCondition(Closure condition){long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(6);while(!condition.call()&&System.nanoTime()<end)Thread.sleep(20);assert condition.call();true}
     def fixtureSlots(int amount){
         def acquired=[]
         try{
