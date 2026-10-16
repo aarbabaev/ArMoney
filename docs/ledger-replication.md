@@ -87,6 +87,53 @@ the original payment ID. Never create a replacement transfer to escape uncertain
 
 ## Monitor and recover
 
+The optional private ledger metrics observer passed the affected local ledger
+checks recorded below; this is not deployment evidence. With metrics opted in,
+explicitly configure `LEDGER_METRICS_REPLICA_NAMES=ledger_replica1,ledger_replica2`
+for the shipped two-standby profile. Names must be unique strict CSV members of
+1–64 printable ASCII characters without whitespace; their count must equal the
+nonblank `LEDGER_READ_DB_URLS` count. Invalid explicit configuration fails startup.
+The overlay does not set these names automatically. Absent names keep the metric
+unknown; disabled metrics or absent names allocate no observation pool.
+
+The observer owns a separate read-only primary pool, maximum one connection,
+minimum idle zero, with no eager connection requirement or Flyway migrations.
+It uses `DB_URL`/`DB_USER`/`DB_PASSWORD`, 250 ms acquisition/validation limits,
+one-second driver connection/socket timeouts, a 500 ms statement timeout and
+read-only session defaults. It closes before business pools on shutdown and
+startup failure. These component limits have not established measured total
+scrape timing; readiness is a separate probe. Restricted roles need visibility
+of the expected `pg_stat_replication` fields and permission to execute the
+observation functions; missing permission yields unknown, not a privilege change.
+
+Each scrape clears the previous gauge and requires every expected sender exactly
+once, primary mode, streaming state, non-NULL replay position/WAL difference and
+a reply timestamp within 30 seconds, never in the future. Fresh zero WAL
+difference reports zero even with an idle NULL interval. Positive WAL difference
+requires positive `replay_lag`, rounded upward to exact integer seconds. The
+aggregate is the maximum only when all expected senders are known. Missing,
+duplicate, stale, nonstreaming, inaccessible or invalid members, negative WAL
+difference, overflow or query failure omit the gauge, including any earlier zero.
+
+Positive values measure recent replay acknowledgment delay; they do not measure
+time since the last transaction, backlog age or catch-up ETA. Named sender
+observations with a matching URL count do not establish read-URL identity or
+durability. Existing readiness, routing fences and financial confirmation remain
+unchanged. See the [metrics contract](operational-metrics.md#optional-ledger-replica-observation)
+and [ADR 0040](adr/0040-replica-observation.md).
+
+On 2026-10-16, `gradlew.bat :ledger-service:check --no-daemon` passed against
+base `f506069e83c6622f80834f4848866dd73a92a791` plus the recorded observation
+source patch: 93 tests in 13 suites, zero failures, errors or skips. Both real
+physical-standby scenarios passed, including observation assertions for catch-up,
+paused replay, restricted permissions and disconnects. Evidence and the unchanged
+pre-run source hash manifest are preserved at
+`D:/ArMoneyDockerRecovery/2026-10-15/ledger-replica-observation-check/`.
+This local affected-module result does not establish current-main integrated CI,
+full repository checks, applicable Compose acceptance, independent verification,
+end-to-end timing or deployment; those remain pending. No persistent stack was
+operated for this check.
+
 Inspect `pg_stat_replication` for streaming/quorum state and WAL positions, and
 `pg_replication_slots` for `active`, `wal_status`, `restart_lsn` and retained WAL.
 `max_slot_wal_keep_size=1GB` bounds slot retention at checkpoints; it is not a hard
