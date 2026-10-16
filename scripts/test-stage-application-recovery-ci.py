@@ -18,6 +18,56 @@ spec.loader.exec_module(stage)
 
 
 class ArchiveGuards(unittest.TestCase):
+    def test_dependency_copy_tar_has_fixed_private_root_regular_file_and_exact_bytes(self):
+        payload = b'{"synthetic":"dependency-provenance"}'
+        raw = stage.dependency_archive(payload)
+        self.assertLessEqual(len(raw), 131072)
+        with tarfile.open(fileobj=io.BytesIO(raw), mode='r:') as archive:
+            entry, = archive.getmembers()
+            self.assertEqual((entry.name, entry.mode, entry.uid, entry.gid, entry.type),
+                             ('recovery-dependencies.json', 0o600, 0, 0, tarfile.REGTYPE))
+            self.assertEqual(archive.extractfile(entry).read(), payload)
+        stage.verify_dependency_copy(raw, payload)
+
+    def test_dependency_copy_rejects_mode_owner_type_name_content_and_inventory_drift(self):
+        payload = b'{"synthetic":true}'
+        for change in ('mode', 'uid', 'gid', 'symlink', 'directory', 'name', 'extra', 'content'):
+            output = io.BytesIO()
+            with tarfile.open(fileobj=output, mode='w', format=tarfile.USTAR_FORMAT) as archive:
+                entry = tarfile.TarInfo('foreign.json' if change == 'name' else 'recovery-dependencies.json')
+                entry.mode, entry.uid, entry.gid = (0o755 if change == 'mode' else 0o600), (1000 if change == 'uid' else 0), (1000 if change == 'gid' else 0)
+                data = b'{"different":true}' if change == 'content' else payload
+                if change in ('symlink', 'directory'):
+                    entry.type = tarfile.SYMTYPE if change == 'symlink' else tarfile.DIRTYPE
+                    entry.linkname = '/private'
+                    entry.size = 0
+                    archive.addfile(entry)
+                else:
+                    entry.size = len(data)
+                    archive.addfile(entry, io.BytesIO(data))
+                if change == 'extra':
+                    archive.addfile(tarfile.TarInfo('extra'))
+            with self.subTest(change=change), self.assertRaises(stage.GuardError):
+                stage.verify_dependency_copy(output.getvalue(), payload)
+
+    def test_dependency_copy_rejects_hidden_extended_headers_sparse_checksum_and_trailing_data(self):
+        payload = b'{"synthetic":true}'
+        valid = stage.dependency_archive(payload)
+        pax = io.BytesIO()
+        with tarfile.open(fileobj=pax, mode='w', format=tarfile.PAX_FORMAT, pax_headers={'comment': 'synthetic'}) as archive:
+            entry = tarfile.TarInfo('recovery-dependencies.json')
+            entry.mode, entry.uid, entry.gid, entry.size = 0o600, 0, 0, len(payload)
+            archive.addfile(entry, io.BytesIO(payload))
+        bad_checksum = bytearray(valid)
+        bad_checksum[0] ^= 1
+        invalids = [pax.getvalue(), bytes(bad_checksum), valid + b'x' + bytes(511)]
+        for kind in (tarfile.GNUTYPE_LONGNAME, tarfile.GNUTYPE_LONGLINK, tarfile.GNUTYPE_SPARSE, tarfile.SYMTYPE):
+            entry = tarfile.TarInfo('recovery-dependencies.json')
+            entry.type, entry.mode, entry.size = kind, 0o600, len(payload)
+            invalids.append(entry.tobuf(format=tarfile.USTAR_FORMAT) + valid[512:])
+        for raw in invalids:
+            with self.subTest(header=raw[156:157]), self.assertRaises(stage.GuardError):
+                stage.verify_dependency_copy(raw, payload)
     def test_json_duplicate_nonfinite_truncated_and_excessive_depth_fail_closed(self):
         for raw in ('{"revision":"a","revision":"b"}', '{"value":NaN}', '{', '[' * 10000 + '0' + ']' * 10000):
             with self.subTest(size=len(raw)), self.assertRaises(stage.GuardError):
@@ -117,6 +167,79 @@ class StageGuards(unittest.TestCase):
         self.source.mkdir()
         (self.source / '.git').mkdir()
         self.subject = stage.Stage('unix:///tmp/synthetic-outer.sock', self.source, 'a' * 40)
+
+    def test_bounded_copy_reader_kills_and_reaps_real_flooding_and_stalled_processes(self):
+        real_popen = stage.subprocess.Popen
+        for mode in ('flood', 'stall'):
+            processes, failures, results = [], [], []
+            script = ('import sys,threading; sys.stdout.buffer.write(bytes(1024**2)); sys.stdout.buffer.flush(); '
+                      'threading.Event().wait()' if mode == 'flood' else
+                      'import threading; threading.Event().wait()')
+            def launch(*args, **kwargs):
+                process = real_popen(*args, **kwargs)
+                processes.append(process)
+                return process
+            def read():
+                try:
+                    results.append(stage.read_bounded_process([sys.executable, '-u', '-c', script],
+                                                              self.subject.env, self.source, timeout=1))
+                except BaseException as error:
+                    failures.append(error)
+            with self.subTest(mode=mode), patch.object(stage.subprocess, 'Popen', side_effect=launch):
+                started = time.monotonic()
+                worker = threading.Thread(target=read, daemon=True)
+                worker.start()
+                worker.join(timeout=5)
+                rescue_required = worker.is_alive()
+                if rescue_required:
+                    for process in processes:
+                        if process.poll() is None:
+                            process.kill()
+                    worker.join(timeout=2)
+                for process in processes:
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait(timeout=2)
+                elapsed = time.monotonic() - started
+                self.assertFalse(rescue_required, 'Copy reader did not stop within its byte/deadline bounds')
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(len(processes), 1)
+                self.assertTrue(failures)
+                self.assertEqual(results, [])
+                self.assertIsNotNone(processes[0].returncode)
+                self.assertTrue(processes[0].stdout.closed)
+                self.assertLess(elapsed, 5)
+                if mode == 'stall':
+                    self.assertGreaterEqual(elapsed, 0.8, 'Synthetic stall failed before the watchdog deadline')
+
+    def test_dependency_copy_uses_tar_stdin_and_checks_mode_before_runner_start(self):
+        manifest = {'revision': 'a' * 40, 'platform': 'linux/amd64', 'images':
+                    {ref: {'outer_id': 'sha256:' + 'b' * 64, 'config_id': 'sha256:' + 'c' * 64} for ref in stage.IMAGES[2:]}}
+        path = self.source.parent / 'dependencies.json'
+        path.write_text(json.dumps(manifest))
+        path.chmod(0o600)
+        payload = path.read_bytes()
+        runner = {'Config': {'User': ''}, 'State': {'Running': False}}
+        with (patch.object(self.subject, 'owned', return_value=runner),
+              patch.object(self.subject, 'docker', return_value=b'') as docker,
+              patch.object(self.subject, 'read_dependency_copy', return_value=stage.dependency_archive(payload)) as readback):
+            self.subject.copy_dependencies(path)
+        self.assertEqual(docker.call_args_list[0].args, ('cp', '-a', '-', self.subject.names['runner'] + ':/work'))
+        stage.verify_dependency_copy(docker.call_args_list[0].kwargs['input'], payload)
+        self.assertEqual(docker.call_count, 1)
+        readback.assert_called_once_with()
+        with (patch.object(self.subject, 'owned', return_value=runner),
+              patch.object(stage, 'read_bounded_process', return_value=b'synthetic') as bounded):
+            self.subject.read_dependency_copy()
+        self.assertEqual(bounded.call_args.args, (['docker', '--host', self.subject.endpoint, 'cp',
+                         self.subject.names['runner'] + ':/work/recovery-dependencies.json', '-'],
+                         self.subject.env, self.source))
+        for state, user in ((True, ''), (False, '10001:10001')):
+            with (self.subTest(running=state, user=user),
+                  patch.object(self.subject, 'owned', return_value={'Config': {'User': user}, 'State': {'Running': state}}),
+                  patch.object(self.subject, 'docker', side_effect=AssertionError('Copy must not run'))):
+                with self.assertRaises(stage.GuardError):
+                    self.subject.copy_dependencies(path)
 
     def test_stream_transfer_binds_frozen_outer_identity_to_exact_imported_config_and_cancels_watchdog(self):
         archive, source, digest = ArchiveGuards().fixture()

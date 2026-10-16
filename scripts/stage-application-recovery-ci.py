@@ -5,6 +5,7 @@ host socket mounts, ambient Docker context or persistent application targets.
 """
 import argparse
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -168,6 +169,90 @@ def load_dependencies(path, revision):
     return data
 
 
+def dependency_archive(payload):
+    require(isinstance(payload, bytes) and 0 < len(payload) <= 65536, 'Bounded dependency payload required')
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode='w', format=tarfile.USTAR_FORMAT) as archive:
+        entry = tarfile.TarInfo('recovery-dependencies.json')
+        entry.mode, entry.uid, entry.gid, entry.size = 0o600, 0, 0, len(payload)
+        archive.addfile(entry, io.BytesIO(payload))
+    return output.getvalue()
+
+
+def verify_dependency_copy(archive_bytes, payload):
+    require(isinstance(archive_bytes, bytes) and len(archive_bytes) <= 131072, 'Dependency copy archive exceeds bound')
+    try:
+        require(len(archive_bytes) >= 1536 and len(archive_bytes) % 512 == 0, 'Invalid dependency archive length')
+        header = archive_bytes[:512]
+        require(header[257:263] == b'ustar\0' and header[263:265] == b'00', 'Only plain USTAR dependency copy accepted')
+        entry = tarfile.TarInfo.frombuf(header, 'utf-8', 'strict')
+        require(entry.name == 'recovery-dependencies.json' and entry.type == tarfile.REGTYPE and not entry.linkname
+                and entry.mode == 0o600 and entry.uid == 0 and entry.gid == 0 and entry.size == len(payload),
+                'Dependency copy path/type/ownership/mode differs')
+        end = 512 + entry.size
+        padded_end = end + (-entry.size % 512)
+        require(archive_bytes[512:end] == payload and not archive_bytes[end:padded_end].strip(b'\0'),
+                'Dependency copy contents/padding differ')
+        tail = archive_bytes[padded_end:]
+        require(len(tail) >= 1024 and not tail.strip(b'\0'), 'Dependency copy extra members or trailer rejected')
+    except (tarfile.TarError, OSError, ValueError, TypeError, AttributeError):
+        raise GuardError('Dependency copy verification failed; details withheld') from None
+
+
+def read_bounded_process(argv, environment, cwd, limit=131072, timeout=30):
+    """Read a finite private stream; kill/reap the producer on overflow or stall."""
+    require(type(limit) is int and 0 < limit <= 131072 and type(timeout) in (int, float) and 0 < timeout <= 30,
+            'Bounded copy reader limits required')
+    process = None
+    expired = threading.Event()
+    deadline = time.monotonic() + timeout
+    def stop():
+        expired.set()
+        try:
+            if process is not None and process.poll() is None:
+                process.kill()
+        except OSError:
+            pass
+    watchdog = threading.Timer(timeout, stop)
+    watchdog.daemon = True
+    watchdog.start()
+    try:
+        process = subprocess.Popen(argv, cwd=cwd, env=environment, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        result = bytearray()
+        while True:
+            block = process.stdout.read(min(65536, limit + 1 - len(result)))
+            require(not expired.is_set() and time.monotonic() < deadline, 'Dependency copy stream expired')
+            require(len(result) + len(block) <= limit, 'Dependency copy stream exceeds bound')
+            if not block:
+                break
+            result.extend(block)
+        require(process.wait(timeout=5) == 0 and not expired.is_set() and time.monotonic() < deadline,
+                'Dependency copy command failed or expired')
+        return bytes(result)
+    finally:
+        failed = sys.exc_info()[0] is not None
+        watchdog.cancel()
+        cleanup_failed = False
+        if process is not None:
+            try:
+                if process.poll() is None:
+                    process.kill()
+            except OSError:
+                cleanup_failed = True
+            try:
+                process.wait(timeout=5)
+            except (OSError, subprocess.SubprocessError):
+                cleanup_failed = True
+            finally:
+                try:
+                    process.stdout.close()
+                except OSError:
+                    cleanup_failed = True
+        if cleanup_failed and not failed:
+            raise GuardError('Dependency copy process cleanup incomplete')
+
+
 class Stage:
     def __init__(self, endpoint, source, revision):
         self.endpoint = validate_endpoint(endpoint)
@@ -268,6 +353,27 @@ class Stage:
         require(isinstance(rows, list) and len(rows) == 1 and
                 re.fullmatch('sha256:[0-9a-f]{64}', rows[0].get('Id', '')) is not None, 'Local image unavailable')
         return rows[0]['Id']
+
+    def copy_dependencies(self, path):
+        manifest = load_dependencies(path, self.revision)
+        payload = Path(path).read_bytes()
+        require(strict_json(payload) == manifest, 'Dependency manifest changed before copy')
+        runner = self.owned('runner')
+        require(runner.get('State', {}).get('Running') is False and
+                runner.get('Config', {}).get('User', '') in ('', '0', '0:0', 'root', 'root:root'),
+                'Stopped root runner required for dependency manifest')
+        self.docker('cp', '-a', '-', self.names['runner'] + ':/work', input=dependency_archive(payload), timeout=30)
+        runner = self.owned('runner')
+        require(runner.get('State', {}).get('Running') is False, 'Dependency runner started before verification')
+        copied = self.read_dependency_copy()
+        verify_dependency_copy(copied, payload)
+
+    def read_dependency_copy(self):
+        runner = self.owned('runner')
+        require(runner.get('State', {}).get('Running') is False, 'Stopped owned runner required for bounded copy')
+        return read_bounded_process(['docker', '--host', self.endpoint, 'cp',
+                                     self.names['runner'] + ':/work/recovery-dependencies.json', '-'],
+                                    self.env, self.source)
 
     def transfer_image(self, reference, outer_id, timeout=600):
         require(type(timeout) in (int, float) and 0 < timeout <= 600, 'Bounded image transfer timeout required')
@@ -426,9 +532,7 @@ class Stage:
                 dependency_manifest = directory / 'recovery-dependencies.json'
                 dependency_manifest.write_text(json.dumps(dependencies), encoding='utf-8')
                 dependency_manifest.chmod(0o600)
-                load_dependencies(dependency_manifest, self.revision)
-                self.owned('runner')
-                self.docker('cp', str(dependency_manifest), self.names['runner'] + ':/work/recovery-dependencies.json')
+                self.copy_dependencies(dependency_manifest)
                 self.source_check()
                 self.phase = 'build'
                 self.owned('runner')
