@@ -1268,6 +1268,30 @@ safe. Local affected Auth checks passed 675 tests across 38 suites without failu
 registration enforcement are not claimed. See
 [ADR 0039](docs/adr/0039-managed-registration-completion.md).
 
+### Internal managed eligibility grants: validated internal evidence slice
+
+`AUTH_REGISTRATION_ELIGIBILITY_GRANTS_ENABLED` defaults false and requires managed
+completion, authority bridge and projection configuration. V11 source adds
+immutable evidence keyed by managed identity/epoch, binding current email/phone
+candidate receipts, exact acknowledged projection and expiry. First-grant creation
+uses an authorized PRETOKEN status flow without requiring an existing grant or
+ACTIVE. Auth admission supplies a database anchor, HTTP observation occurs outside
+the transaction, and local revalidation uses the shared verification, projection,
+then login-proof control locks. The record is local evidence, never a credential;
+future consumers must obtain fresh current evidence and enforce expiry again.
+
+Local invalidation preserves historical rows and suspends authority/advances epoch.
+On 2026-10-16, the full local Auth check passed 728 tests across 41 suites in
+11m 50s, with zero failures, errors or skips. Independent security verification of
+the Auth capability verified SEC-GRANT-001 (synthetic negative STATUS HTTP through the
+real Auth adapter/service/PostgreSQL path) and SEC-GRANT-002 (final expiry
+revalidation). Actual Keycloak negative-fact propagation remains unproven; the
+provider currently supplies positive facts or unavailable responses. Exact combined
+CI is pending. No ACTIVE, public seven-field response change, session/token grant,
+positive proof authority, legacy backfill or activation is introduced. Managed
+banking denial remains in force in every mode. No automatic renewal, suspension
+recovery or general retention/erasure guarantee is supplied. See
+[ADR 0041](docs/adr/0041-internal-managed-eligibility-grants.md).
 ### Bounded replica observation follow-up
 
 Ledger can optionally observe explicitly named primary WAL senders for metrics only.

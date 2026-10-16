@@ -114,4 +114,22 @@ class VerificationAuthorityConfigurationSpec extends Specification {
         then:
         thrown(IllegalArgumentException)
     }
+    def 'eligibility grants are independently strict default off and cannot bypass completion prerequisites'(){
+        expect:
+        !new VerificationAuthorityConfiguration(environment()).eligibilityGrantsEnabled
+        when:
+        new VerificationAuthorityConfiguration(environment()+[AUTH_REGISTRATION_ELIGIBILITY_GRANTS_ENABLED:value])
+        then:
+        thrown(IllegalArgumentException)
+        where:
+        value << ['true','TRUE','1',' true','',null]
+    }
+    def 'eligibility grants accept only fully configured completion mode'(){
+        given:
+        def env=environment()+[AUTH_REGISTRATION_AUTHORITY_COMPLETION_ENABLED:'true',AUTH_VERIFICATION_PROJECTION_ENABLED:'true',
+            AUTH_VERIFICATION_PROJECTION_WRITER_ID:'auth-projection',AUTH_TO_USER_VERIFICATION_PROJECTION_KEY:'synthetic-projection-credential-unique',
+            AUTH_VERIFICATION_PROJECTION_RETENTION_KEY:encoded(14),USER_BASE_URL:'http://user-service:8080',AUTH_REGISTRATION_ELIGIBILITY_GRANTS_ENABLED:'true']
+        expect:
+        new VerificationAuthorityConfiguration(env).eligibilityGrantsEnabled
+    }
 }

@@ -43,8 +43,13 @@ public final class IdentityVerification {
         if(!policy.issuers().contains(flow.issuer())||!policy.clients().contains(flow.clientId()))fail(Verification.Error.BINDING);
     }
     public static void evidence(Flow expected,Observation observation,Instant now){
+        if(observation==null||!observation.enabled()||!observation.sessionActive())fail(Verification.Error.UNAVAILABLE);
+        statusEvidence(expected,observation,now);
+    }
+    /** Exact current status facts, including negative flags; not positive enrollment authority. */
+    public static void statusEvidence(Flow expected,Observation observation,Instant now){
         if(observation==null)fail(Verification.Error.UNAVAILABLE);
-        if(!Objects.equals(expected,observation.flow())||!observation.enabled()||!observation.sessionActive()
+        if(!Objects.equals(expected,observation.flow())
                 ||observation.observationStartedAt()==null||observation.observationStartedAt().isAfter(now)
                 ||observation.observationStartedAt().isBefore(now.minusSeconds(5))||observation.sessionExpiresAt()==null
                 ||!now.isBefore(observation.sessionExpiresAt()))fail(Verification.Error.UNAVAILABLE);
