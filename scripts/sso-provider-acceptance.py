@@ -42,6 +42,8 @@ PHASES = frozenset({"START", "KEY_VALIDATION", "READINESS", "ADMIN_LOGIN", "REAL
                     "CROSS_NODE", "READ_ONLY", "READ_ONLY_RPC", "READ_ONLY_EXPIRY", "READ_ONLY_DTO",
                     "READ_ONLY_INSPECT", "READ_ONLY_TIMESTAMP", "READ_ONLY_HMAC_DENIAL",
                     "READ_ONLY_SUBJECT_DENIAL", "READ_ONLY_KEY_DENIAL", "EXPIRY", "TAB_REMOVAL", "ROOT_REMOVAL",
+                    "TAB_DELETE_RPC", "TAB_INSPECT_RPC", "TAB_ABSENCE", "TAB_OBSERVER_DENIAL",
+                    "ROOT_DELETE_RPC", "ROOT_INSPECT_RPC", "ROOT_ABSENCE", "ROOT_OBSERVER_DENIAL",
                     "DISABLE_DELETE", "CLEANUP", "COMPLETE"})
 BRIDGE_ERRORS = frozenset({"BRIDGE_BODY", "BRIDGE_OBSERVER", "BRIDGE_DTO", "BRIDGE_CONTACTS", "BRIDGE_UNKNOWN"})
 HTTP_CODES = frozenset({200, 400, 401, 403, 404, 405, 500, 503})
@@ -350,6 +352,19 @@ def read_only_checks(node, flow, first, initial_inspection):
            "private credential denial")
 
 
+def removal_checks(a, b, flow, kind):
+    require(kind in ("tab", "root"), "fixed removal kind")
+    phase("TAB_DELETE_RPC" if kind == "tab" else "ROOT_DELETE_RPC")
+    controls(a, "delete-" + kind, flow)
+    phase("TAB_INSPECT_RPC" if kind == "tab" else "ROOT_INSPECT_RPC")
+    inspected = controls(b, "inspect", flow)
+    phase("TAB_ABSENCE" if kind == "tab" else "ROOT_ABSENCE")
+    require(not inspected["tab_present" if kind == "tab" else "root_present"],
+            "committed removal visible on B")
+    phase("TAB_OBSERVER_DENIAL" if kind == "tab" else "ROOT_OBSERVER_DENIAL")
+    expect(503, observer(b, flow, diagnostic=observer_boundary), "removed session denial")
+
+
 def acceptance():
     phase("READINESS")
     from playwright.sync_api import sync_playwright
@@ -443,15 +458,11 @@ def acceptance():
             phase("READ_ONLY")
             read_only_checks(b, flow, first, right)
             phase("TAB_REMOVAL")
-            controls(a, "delete-tab", flow)
-            require(not controls(b, "inspect", flow)["tab_present"], "committed tab removal visible on B")
-            expect(503, observer(b, flow), "removed tab denial")
+            removal_checks(a, b, flow, "tab")
             page.close()
             page, flow, first = login()
             phase("ROOT_REMOVAL")
-            controls(a, "delete-root", flow)
-            require(not controls(b, "inspect", flow)["root_present"], "committed root removal visible on B")
-            expect(503, observer(b, flow), "removed root denial")
+            removal_checks(a, b, flow, "root")
             page.close()
             page, flow, first = login()
             phase("EXPIRY")

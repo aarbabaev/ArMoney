@@ -33,7 +33,9 @@ class DiagnosticsTest(unittest.TestCase):
                     "USER_SETUP", "BROWSER_RENDER", "SEND_RPC", "CROSS_NODE", "READ_ONLY",
                     "READ_ONLY_RPC", "READ_ONLY_EXPIRY", "READ_ONLY_DTO", "READ_ONLY_INSPECT",
                     "READ_ONLY_TIMESTAMP", "READ_ONLY_HMAC_DENIAL", "READ_ONLY_SUBJECT_DENIAL", "READ_ONLY_KEY_DENIAL",
-                    "EXPIRY", "TAB_REMOVAL", "ROOT_REMOVAL", "DISABLE_DELETE", "CLEANUP", "COMPLETE"}
+                    "EXPIRY", "TAB_REMOVAL", "ROOT_REMOVAL", "DISABLE_DELETE", "CLEANUP", "COMPLETE",
+                    "TAB_DELETE_RPC", "TAB_INSPECT_RPC", "TAB_ABSENCE", "TAB_OBSERVER_DENIAL",
+                    "ROOT_DELETE_RPC", "ROOT_INSPECT_RPC", "ROOT_ABSENCE", "ROOT_OBSERVER_DENIAL"}
         self.assertEqual(expected, HARNESS.PHASES)
         for label in sorted(expected):
             with self.subTest(phase=label):
@@ -170,6 +172,32 @@ class DiagnosticsTest(unittest.TestCase):
                       "READ_ONLY_TIMESTAMP","READ_ONLY_HMAC_DENIAL","READ_ONLY_SUBJECT_DENIAL","READ_ONLY_KEY_DENIAL"):
             with self.subTest(phase=fault):
                 self.run_read_only_fixture(fault)
+
+    def test_removal_subphases_preserve_actual_delete_inspect_absence_and_denial_checks(self):
+        for kind in ("tab","root"):
+            prefix=kind.upper()
+            for fault in (None,"DELETE_RPC","INSPECT_RPC","ABSENCE","OBSERVER_DENIAL"):
+                with self.subTest(kind=kind,fault=fault):
+                    calls=[]
+                    def control(node,operation,flow):
+                        calls.append((node,operation))
+                        if operation.startswith("delete-") and fault=="DELETE_RPC":
+                            raise RuntimeError(PRIVATE)
+                        if operation=="inspect":
+                            if fault=="INSPECT_RPC":
+                                raise RuntimeError(PRIVATE)
+                            return {"tab_present":fault=="ABSENCE","root_present":fault=="ABSENCE"}
+                    def observe(node,flow,diagnostic=None):
+                        calls.append((node,"observer"))
+                        return (200 if fault=="OBSERVER_DENIAL" else 503),None,{}
+                    with patch.object(HARNESS,"controls",side_effect=control), patch.object(HARNESS,"observer",side_effect=observe):
+                        if fault is None:
+                            with contextlib.redirect_stdout(io.StringIO()):
+                                HARNESS.removal_checks("node-a","node-b",{},kind)
+                            self.assertEqual([("node-a","delete-"+kind),("node-b","inspect"),("node-b","observer")],calls)
+                        else:
+                            message,_ = self.invoke(lambda:HARNESS.removal_checks("node-a","node-b",{},kind))
+                            self.assertEqual("FAIL: OBSERVER69 "+prefix+"_"+fault,message)
 
     def boundary_exchange(self, status=200, payload=b"{}", headers=None, open_error=None, read_error=None):
         codes, output = [], io.StringIO()

@@ -7,6 +7,29 @@ import jakarta.ws.rs.core.Response;
 import static org.junit.jupiter.api.Assertions.*;
 
 final class ObserverFixtureBoundaryTest {
+    @Test void pinnedSerializationRetainsAllSixFieldsAfterTabAndRootRemoval() throws Exception {
+        var baseline = new java.util.LinkedHashMap<String,Object>();
+        baseline.put("action",null);
+        var omitted = org.keycloak.util.JsonSerialization.mapper.readTree(
+                org.keycloak.util.JsonSerialization.writeValueAsBytes(baseline));
+        assertFalse(omitted.has("action"), "Pinned NON_NULL serialization reproduces the old map omission");
+        for (var observation : List.of(
+                ObserverFixtureResource.inspection(true,false,42,null,false,44),
+                ObserverFixtureResource.inspection(false,false,null,null,false,44))) {
+            var serialized = org.keycloak.util.JsonSerialization.mapper.readTree(
+                    org.keycloak.util.JsonSerialization.writeValueAsBytes(observation));
+            var names = new java.util.HashSet<String>();
+            serialized.fieldNames().forEachRemaining(names::add);
+            assertEquals(java.util.Set.of("root_present","tab_present","root_timestamp","action",
+                    "authenticated_user_present","server_time"),names);
+            assertTrue(serialized.get("action").isNull());
+            assertFalse(serialized.get("tab_present").booleanValue());
+            assertFalse(serialized.get("authenticated_user_present").booleanValue());
+            assertEquals(44,serialized.get("server_time").intValue());
+            if (serialized.get("root_present").booleanValue()) assertEquals(42,serialized.get("root_timestamp").intValue());
+            else assertTrue(serialized.get("root_timestamp").isNull());
+        }
+    }
     @Test void separateFixtureArchiveMeetsPinnedKeycloakDiscoveryPrerequisites() throws Exception {
         // Both independent JARs need an enabled discovery archive. This is not
         // evidence of a running Quarkus router or committed cluster visibility.

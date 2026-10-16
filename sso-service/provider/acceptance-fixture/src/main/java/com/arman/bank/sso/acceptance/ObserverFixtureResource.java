@@ -75,16 +75,23 @@ public final class ObserverFixtureResource {
                     if (tab != null) root.removeAuthenticationSessionByTabId(tuple.tab());
                     return null;
                 }
-                var result = new LinkedHashMap<String, Object>();
-                result.put("root_present", root != null); result.put("tab_present", tab != null);
-                result.put("root_timestamp", root == null ? null : root.getTimestamp());
-                result.put("action", tab == null ? null : tab.getAction());
-                result.put("authenticated_user_present", tab != null && tab.getAuthenticatedUser() != null);
-                result.put("server_time", Time.currentTime());
-                return result;
+                return inspection(root != null, tab != null, root == null ? null : root.getTimestamp(),
+                        tab == null ? null : tab.getAction(), tab != null && tab.getAuthenticatedUser() != null,
+                        Time.currentTime());
             });
             return operation == Operation.INSPECT ? Response.ok(observed).header("Cache-Control", "no-store").build() : empty(204);
         } catch (RuntimeException unavailable) { return empty(503); }
+    }
+    static Map<String, Object> inspection(boolean rootPresent, boolean tabPresent, Integer timestamp,
+                                           String action, boolean userPresent, int serverTime) {
+        var result = new LinkedHashMap<String, Object>();
+        result.put("root_present", rootPresent); result.put("tab_present", tabPresent);
+        // Keycloak's NON_NULL mapper suppresses Java null map values. Explicit
+        // JSON null nodes preserve the frozen six-field absence observation.
+        result.put("root_timestamp", timestamp == null ? com.fasterxml.jackson.databind.node.NullNode.getInstance() : timestamp);
+        result.put("action", action == null ? com.fasterxml.jackson.databind.node.NullNode.getInstance() : action);
+        result.put("authenticated_user_present", userPresent); result.put("server_time", serverTime);
+        return result;
     }
     static Tuple parse(byte[] body) throws java.io.IOException {
         if (body == null || body.length == 0 || body.length > 4096) throw new IllegalArgumentException();
