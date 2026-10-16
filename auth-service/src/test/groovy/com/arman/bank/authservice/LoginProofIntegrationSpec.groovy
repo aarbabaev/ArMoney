@@ -362,12 +362,10 @@ class LoginProofIntegrationSpec extends Specification {
     }
 
     private Snapshot write(PostgresLoginProofStore target, Write input) {
-        target.admit(WRITER)
-        target.write(WRITER, input)
+        target.inRequest(WRITER) { it.write(input) }
     }
     private Snapshot resolve(PostgresLoginProofStore target, Resolve input) {
-        target.admit(WRITER)
-        target.resolve(WRITER, input)
+        target.inRequest(WRITER) { it.resolve(input) }
     }
     private Policy policy() { Policy.defaults([ISSUER] as Set, [CLIENT, 'armoney-ios'] as Set,
         ['current', 'previous'] as Set, [WRITER] as Set) }

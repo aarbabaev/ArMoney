@@ -11,7 +11,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.Semaphore;
 
 /** Private directional proof transport. Caller identity headers, contacts and eligibility fields have no authority. */
 public final class LoginProofRoutes {
@@ -23,7 +22,6 @@ public final class LoginProofRoutes {
     private final Policy policy;
     private final String writer;
     private final byte[] writeKey, resolveKey;
-    private final Semaphore concurrent = new Semaphore(16);
     public LoginProofRoutes(LoginProofStore store, Policy policy, String writer, String writeKey, String resolveKey) {
         this.store = Objects.requireNonNull(store); this.policy = Objects.requireNonNull(policy);
         if (!policy.writers().contains(writer)) throw new IllegalArgumentException("Invalid proof writer");
@@ -41,28 +39,30 @@ public final class LoginProofRoutes {
     }
     private void handle(Context ctx, boolean write) {
         ctx.header("Cache-Control", "no-store");
-        boolean acquired = false;
         try {
             var headers = ctx.req().getHeaders(write ? "X-ArMoney-Login-Proof-Write-Key" : "X-ArMoney-Login-Proof-Resolve-Key");
             String supplied = headers.hasMoreElements() ? headers.nextElement() : null;
             if (supplied == null || headers.hasMoreElements() || supplied.length() > 256
                     || !MessageDigest.isEqual(write ? writeKey : resolveKey, supplied.getBytes(StandardCharsets.UTF_8))) throw new Failure(Error.UNAUTHORIZED);
-            if (!concurrent.tryAcquire()) throw new Failure(Error.RATE_LIMITED);
-            acquired = true;
-            store.admit(writer);
-            if (!ctx.queryParamMap().isEmpty()) throw new Failure(Error.BAD_INPUT);
-            JsonNode body = body(ctx, write);
             Snapshot result;
+            try (var deadline = LoginProofBodyDeadline.begin(ctx.req())) {
+            result=store.inRequest(writer,request -> {
+            if (!ctx.queryParamMap().isEmpty()) throw new Failure(Error.BAD_INPUT);
+            JsonNode body = body(ctx, write, deadline);
+            Snapshot scopedResult;
             if (write) {
                 Kind kind = switch (text(body, "kind")) { case "interactive" -> Kind.INTERACTIVE; case "reuse" -> Kind.REUSE; default -> throw new Failure(Error.BAD_INPUT); };
                 Write input = new Write(uuid(body, "command_id"), text(body, "code_digest"), text(body, "code_key_id"), text(body, "issuer"),
                     text(body, "subject"), text(body, "client_id"), text(body, "user_session_id"), text(body, "authentication_session_id"),
                     time(body, "issued_at"), time(body, "expires_at"), kind, body.get("event_id").isNull() ? null : uuid(body, "event_id"),
                     body.get("password_authenticated_at").isNull() ? null : time(body, "password_authenticated_at"));
-                LoginProof.validate(input, writer, policy); result = store.write(writer, input);
+                LoginProof.validate(input, writer, policy); scopedResult = request.write(input);
             } else {
                 Resolve input = new Resolve(text(body, "code_digest"), text(body, "code_key_id"), text(body, "issuer"), text(body, "subject"), text(body, "client_id"), text(body, "user_session_id"));
-                LoginProof.validate(input, policy); result = store.resolve(writer, input);
+                LoginProof.validate(input, policy); scopedResult = request.resolve(input);
+            }
+            return scopedResult;
+            });
             }
             if (result == null || result.proofId() == null || result.kind() == null || result.issuedAt() == null || result.expiresAt() == null
                     || (result.kind() == Kind.INTERACTIVE && (result.eventId() == null || !result.loginNoticeEligible()))
@@ -80,13 +80,12 @@ public final class LoginProofRoutes {
             if (status == 429) ctx.header("Retry-After", "60");
             reply(ctx, status, Map.of("error", "login_proof_request_rejected"));
         } catch (Exception unavailable) { reply(ctx, 503, Map.of("error", "login_proof_request_rejected")); }
-        finally { if (acquired) concurrent.release(); }
     }
-    private static JsonNode body(Context ctx, boolean write) {
+    private static JsonNode body(Context ctx, boolean write, LoginProofBodyDeadline deadline) {
         String type = ctx.contentType();
         if (type == null || !type.split(";", 2)[0].strip().equalsIgnoreCase("application/json")) throw new Failure(Error.BAD_INPUT);
         try {
-            byte[] bytes = ctx.req().getInputStream().readNBytes(12289);
+            byte[] bytes = deadline.read(ctx.req().getInputStream(), 12289);
             if (bytes.length > 12288) throw new Failure(Error.BAD_INPUT);
             JsonNode body = JSON.readTree(bytes);
             Set<String> fields = new HashSet<>(RESOLVE);

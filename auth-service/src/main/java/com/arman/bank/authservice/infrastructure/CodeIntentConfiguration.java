@@ -4,7 +4,8 @@ import com.arman.bank.authservice.domain.LoginProof;
 import com.arman.bank.runtime.Database;
 import java.util.*;
 
-/** Independent strict default-off factory. Main and production HTTP do not instantiate it. */
+/** Independent strict default-off factory. Internal stage operations require global PRIMARY admission.
+ * Main and production HTTP do not instantiate it. */
 public final class CodeIntentConfiguration {
     public final boolean enabled;
     private final LoginProof.Policy policy;

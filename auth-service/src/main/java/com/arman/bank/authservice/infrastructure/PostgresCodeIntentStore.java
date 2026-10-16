@@ -9,7 +9,6 @@ import java.math.BigDecimal;
 import java.security.MessageDigest;
 import java.time.*;
 import java.util.*;
-import java.util.concurrent.Semaphore;
 import java.util.function.Function;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -21,7 +20,6 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
     private final CodeIntentRetentionKeys keys;
     private final CodeIntentDetailCrypto crypto;
     private final PostgresCodeIntentKeyCatalog catalog;
-    private final Semaphore inFlight = new Semaphore(16);
     public PostgresCodeIntentStore(Database database, LoginProof.Policy policy, CodeIntentRetentionKeys keys) {
         this(database,policy,keys,null);
     }
@@ -38,32 +36,33 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
             return action.apply(sql);
         });
     }
-    @Override public CodeIntent.Snapshot stage(String actor, LoginProof.Write input) {
+    @Override public <T>T inRequest(String actor,Function<CodeIntentStore.Request,T> operation){
+        LoginProof.writer(actor,policy);
+        return new PostgresLoginRequestScope(database).inRequest(actor,request -> {
+            boolean[] consumed={false};
+            return operation.apply(input -> {
+                request.check();if(consumed[0])fail(Error.UNAVAILABLE);consumed[0]=true;
+                return stage(request,input);
+            });
+        });
+    }
+    @Override public CodeIntent.Snapshot stage(String actor,LoginProof.Write input){return inRequest(actor,request->request.stage(input));}
+    private CodeIntent.Snapshot stage(PostgresLoginRequestScope.Request request,LoginProof.Write input){
+        request.check(); String actor=request.actor();
         CodeIntent.validate(input,actor,policy);
-        if(!inFlight.tryAcquire()) throw new LoginProof.Failure(Error.RATE_LIMITED);
         try {
             if(crypto==null)fail(Error.UNAVAILABLE);
-            return database.withSession(session->{
-                boolean admitted=owned(session,sql->admit(sql,actor,now(sql)));
-                if(!admitted)fail(Error.RATE_LIMITED);
-                // Every transaction finishes on this same exclusively owned physical session.
-                Outcome preparation=owned(session,sql->stage(sql,actor,input,null,null));
-                if(preparation.snapshot()!=null)return preparation.snapshot();
-                Prepared prepared=preparation.prepared();
-                if(Thread.currentThread().isInterrupted())fail(Error.UNAVAILABLE);
-                // Reaching here proves acknowledged nonce-reservation COMMIT. Any commit exception skips encryption.
-                byte[] encrypted=crypto.encrypt(prepared.reservation().keyId(),prepared.reservation().nonce(),input.authenticationSessionId(),aad(prepared,input));
-                return owned(session,sql->stage(sql,actor,input,prepared,encrypted)).snapshot();
-            });
+            boolean admitted=request.transaction(sql->admit(sql,actor,now(sql)));
+            if(!admitted)fail(Error.RATE_LIMITED);
+            Outcome preparation=request.transaction(sql->stage(sql,actor,input,null,null));
+            if(preparation.snapshot()!=null)return preparation.snapshot();
+            Prepared prepared=preparation.prepared();
+            request.check();
+            // Acknowledged nonce COMMIT precedes encryption; this operation still owns the same connection.
+            byte[] encrypted=crypto.encrypt(prepared.reservation().keyId(),prepared.reservation().nonce(),input.authenticationSessionId(),aad(prepared,input));
+            return request.transaction(sql->stage(sql,actor,input,prepared,encrypted)).snapshot();
         } catch(LoginProof.Failure rejected){throw rejected;}
         catch(RuntimeException unavailable){fail(Error.UNAVAILABLE);return null;}
-        finally { inFlight.release(); }
-    }
-    private <T>T owned(Database.OwnedSession session,Function<DSLContext,T> action){
-        return session.transaction(sql->{
-            try{PostgresVerificationProjectionStore.lockControls(sql);}catch(com.arman.bank.authservice.domain.VerificationProjection.Failure unavailable){fail(Error.UNAVAILABLE);}
-            return action.apply(sql);
-        });
     }
     private record Prepared(UUID id,String retentionKey,byte[] binding,byte[] payload,byte[] authority,Instant admittedAt,PostgresCodeIntentKeyCatalog.Reservation reservation){}
     private record Outcome(CodeIntent.Snapshot snapshot,Prepared prepared){}
@@ -186,7 +185,6 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
         sql.execute("insert into sso_code_intent_commands values(?,?,?,?)",actor,command,id,aliases+1);
     }
     private boolean admit(DSLContext sql,String actor,Instant now) {
-        if(!PostgresLoginAdmission.admit(sql,actor,now))return false;
         migrateActors(sql);
         var rows=sql.fetch("select * from sso_code_intent_admission for update");
         if(rows.size()>16)fail(Error.UNAVAILABLE);

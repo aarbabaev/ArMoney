@@ -18,6 +18,7 @@ class LoginProofRoutesSpec extends Specification {
     static final String RESOLVE = 'synthetic-proof-resolve-key-32-characters'
     static final String ISSUER = 'https://issuer.example/realm'
     LoginProofStore store = Mock()
+    LoginProofStore.Request scoped = Mock()
     def policy = Policy.defaults(Set.of(ISSUER), Set.of('armoney-web'), Set.of('current'), Set.of('provider'))
     Javalin app
     def client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build()
@@ -38,6 +39,90 @@ class LoginProofRoutesSpec extends Specification {
          SSO_LOGIN_PROOF_RESOLVE_KEY: RESOLVE, SSO_LOGIN_PROOF_RETENTION_KEY: Base64.encoder.encodeToString(([33] * 32) as byte[]),
          SSO_ISSUER: ISSUER, SSO_LOGIN_PROOF_CLIENT_IDS: 'armoney-web', SSO_LOGIN_PROOF_CODE_KEY_IDS: 'current']
     }
+    static LoginProofBodyDeadline deadline(org.eclipse.jetty.util.thread.Scheduler scheduler,org.eclipse.jetty.io.EndPoint endpoint,long started=System.nanoTime()){
+        def constructor=LoginProofBodyDeadline.getDeclaredConstructor(org.eclipse.jetty.util.thread.Scheduler,org.eclipse.jetty.io.EndPoint,Long.TYPE)
+        constructor.accessible=true
+        constructor.newInstance(scheduler,endpoint,started)
+    }
+    def 'body adapter rejects non HTTP1 and unknown servlet adapters without reading'(){
+        given:
+        def request=Mock(jakarta.servlet.http.HttpServletRequest)
+        request.getProtocol() >> protocol
+        request.getAttribute(_) >> null
+        when:LoginProofBodyDeadline.begin(request)
+        then:
+        def denied=thrown(Failure);denied.error()==expected
+        0 * request.getInputStream()
+        where:
+        protocol | expected
+        'HTTP/2.0' | Error.BAD_INPUT
+        'HTTP/1.1' | Error.UNAVAILABLE
+    }
+    def 'stopped or rejecting managed scheduler never begins inbound reading'(){
+        given:
+        def scheduler=Mock(org.eclipse.jetty.util.thread.Scheduler)
+        def endpoint=Mock(org.eclipse.jetty.io.EndPoint)
+        def input=Mock(InputStream)
+        endpoint.isOpen() >> true
+        scheduler.isRunning() >>> [true,mode!='stopped']
+        scheduler.schedule(_,_,_) >> {throw new RejectedExecutionException('synthetic stopped scheduler')}
+        def guard=deadline(scheduler,endpoint)
+        when:guard.read(input,12289)
+        then:
+        def denied=thrown(Failure);denied.error()==Error.UNAVAILABLE
+        0 * input._
+        0 * endpoint.close(_)
+        cleanup:guard?.close()
+        where:mode << ['stopped','rejecting']
+    }
+    def 'successful body completion cancels managed task and tardy timer cannot close keepalive'(){
+        given:
+        def scheduler=Mock(org.eclipse.jetty.util.thread.Scheduler)
+        def endpoint=Mock(org.eclipse.jetty.io.EndPoint)
+        def task=Mock(org.eclipse.jetty.util.thread.Scheduler.Task)
+        Runnable timer
+        scheduler.isRunning() >> true;endpoint.isOpen() >> true
+        scheduler.schedule(_,_,_) >> {Runnable action,long delay,TimeUnit unit->assert delay>0;timer=action;task}
+        def guard=deadline(scheduler,endpoint)
+        when:
+        def result=guard.read(new ByteArrayInputStream('{}'.bytes),12289)
+        timer.run();guard.close();timer.run()
+        then:
+        new String(result)=='{}'
+        1 * task.cancel() >> true
+        0 * endpoint.close(_)
+    }
+    def 'deadline reached before body reading physically aborts without scheduling or consuming input'(){
+        given:
+        def scheduler=Mock(org.eclipse.jetty.util.thread.Scheduler)
+        def endpoint=Mock(org.eclipse.jetty.io.EndPoint)
+        def input=Mock(InputStream)
+        scheduler.isRunning() >> true;endpoint.isOpen() >> true
+        def guard=deadline(scheduler,endpoint,System.nanoTime()-TimeUnit.SECONDS.toNanos(4))
+        when:guard.read(input,12289)
+        then:
+        def denied=thrown(Failure);denied.error()==Error.BAD_INPUT
+        1 * endpoint.close({it instanceof TimeoutException && it.message=='login_proof_body_deadline'})
+        0 * scheduler.schedule(_,_,_)
+        0 * input._
+        cleanup:guard?.close()
+    }
+    def 'body completing after elapsed deadline is rejected even if scheduler callback was delayed'(){
+        given:
+        def scheduler=Mock(org.eclipse.jetty.util.thread.Scheduler)
+        def endpoint=Mock(org.eclipse.jetty.io.EndPoint)
+        def task=Mock(org.eclipse.jetty.util.thread.Scheduler.Task)
+        scheduler.isRunning() >> true;endpoint.isOpen() >> true
+        scheduler.schedule(_,_,_) >> task
+        def guard=deadline(scheduler,endpoint,System.nanoTime()-TimeUnit.MILLISECONDS.toNanos(3900))
+        def input=new InputStream(){int read(){Thread.sleep(150);-1}}
+        when:guard.read(input,12289)
+        then:
+        def denied=thrown(Failure);denied.error()==Error.BAD_INPUT
+        1 * endpoint.close(_)
+        1 * task.cancel() >> true
+        cleanup:guard?.close()
+    }
     def 'directional credentials authenticate before parsing or consuming admission'() {
         given:
         0 * store._
@@ -51,9 +136,9 @@ class LoginProofRoutesSpec extends Specification {
         when:
         def response = post(body)
         then:
-        1 * store.admit('provider')
-        0 * store.write(_, _)
-        0 * store.resolve(_, _)
+        1 * store.inRequest('provider', _) >> { String actor, java.util.function.Function operation -> operation.apply(scoped) }
+        0 * scoped.write(_)
+        0 * scoped.resolve(_)
         response.statusCode() == 400
         response.headers().firstValue('Cache-Control').get() == 'no-store'
         response.body() == '{"error":"login_proof_request_rejected"}'
@@ -72,9 +157,9 @@ class LoginProofRoutesSpec extends Specification {
         when:
         def response = post(JsonOutput.toJson(command()), WRITE, false, ['X-Identity-Id': UUID.randomUUID().toString(), 'X-Service-Key': 'untrusted'])
         then:
-        1 * store.admit('provider')
+        1 * store.inRequest('provider', _) >> { String actor, java.util.function.Function operation -> operation.apply(scoped) }
         then:
-        1 * store.write('provider', { it.kind() == Kind.REUSE && it.eventId() == null }) >> result
+        1 * scoped.write({ it.kind() == Kind.REUSE && it.eventId() == null }) >> result
         response.statusCode() == 200
         def body = new JsonSlurper().parseText(response.body())
         body.keySet() == ['proof_id','event_id','kind','login_notice_eligible','issued_at','expires_at','code_key_id','state'] as Set
@@ -85,9 +170,9 @@ class LoginProofRoutesSpec extends Specification {
         when:
         def response = post(JsonOutput.toJson(lookup()), RESOLVE, true)
         then:
-        1 * store.admit('provider')
-        1 * store.resolve('provider', _) >> snapshot()
-        0 * store.write(_, _)
+        1 * store.inRequest('provider', _) >> { String actor, java.util.function.Function operation -> operation.apply(scoped) }
+        1 * scoped.resolve(_) >> snapshot()
+        0 * scoped.write(_)
         response.statusCode() == 200
         new JsonSlurper().parseText(response.body()).keySet() == ['proof_id','event_id','kind','login_notice_eligible','issued_at','expires_at'] as Set
     }
@@ -95,17 +180,29 @@ class LoginProofRoutesSpec extends Specification {
         when:
         def response = post('not-json')
         then:
-        1 * store.admit('provider') >> { throw new Failure(Error.RATE_LIMITED) }
-        0 * store.write(_, _)
+        1 * store.inRequest('provider', _) >> { throw new Failure(Error.RATE_LIMITED) }
+        0 * scoped.write(_)
         response.statusCode() == 429
         response.headers().firstValue('Retry-After').get() == '60'
+    }
+    def 'scope cleanup failure after completed callback withholds proof acknowledgement'() {
+        when:
+        def response=post(JsonOutput.toJson(command()))
+        then:
+        1 * store.inRequest('provider', _) >> { String actor,java.util.function.Function operation ->
+            assert operation.apply(scoped)!=null
+            throw new IllegalStateException('synthetic exact-unlock acknowledgement failure')
+        }
+        1 * scoped.write(_) >> snapshot()
+        response.statusCode()==503
+        response.body()=='{"error":"login_proof_request_rejected"}'
     }
     def 'current-eligibility and uncertain write failures do not issue acknowledgement'() {
         when:
         def response = post(JsonOutput.toJson(command()))
         then:
-        1 * store.admit('provider')
-        1 * store.write('provider', _) >> { throw failure }
+        1 * store.inRequest('provider', _) >> { String actor, java.util.function.Function operation -> operation.apply(scoped) }
+        1 * scoped.write(_) >> { throw failure }
         response.statusCode() == expected
         response.body() == '{"error":"login_proof_request_rejected"}'
         where:
@@ -119,8 +216,8 @@ class LoginProofRoutesSpec extends Specification {
         when:
         def response = post(JsonOutput.toJson(lookup()), RESOLVE, true)
         then:
-        1 * store.admit('provider')
-        1 * store.resolve('provider', _) >> { throw new Failure(Error.MISSING) }
+        1 * store.inRequest('provider', _) >> { String actor, java.util.function.Function operation -> operation.apply(scoped) }
+        1 * scoped.resolve(_) >> { throw new Failure(Error.MISSING) }
         response.statusCode() == 404
         response.headers().firstValue('Cache-Control').get() == 'no-store'
     }
@@ -132,18 +229,24 @@ class LoginProofRoutesSpec extends Specification {
         def first = post(JsonOutput.toJson(input))
         def retry = post(JsonOutput.toJson(input))
         then:
-        2 * store.admit('provider')
-        2 * store.write('provider', { it.commandId().toString() == input.command_id }) >> result
+        2 * store.inRequest('provider', _) >> { String actor, java.util.function.Function operation -> operation.apply(scoped) }
+        2 * scoped.write({ it.commandId().toString() == input.command_id }) >> result
         first.statusCode() == 200 && retry.statusCode() == 200 && first.body() == retry.body()
     }
-    def 'per-instance concurrency cap rejects excess work before durable admission'() {
+    def 'route delegates complete concurrent callbacks to the supplied request scope'() {
         given:
         def entered = new CountDownLatch(16)
         def release = new CountDownLatch(1)
         def executor = Executors.newFixedThreadPool(16)
         def futures = []
-        store.admit('provider') >> { entered.countDown(); if (!release.await(6, TimeUnit.SECONDS)) throw new IllegalStateException('synthetic timeout') }
-        store.write('provider', _) >> snapshot()
+        // Transport-only fixture gate; real cross-process PostgreSQL admission is tested separately.
+        def fixturePermits=new Semaphore(16)
+        store.inRequest('provider', _) >> { String actor,java.util.function.Function operation ->
+            if(!fixturePermits.tryAcquire())throw new Failure(Error.RATE_LIMITED)
+            try { entered.countDown(); if(!release.await(6,TimeUnit.SECONDS))throw new IllegalStateException('synthetic timeout'); operation.apply(scoped) }
+            finally { fixturePermits.release() }
+        }
+        scoped.write(_) >> snapshot()
         when:
         try {
             16.times { futures << executor.submit({ post(JsonOutput.toJson(command())).statusCode() } as Callable<Integer>) }

@@ -129,12 +129,15 @@ class LoginProofEligibilityIntegrationSpec extends Specification {
     }
     def 'observation remains outside transactions and cannot change original admission binding or anchor'(){
         given:
-        eligible();def store=proofs();def input=command();def admission=store.admitCreate(WRITER,input)
-        def valid=facts(input.binding(),admission.startedAt())
-        def observed=field=='anchor'?new L.Observation(valid.binding(),PHONE,EMAIL,PHONE,true,true,valid.sessionDeadline(),admission.startedAt().plusNanos(1)):
-            new L.Observation(new L.Binding(ISSUER,flow.subject(),'armoney-web','foreign-session'),PHONE,EMAIL,PHONE,true,true,valid.sessionDeadline(),admission.startedAt())
+        eligible();def store=proofs();def input=command()
         when:
-        store.writeObserved(WRITER,input,admission,observed)
+        store.inRequest(WRITER){request->
+            def admission=request.admitCreate(input)
+            def valid=facts(input.binding(),admission.startedAt())
+            def observed=field=='anchor'?new L.Observation(valid.binding(),PHONE,EMAIL,PHONE,true,true,valid.sessionDeadline(),admission.startedAt().plusNanos(1)):
+                new L.Observation(new L.Binding(ISSUER,flow.subject(),'armoney-web','foreign-session'),PHONE,EMAIL,PHONE,true,true,valid.sessionDeadline(),admission.startedAt())
+            request.writeObserved(input,admission,observed)
+        }
         then:
         def failure=thrown(L.Failure)
         failure.error()==L.Error.UNAVAILABLE
@@ -232,11 +235,18 @@ class LoginProofEligibilityIntegrationSpec extends Specification {
     }
     def 'actual PostgreSQL control wait makes admitted observation stale and rolls back CREATE'(){
         given:
-        eligible();def store=proofs();def input=command();def admission=store.admitCreate(WRITER,input);def observed=facts(input.binding(),admission.startedAt())
+        eligible();def store=proofs();def input=command()
         def blocker=java.sql.DriverManager.getConnection(postgres.jdbcUrl,postgres.username,postgres.password)
-        blocker.autoCommit=false;blocker.createStatement().execute('select id from verification_control where id=1 for update')
+        def anchored=new CountDownLatch(1);def proceed=new CountDownLatch(1)
         def executor=Executors.newSingleThreadExecutor()
-        def task=executor.submit({->try{store.writeObserved(WRITER,input,admission,observed);null}catch(L.Failure rejected){rejected.error()}} as Callable)
+        def task=executor.submit({->try{store.inRequest(WRITER){request->
+            def admission=request.admitCreate(input);def observed=facts(input.binding(),admission.startedAt())
+            anchored.countDown();assert proceed.await(5,TimeUnit.SECONDS)
+            request.writeObserved(input,admission,observed)
+        };null}catch(L.Failure rejected){rejected.error()}} as Callable)
+        assert anchored.await(5,TimeUnit.SECONDS)
+        blocker.autoCommit=false;blocker.createStatement().execute('select id from verification_control where id=1 for update')
+        proceed.countDown()
         boolean waiting=false;long until=System.nanoTime()+TimeUnit.SECONDS.toNanos(4)
         while(!waiting&&System.nanoTime()<until){
             waiting=database.transaction{it.fetchOne("select exists(select 1 from pg_stat_activity where datname=current_database() and pid<>pg_backend_pid() and wait_event_type='Lock' and query like '%verification_control%')").get(0,Boolean)}
@@ -293,9 +303,10 @@ class LoginProofEligibilityIntegrationSpec extends Specification {
     }
     def 'staged interactive capability rejects reuse and foreign store admissions without weakening legacy reuse'(){
         given:
-        eligible();def store=proofs();def input=command();def admission=store.admitCreate(WRITER,input)
+        eligible();def store=proofs();def input=command()
+        def admission=store.inRequest(WRITER){it.admitCreate(input)}
         when:
-        proofs().writeObserved(WRITER,input,admission,facts(input.binding(),admission.startedAt()))
+        proofs().inRequest(WRITER){it.writeObserved(input,admission,facts(input.binding(),admission.startedAt()))}
         then:
         def failure=thrown(L.Failure)
         failure.error()==L.Error.UNAVAILABLE
