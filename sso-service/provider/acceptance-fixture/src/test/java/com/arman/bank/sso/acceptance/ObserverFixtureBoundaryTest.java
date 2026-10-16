@@ -7,6 +7,20 @@ import jakarta.ws.rs.core.Response;
 import static org.junit.jupiter.api.Assertions.*;
 
 final class ObserverFixtureBoundaryTest {
+    @Test void separateFixtureArchiveMeetsPinnedKeycloakDiscoveryPrerequisites() throws Exception {
+        // Both independent JARs need an enabled discovery archive. This is not
+        // evidence of a running Quarkus router or committed cluster visibility.
+        try (var marker = ObserverFixtureResource.class.getResourceAsStream("/META-INF/beans.xml")) {
+            assertNotNull(marker, "Fixture REST archive marker must be packaged");
+            assertEquals(0, marker.readAllBytes().length, "Use the supported empty marker, never discovery-mode none");
+        }
+        assertTrue(ObserverFixtureResource.class.isAnnotationPresent(jakarta.ws.rs.ext.Provider.class));
+        for (String name : List.of("inspect", "deleteTab", "deleteRoot")) {
+            var method = ObserverFixtureResource.class.getMethod(name, String.class, byte[].class);
+            assertTrue(method.isAnnotationPresent(jakarta.ws.rs.POST.class));
+            assertNotNull(method.getAnnotation(jakarta.ws.rs.Path.class));
+        }
+    }
     private static final String KEY = "synthetic-fixture-key-not-for-any-live-stack";
     private static final String BODY = "{\"client_id\":\"armoney-web\",\"provider_root_session_id\":\"root\",\"provider_tab_id\":\"tab\"}";
     @Test void strictTupleRejectsAmbiguityAndAnyContactOrIdentityAuthority() throws Exception {

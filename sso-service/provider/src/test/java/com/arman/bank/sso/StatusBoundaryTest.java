@@ -7,6 +7,19 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 final class StatusBoundaryTest {
+    @Test void packagedResourceMeetsPinnedKeycloakDiscoveryPrerequisites() throws Exception {
+        // Keycloak's custom REST SPI requires an empty archive marker and @Provider.
+        // Quarkus 3.33.3.2 excludes archives declaring discovery-mode="none".
+        // This tests packaging prerequisites; only the two-node run proves routing.
+        try (var marker = StatusResource.class.getResourceAsStream("/META-INF/beans.xml")) {
+            assertNotNull(marker, "Custom REST archive marker must be packaged");
+            assertEquals(0, marker.readAllBytes().length, "Use the supported empty marker, never discovery-mode none");
+        }
+        assertTrue(StatusResource.class.isAnnotationPresent(jakarta.ws.rs.ext.Provider.class));
+        var enrollment = StatusResource.class.getMethod("enrollment", String.class, byte[].class);
+        assertTrue(enrollment.isAnnotationPresent(jakarta.ws.rs.POST.class));
+        assertEquals("enrollment", enrollment.getAnnotation(jakarta.ws.rs.Path.class).value());
+    }
     private static final String KEY = "synthetic-status-key-never-a-live-secret-123456";
     @Test void missingOrMalformedConfigurationFailsClosedBeforeProviderAccess() {
         for (String value : new String[]{null, "short", KEY + "\r\n", "x".repeat(513)})

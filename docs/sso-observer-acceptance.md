@@ -30,8 +30,16 @@ project, generates synthetic credentials without printing them, and removes only
 that project on exit. It cannot be used against the persistent owner stack.
 CI runs it serially in the build job when SSO checks are selected.
 
-Validation so far: the standalone fixture check/JAR build passed three boundary
-tests; five offline target/key guard tests passed. Two-node runtime acceptance
-is still **UNRUN**. A successful existing SSO smoke test does not establish this
-new observer's lifecycle guarantees. Auth observation transport, authority wiring,
-ACTIVE transitions and broader registration integration remain separate gates.
+Both provider JARs require an empty `META-INF/beans.xml` archive marker and
+`@Provider` annotations for Keycloak REST resource discovery. Explicit
+`bean-discovery-mode="none"` excludes the archive from the pinned Quarkus index.
+Packaging prerequisite tests cover the markers and endpoint annotations; actual
+routing still requires the rebuilt two-node acceptance image.
+
+Validation: provider and fixture checks passed after the discovery correction.
+The previous exact-head CI lifecycle attempt failed at SEND_RPC with HTTP 405
+and a cache-policy mismatch; owned project and image cleanup passed. Cross-node,
+removal and expiry guarantees remain **UNVERIFIED** until the corrected image
+passes the full acceptance. Existing SSO smoke does not establish these guarantees.
+Auth observation transport and default-off authority wiring are deployed through
+PR #70; ACTIVE transitions and broader registration integration remain separate gates.
