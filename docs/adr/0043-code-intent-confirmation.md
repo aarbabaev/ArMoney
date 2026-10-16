@@ -62,6 +62,11 @@ all gates. No provider factory, route, credential or runtime flag is enabled her
 The draft fixes the proposed one-owner lock order, separates committed denial
 from positive-proof rollback, bounds retention/cleanup/capacity and strips all
 three proof claims from both refreshed access and refresh tokens. These choices
+exempt fresh correctly bound denial from positive-create capacity/cleanup gates
+and require domain-separated keyed hashes plus original key IDs for all retained
+tombstone identities. Missing keys fail closed without record recreation. Clock
+continuity alone does not prove equivalent elapsed-time rates; that assumption
+or a quantified conservative margin remains explicit at the runtime gate. These choices
 remain proposals, not deployed guarantees. Freeze requires independent Auth/SSO
 source assessment and QA/security review of the complete choices, including
 clock-continuity assumptions and retention/privacy constraints. Implementation then needs

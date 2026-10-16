@@ -219,10 +219,15 @@ No resampling, polling, inline retry or reread may replace the original start or
 renew the observation budget. Fresh negative observations use the same checks.
 The final application check is not a durable COMMIT/fsync deadline guarantee.
 This proof assumes trustworthy continuously advancing provider/DB clock rates
-during the operation, no undetected time jumps, and the same provider clock for
+during the operation, with EQUIVALENT elapsed-second rates, no undetected time
+jumps, and the same provider clock for
 capture and session deadline calculations. Detected discontinuity/range error
 fails closed. Relative conversion removes cross-host offset dependence; it does
-not prove absence of clock jumps or concurrent provider revocation. Independent
+not prove absence of clock jumps, unequal rates/drift or concurrent provider
+revocation. Continuity alone is insufficient: a slower DB clock can exhaust the
+arbitrarily small flooring margin. This DTO cannot detect or establish equivalent
+rates. Until that normal-clock rate assumption is accepted at the runtime gate,
+retain NO-GO or freeze a quantified conservative rate margin. Independent
 security/SSO must validate these assumptions and floor/unit edge cases before freeze.
 
 ## Owning transaction and replay/invalidation
@@ -274,7 +279,12 @@ authority stamp may suspend the authority monotonically once. It writes no proof
 event, confirmation or optional audit side effects. Return an internal
 DENIED_COMMITTED outcome, commit that denial, THEN produce generic HTTP 409
 outside the transaction. Already-SUSPENDED state does not advance epoch again.
-A changed authority stamp denies without applying old negative facts. Recheck
+A changed authority stamp denies without applying old negative facts. Capacity
+limits, positive-create admission and unhealthy cleanup MUST NOT prevent this
+fresh correctly bound denial from committing, including when creation tables are
+full. Such denial creates no intent/proof/event/confirmation/audit rows or aliases
+and needs no positive-create capacity. Authenticated bounded execution, current
+stamp, freshness and row-lock checks still apply; no exception grants authority. Recheck
 observation freshness after the suspension update and before commit; if stale,
 roll back only that attempted transaction and report unavailable. Missing, 503,
 malformed, mismatched or stale evidence is UNAVAILABLE, not revocation evidence.
@@ -306,11 +316,27 @@ recipient/identity fields become NULL after 24 hours independently of pending
 notice delivery. These limits do not authorize a new notice worker or erasure
 claim during DB outage.
 
+ALL retained payload, binding, authority and actor hashes are keyed HMAC-SHA256
+with separate domain labels `armoney-intent-payload-v1`,
+`armoney-intent-binding-v1`, `armoney-intent-authority-v1` and
+`armoney-intent-actor-v1`, respectively, using the retention key and canonical
+length-prefixed inputs. Unkeyed raw hashes are forbidden, including as fallback.
+Persist the original retention key ID with each tombstone. A bounded key ring
+contains only configured current and not-yet-expired retained keys; lookup uses
+the stored original key ID, never an unbounded scan or regenerated identity.
+Retire a key only after its last retained tombstone expires. Missing key or
+unavailable bounded ring returns 503 and never recreates an intent, alias or
+confirmation from the request. Rotation cannot replace original hashes or
+extend original expiry. These records remain pseudonymous sensitive data, not
+anonymous data; key loss is not evidence of successful cleanup.
+
 Cleanup wakes every 30 seconds, at most ten transactions per wake and 100 rows
 per table per transaction, with a one-second lock timeout. It takes the same
 control/business lock prefix/order as writers and deletes children before parents;
 it must not reverse that order to obtain a purge. Report overdue purge > five
-minutes or any table >=80% capacity. Unhealthy cleanup gates NEW creation;
+minutes or any table >=80% capacity. Unhealthy cleanup gates NEW positive creation;
+fresh correctly bound committed denial is exempt from positive-create caps and
+cleanup health gates under the denial rules above;
 authenticated exact unexpired replay remains allowed at capacity. No scheduler,
 alert provider or runtime setting is enabled here. Cleanup outage, concurrent
 confirmation and purged tombstone boundaries require actual PostgreSQL acceptance.
@@ -371,6 +397,9 @@ REUSE event claim is absent (not explicit null), kind is "reuse", eligibility fa
 | Real PostgreSQL lock contention, expiry after inserted rows/final-check trigger | One owning transaction; all positive effects roll back at each final boundary |
 | Fresh negative, already suspended, changed authority stamp and stale-after-update negative | Commit valid denial once; no epoch storm/old-fact application; stale attempt alone rolls back |
 | Cleanup vs confirmation/replay, capacity full, alias cap and unhealthy purge | Same lock order, no deadlock/unexpired purge or admission bypass; exact replay remains bounded |
+| Every creation cap full and unhealthy cleanup, fresh negative at same stamp | Committed denial still succeeds once without new rows/aliases; no epoch storm or authority |
+| Each retained hash domain, key rotation, missing original key and raw-hash fallback attempt | Keyed domain isolation and original key ID required; missing key 503, no fallback/recreation |
+| Continuous but unequal DB/provider rates, including slower DB | No inferred rate/clock proof; retain runtime gate or quantified margin |
 | Detail deletion, minimal tombstone replay, retention expiry and credential rotation | No intent resurrection or lifetime renewal; stable HMAC identity, no retained raw identifiers |
 | Refresh carrying each/all three old claims in access and refresh outputs | Strip all three in BOTH output token types; no intent, confirmation, event or notice |
 
