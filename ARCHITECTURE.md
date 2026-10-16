@@ -1187,6 +1187,6 @@ fields. Permanent contact-free marker/intent IDs and hashes outlive V8 command
 cleanup and have no authority-row foreign key; existing retained contact and
 external-mapping limits still apply. Once materialized, rollback requires binaries
 enforcing the marker in every mode: disabling flags does not make older binaries
-safe. Source checks are running; runtime activation, deployment and complete
+safe. Local affected Auth checks passed 675 tests across 38 suites without failures, errors or skips. Exact-head CI is pending; runtime activation, deployment and complete
 registration enforcement are not claimed. See
 [ADR 0039](docs/adr/0039-managed-registration-completion.md).

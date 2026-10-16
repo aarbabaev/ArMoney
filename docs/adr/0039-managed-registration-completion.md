@@ -1,6 +1,6 @@
 # ADR 0039: managed registration completion without banking access
 
-Status: implemented source; checks are running. Independent review, integrated
+Status: implemented source; local affected checks passed 675 tests without failures, errors or skips. Exact-head CI, integrated
 acceptance and deployment remain pending. No runtime flag is activated here.
 
 ## Configuration and scope
@@ -102,7 +102,7 @@ permanent classification in every mode. **Disabling flags does not make an older
 binary safe:** its compatibility path can ignore V10 denial. Do not remove
 markers/intents, edit published migrations or drop tables to obtain compatibility.
 
-Checks are running; no passing runtime/deployment result is recorded here.
+Local `:auth-service:check` passed 675 tests across 38 suites, including 39 completion cases and the populated managed-principal upgrade. Independent source, documentation and security evidence reviews passed within this partial scope. Exact-head CI and deployment remain pending.
 Required acceptance includes second-receipt rollback, concurrent business replay,
 changed-contact/stale-ACK behavior, replay after V8 cleanup, all-mode denial and
 lock waiting, populated upgrades/legacy compatibility, worker ACK attachment and
