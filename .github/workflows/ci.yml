@@ -71,7 +71,7 @@ jobs:
           python3 -B scripts/test-metrics-ci-staging.py
   dispatcher:
     needs: impact
-    if: always() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: always() && !cancelled() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, armoney-local]
     timeout-minutes: 10
     steps:
@@ -124,7 +124,7 @@ jobs:
     env:
       JAVA_TOOL_OPTIONS: -Dapi.version=1.44
     # GitHub all_external_contributors approval policy is the external-run gate.
-    if: always() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: always() && !cancelled() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, armoney-local]
     timeout-minutes: 60
     steps:
@@ -329,7 +329,7 @@ jobs:
           fi
   web:
     needs: impact
-    if: always() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: always() && !cancelled() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, armoney-local]
     timeout-minutes: 30
     steps:
@@ -385,7 +385,7 @@ jobs:
           fi
   assistant:
     needs: impact
-    if: always() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: always() && !cancelled() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, armoney-local]
     timeout-minutes: 30
     steps:
@@ -447,7 +447,7 @@ jobs:
   kafka:
     needs: impact
     # Uses one of the existing isolated runners; never the host Docker socket.
-    if: always() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: always() && !cancelled() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, armoney-local]
     timeout-minutes: 45
     steps:
@@ -504,7 +504,7 @@ jobs:
   android:
     needs: impact
     # GitHub all_external_contributors approval policy is the external-run gate.
-    if: always() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: always() && !cancelled() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, armoney-local]
     timeout-minutes: 90
     steps:
