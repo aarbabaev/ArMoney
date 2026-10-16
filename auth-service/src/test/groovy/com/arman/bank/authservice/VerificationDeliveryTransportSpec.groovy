@@ -68,6 +68,8 @@ class VerificationDeliveryTransportSpec extends Specification {
         requests*.method == ['POST'] * 2
         requests*.authorization == ['Bearer ' + TOKEN] * 2
         requests[0].body == requests[1].body
+        new JsonSlurper().parseText(requests[0].body).text ==
+            'Your ArMoney registration verification code is 123456. It expires in 5 minutes. Do not share this code.'
         def body = new JsonSlurper().parseText(requests[0].body)
         body.destination == '+971501234567' && body.purpose == 'REGISTRATION_PHONE' && body.text.contains('123456')
         0 * mail._
@@ -114,7 +116,8 @@ class VerificationDeliveryTransportSpec extends Specification {
         when:
         boolean accepted = transport.send(delivery, new VerificationCrypto.DeliveryPayload('synthetic@example.test', '123456'))
         then:
-        1 * mail.send('synthetic@example.test', 'ArMoney registration verification', { it.contains('123456') }) >> outcome
+        1 * mail.send('synthetic@example.test', 'ArMoney registration verification', { it == VerificationEmail.render('123456').text() },
+            { it == VerificationEmail.render('123456').html() }) >> outcome
         accepted == expected
         requests.empty
         where:

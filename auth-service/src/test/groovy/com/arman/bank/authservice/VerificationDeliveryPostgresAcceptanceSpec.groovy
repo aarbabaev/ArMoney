@@ -85,7 +85,7 @@ class VerificationDeliveryPostgresAcceptanceSpec extends Specification {
         [command: command, result: service.issue(command)]
     }
     VerificationDeliveryWorker worker(Clock clock = Clock.systemUTC()) {
-        def transport = new VerificationDeliveryTransport({ recipient, subject, text ->
+        def transport = new VerificationDeliveryTransport({ recipient, subject, text, html ->
             throw new AssertionError('Phone fixture must never use SMTP')
         } as VerificationDeliveryTransport.MailSender, URI.create("http://127.0.0.1:${server.address.port}"), TOKEN, true)
         def result = new VerificationDeliveryWorker(new PostgresVerificationStore(database, crypto), crypto, transport, clock)
