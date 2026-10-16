@@ -5,6 +5,7 @@ import io
 from pathlib import Path
 import threading
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location("visibility_harness", Path(__file__).with_name("sso-session-visibility-acceptance.py"))
@@ -115,6 +116,94 @@ class DiagnosticsTest(unittest.TestCase):
             HARNESS.experiment("A", "B", "user", "client", PRIVATE, PRIVATE, mode="FAIL")
         self.assertIn("FAIL_POST NOT_VISIBLE", output.getvalue())
         self.assertNotIn(PRIVATE, output.getvalue())
+
+    def test_failed_browser_before_held_fails_early_with_finite_diagnostics(self):
+        outcome = HARNESS.BrowserOutcome()
+        outcome.progress(stage="USERNAME")
+        outcome.finish(failed=True)
+        output = io.StringIO()
+        state = {"state": "ARMED", "tuple": None, "hook_boundary": "NOT_ENTERED"}
+        with patch.object(HARNESS, "control", return_value=state) as control, \
+                contextlib.redirect_stdout(output):
+            with self.assertRaises(AssertionError):
+                HARNESS.wait_held("A", PRIVATE, outcome)
+        self.assertEqual(1, control.call_count)
+        self.assertIn("HOOK: SSO_VIS_001 NOT_ENTERED", output.getvalue())
+        self.assertIn("BROWSER: SSO_VIS_001 USERNAME FAILED UNKNOWN", output.getvalue())
+        self.assertNotIn(PRIVATE, output.getvalue())
+
+    def test_pending_browser_timeout_reports_snapshot_without_accepting_visibility(self):
+        outcome = HARNESS.BrowserOutcome()
+        outcome.progress(stage="SUBMIT")
+        output = io.StringIO()
+        state = {"state": "ARMED", "tuple": None, "hook_boundary": "ENTERED"}
+        with patch.object(HARNESS, "control", return_value=state), \
+                patch.object(HARNESS.time, "monotonic", side_effect=[0, 0, 11]), \
+                patch.object(HARNESS.time, "sleep"), contextlib.redirect_stdout(output):
+            with self.assertRaises(AssertionError):
+                HARNESS.wait_held("A", PRIVATE, outcome)
+        self.assertIn("HOOK: SSO_VIS_001 ENTERED", output.getvalue())
+        self.assertIn("BROWSER: SSO_VIS_001 SUBMIT PENDING UNKNOWN", output.getvalue())
+
+    def test_hook_boundary_dto_rejects_arbitrary_or_missing_fields(self):
+        base = {"state": "ARMED", "tuple": None, "hook_boundary": "NOT_ENTERED"}
+        self.assertEqual(base, HARNESS.state_value(base))
+        for value in (dict(base, hook_boundary=PRIVATE), {"state": "ARMED", "tuple": None},
+                      dict(base, private=PRIVATE)):
+            with self.assertRaises(AssertionError):
+                HARNESS.state_value(value)
+
+    def test_browser_diagnostics_reject_private_values(self):
+        outcome = HARNESS.BrowserOutcome()
+        for argument in ("stage", "result", "form"):
+            with self.assertRaises(AssertionError):
+                outcome.progress(**{argument: PRIVATE})
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            outcome.diagnose()
+        self.assertEqual("BROWSER: SSO_VIS_001 START PENDING UNKNOWN\n", output.getvalue())
+
+    def test_unexpected_profile_html_ends_browser_with_finite_facts(self):
+        class ContextManager:
+            def __init__(self, value): self.value = value
+            def __enter__(self): return self.value
+            def __exit__(self, *args): pass
+        class Page:
+            main_frame = object()
+            def goto(self, *args, **kwargs): pass
+            def locator(self, selector):
+                return SimpleNamespace(fill=lambda *a: None, click=lambda **kw: None,
+                    count=lambda: int("firstName" in selector))
+            def expect_event(self, *args, **kwargs):
+                return ContextManager(SimpleNamespace(value=SimpleNamespace(response=lambda:
+                    SimpleNamespace(status=200))))
+        page = Page()
+        browser = SimpleNamespace(new_context=lambda: SimpleNamespace(route=lambda *a: None, new_page=lambda: page), close=lambda: None)
+        playwright = SimpleNamespace(chromium=SimpleNamespace(launch=lambda: browser))
+        module = SimpleNamespace(sync_playwright=lambda: ContextManager(playwright))
+        outcome = HARNESS.BrowserOutcome()
+        with patch.dict(HARNESS.sys.modules, {"playwright": SimpleNamespace(), "playwright.sync_api": module}):
+            HARNESS.browser_login("A", "client", PRIVATE, PRIVATE, "COMPLETE", False, outcome)
+        self.assertTrue(outcome.done.is_set())
+        self.assertFalse(outcome.response_complete)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output): outcome.diagnose()
+        self.assertEqual("BROWSER: SSO_VIS_001 RESPONSE HTTP_200 PROFILE\n", output.getvalue())
+
+    def test_browser_exception_is_sanitized_at_launch_boundary(self):
+        class ContextManager:
+            def __enter__(self):
+                return SimpleNamespace(chromium=SimpleNamespace(launch=lambda: (_ for _ in ()).throw(RuntimeError(PRIVATE))))
+            def __exit__(self, *args): pass
+        module = SimpleNamespace(sync_playwright=lambda: ContextManager())
+        outcome = HARNESS.BrowserOutcome()
+        output = io.StringIO()
+        with patch.dict(HARNESS.sys.modules, {"playwright": SimpleNamespace(), "playwright.sync_api": module}), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            HARNESS.browser_login("A", "client", PRIVATE, PRIVATE, "COMPLETE", False, outcome)
+            outcome.diagnose()
+        self.assertEqual("BROWSER: SSO_VIS_001 LAUNCH FAILED UNKNOWN\n", output.getvalue())
+        self.assertTrue(outcome.failed)
 
 
 if __name__ == "__main__":

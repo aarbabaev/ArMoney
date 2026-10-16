@@ -44,6 +44,7 @@ public final class VisibilityResource {
                 if(!e.realm.equals(session.getContext().getRealm().getId())) return reply(400,null);
                 if(!operation.equals("state")) VisibilityState.release(e,operation.equals("cancel"));
                 out.put("state",e.state);
+                out.put("hook_boundary",e.boundary.name());
                 if(e.tuple==null) out.putNull("tuple");
                 else {
                     var t=e.tuple; ObjectNode tuple=out.putObject("tuple");

@@ -16,17 +16,32 @@ public final class VisibilityLoginProtocol extends OIDCLoginProtocol {
                                                UserSessionModel user,ClientSessionContext context) {
         VisibilityState.Entry held=null;
         try {
+            VisibilityState.boundary(VisibilityState.Boundary.ENTERED);
             VisibilityState.key();
             if (!"code".equals(auth.getClientNote(RESPONSE_TYPE_PARAM))
-                    || auth.getClientNote(RESPONSE_MODE_PARAM)!=null && !"query".equals(auth.getClientNote(RESPONSE_MODE_PARAM)))
+                    || auth.getClientNote(RESPONSE_MODE_PARAM)!=null && !"query".equals(auth.getClientNote(RESPONSE_MODE_PARAM))) {
+                VisibilityState.boundary(VisibilityState.Boundary.RESPONSE_REJECTED);
                 return unavailable();
-            held=VisibilityState.hold(new VisibilityState.Tuple(user.getRealm().getId(),user.getUser().getId(),
-                    user.getId(),context.getClientSession().getClient().getClientId(),context.getClientSession().getClient().getId()));
+            }
+            try {
+                held=VisibilityState.hold(new VisibilityState.Tuple(user.getRealm().getId(),user.getUser().getId(),
+                        user.getId(),context.getClientSession().getClient().getClientId(),context.getClientSession().getClient().getId()));
+            } catch (IllegalStateException rejected) {
+                VisibilityState.boundary(VisibilityState.Boundary.TUPLE_REJECTED); return unavailable();
+            }
             boolean released=held.release.await(15,TimeUnit.SECONDS);
+            VisibilityState.boundary(held,released?VisibilityState.Boundary.RELEASED:VisibilityState.Boundary.WAIT_EXPIRED);
             if (!released || !"RELEASED".equals(held.state) || !"COMPLETE".equals(held.mode)) return unavailable();
             return super.buildRedirectUri(builder,auth,user,context);
-        } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); return unavailable(); }
-        catch (RuntimeException failure) { return unavailable(); }
+        } catch (InterruptedException interrupted) {
+            if(held!=null) VisibilityState.boundary(held,VisibilityState.Boundary.INTERRUPTED);
+            Thread.currentThread().interrupt(); return unavailable();
+        }
+        catch (RuntimeException failure) {
+            if(held!=null) VisibilityState.boundary(held,VisibilityState.Boundary.INTERNAL_ERROR);
+            else VisibilityState.boundary(VisibilityState.Boundary.INTERNAL_ERROR);
+            return unavailable();
+        }
         finally { if (held!=null) VisibilityState.finish(held); }
     }
     private static Response unavailable() {

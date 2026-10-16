@@ -11,6 +11,7 @@ import javax.crypto.spec.SecretKeySpec;
 
 /** Process-local bounded rendezvous; never stores a Keycloak session or model. */
 final class VisibilityState {
+    enum Boundary { NOT_ENTERED, ENTERED, RESPONSE_REJECTED, TUPLE_REJECTED, HELD, WAIT_EXPIRED, INTERRUPTED, INTERNAL_ERROR, RELEASED }
     record Tuple(String realmId, String subject, String sessionId, String clientId, String clientUuid) { }
     static final class Entry {
         final String token = UUID.randomUUID().toString();
@@ -22,11 +23,17 @@ final class VisibilityState {
         volatile String state = "ARMED";
         volatile Tuple tuple;
         volatile boolean finished;
+        volatile Boundary boundary=Boundary.NOT_ENTERED;
         Entry(String realm, String subject, String client, String mode) {
             this.realm=realm; this.subject=subject; this.client=client; this.mode=mode;
         }
     }
     private static Entry entry;
+    static synchronized void boundary(Boundary boundary) {
+        expire();
+        if (entry!=null && !entry.finished) entry.boundary=boundary;
+    }
+    static void boundary(Entry held,Boundary boundary) { held.boundary=boundary; }
     static synchronized Entry arm(String realm,String subject,String client,String mode) {
         expire();
         if (entry != null && !entry.finished) throw new IllegalStateException();
@@ -41,7 +48,7 @@ final class VisibilityState {
         expire();
         if (entry == null || !entry.state.equals("ARMED") || !entry.realm.equals(tuple.realmId())
                 || !entry.subject.equals(tuple.subject()) || !entry.client.equals(tuple.clientId())) throw new IllegalStateException();
-        entry.tuple=tuple; entry.state="HELD"; return entry;
+        entry.tuple=tuple; entry.state="HELD"; entry.boundary=Boundary.HELD; return entry;
     }
     static synchronized void release(Entry e,boolean cancel) {
         if (cancel) e.state="CANCELLED";
