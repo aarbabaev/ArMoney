@@ -87,7 +87,7 @@ class LoginProofIntegrationSpec extends Specification {
         database.transaction { sql ->
             assert snapshots(sql) == preserved
             assert sql.fetch('select version,script,checksum from flyway_schema_history where cast(version as integer) <= ? order by installed_rank', 6).intoMaps() == history
-            assert sql.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '11'
+            assert sql.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '12'
             ['verification_authorities','verification_candidates','verification_authority_phone_claims','verification_flow_barriers','verification_flows','verification_authority_admission','verification_authority_commands'].each { table ->
                 assert sql.fetchOne('select count(*) as n from ' + table).get('n', Long) == 0
             }
@@ -95,7 +95,7 @@ class LoginProofIntegrationSpec extends Specification {
             ['verification_challenges','verification_receipts'].each { table ->
                 assert sql.fetchOne('select count(*) as n from ' + table + ' where candidate_id is not null').get('n', Long) == 0
             }
-            assert sql.fetch('select version from flyway_schema_history order by installed_rank').getValues('version', String) == ['1','2','3','4','5','6','7','8','9','10','11']
+            assert sql.fetch('select version from flyway_schema_history order by installed_rank').getValues('version', String) == ['1','2','3','4','5','6','7','8','9','10','11','12']
             ['sso_login_proofs','sso_login_events','sso_login_proof_commands','sso_login_proof_admission',
              'auth_verification_projection_commands','auth_verification_projection_tombstones','auth_verification_projection_admission'].each { table ->
                 assert sql.fetchOne('select count(*) as n from ' + table).get('n', Long) == 0
@@ -328,6 +328,37 @@ class LoginProofIntegrationSpec extends Specification {
         then:
         counts() == [0L, 0L, 0L]
         database.transaction { snapshots(it) } == preserved
+    }
+
+    def 'new proof hourly budget counts intent reservations and reserved proofs exactly once'() {
+        given:
+        def limited=syntheticStore(new Policy([ISSUER] as Set,[CLIENT,'armoney-ios'] as Set,
+            ['current','previous'] as Set,[WRITER] as Set,100_000,100_000,3))
+        def first=command()
+        def recorded=write(limited,first)
+        write(limited,command())
+        execute("insert into sso_login_creation_reservations values (?,'INTENT',clock_timestamp())",UUID.randomUUID())
+        when: write(limited,command())
+        then:
+        def failure=thrown(Failure)
+        failure.error()==LoginProof.Error.RATE_LIMITED
+        counts()==[2L,2L,2L]
+        when: def replay=write(limited,first)
+        then: replay==recorded
+    }
+
+    def 'pre V12 proof without reservation still consumes one hourly creation'() {
+        given:
+        def limited=syntheticStore(new Policy([ISSUER] as Set,[CLIENT,'armoney-ios'] as Set,
+            ['current','previous'] as Set,[WRITER] as Set,100_000,100_000,2))
+        write(limited,command())
+        execute('delete from sso_login_creation_reservations')
+        write(limited,command())
+        when: write(limited,command())
+        then:
+        def failure=thrown(Failure)
+        failure.error()==LoginProof.Error.RATE_LIMITED
+        counts()==[2L,2L,2L]
     }
 
     private Snapshot write(PostgresLoginProofStore target, Write input) {

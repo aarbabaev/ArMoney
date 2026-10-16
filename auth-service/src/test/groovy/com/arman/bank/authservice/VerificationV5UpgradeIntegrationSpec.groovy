@@ -48,7 +48,7 @@ class VerificationV5UpgradeIntegrationSpec extends Specification {
 
         then:
         database.transaction { current ->
-            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '11'
+            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '12'
             ['verification_authorities','verification_candidates','verification_authority_phone_claims','verification_flow_barriers','verification_flows','verification_authority_admission','verification_authority_commands'].each { table ->
                 assert current.fetchOne('select count(*) as n from ' + table).get('n', Long) == 0
             }
@@ -57,7 +57,7 @@ class VerificationV5UpgradeIntegrationSpec extends Specification {
                 assert current.fetchOne('select count(*) as n from ' + table + ' where candidate_id is not null').get('n', Long) == 0
             }
             assert current.fetch('select version,script,checksum from flyway_schema_history where cast(version as integer) <= ? order by installed_rank', 5).intoMaps() == history
-            assert current.fetch('select version from flyway_schema_history order by installed_rank').getValues('version', String) == ['1','2','3','4','5','6','7','8','9','10','11']
+            assert current.fetch('select version from flyway_schema_history order by installed_rank').getValues('version', String) == ['1','2','3','4','5','6','7','8','9','10','11','12']
             assert rows(current, 'identities', 'id') == before.identities
             assert rows(current, 'sessions', 'token_hash') == before.sessions
             assert rows(current, 'external_identities', 'issuer,subject') == before.external

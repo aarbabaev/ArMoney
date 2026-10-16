@@ -40,23 +40,7 @@ public final class PostgresLoginProofStore implements LoginProofStore {
     @Override public void admit(String writer) {
         LoginProof.writer(writer, policy);
         // This transaction commits before parsing/provider I/O and before any rejected write.
-        boolean allowed = transaction((sql, now) -> {
-            byte[] key = LoginProof.writerHash(writer);
-            var row = sql.fetchOne("select credits, refilled_at from sso_login_proof_admission where writer_hash = ?", key);
-            BigDecimal credits;
-            if (row == null) {
-                if (count(sql, "select count(*) as n from sso_login_proof_admission") >= 16) return false;
-                credits = BigDecimal.valueOf(20);
-                sql.execute("insert into sso_login_proof_admission(writer_hash, credits, refilled_at) values (?, ?, cast(? as timestamptz))", key, credits, at(now));
-            } else {
-                BigDecimal elapsed = BigDecimal.valueOf(Math.max(0, Duration.between(time(row, "refilled_at"), now).toNanos()), 9);
-                credits = row.get("credits", BigDecimal.class).add(elapsed.multiply(BigDecimal.valueOf(2))).min(BigDecimal.valueOf(20));
-            }
-            boolean permit = credits.compareTo(BigDecimal.ONE) >= 0;
-            sql.execute("update sso_login_proof_admission set credits = ?, refilled_at = cast(? as timestamptz) where writer_hash = ?",
-                permit ? credits.subtract(BigDecimal.ONE) : credits, at(now), key);
-            return permit;
-        });
+        boolean allowed = transaction((sql, now) -> PostgresLoginAdmission.admit(sql, writer, now));
         if (!allowed) throw new Failure(Error.RATE_LIMITED);
     }
     private record Admitted(PostgresLoginProofStore owner,String writer,Binding binding,Instant startedAt,byte[] payload) implements Admission {
@@ -108,12 +92,12 @@ public final class PostgresLoginProofStore implements LoginProofStore {
             }
             LoginProof.fresh(input, now);
             if (count(sql, "select count(*) as n from sso_login_proofs") >= policy.maxProofs()
-                    || count(sql, "select count(*) as n from sso_login_proof_commands") >= policy.maxCommands()
-                    || count(sql, "select count(*) as n from sso_login_proofs where created_at > cast(? as timestamptz)", at(now.minusSeconds(3600))) >= policy.maxHourly())
+                    || count(sql, "select count(*) as n from sso_login_proof_commands") >= policy.maxCommands())
                 throw new Failure(Error.RATE_LIMITED);
             Authority active = authority(sql, input.binding(), now,admission,observation);
             if (input.kind() == Kind.INTERACTIVE) event(sql, input, active, now, true);
             UUID proof = UUID.randomUUID();
+            PostgresLoginCreationBudget.reserve(sql, proof, "PROOF", now, policy.maxHourly());
             sql.execute("""
                 insert into sso_login_proofs(id, issuer, code_digest, code_key_id, binding_hash, payload_hash,
                     kind, event_id, login_notice_eligible, issued_at, expires_at, created_at, retained_until)
