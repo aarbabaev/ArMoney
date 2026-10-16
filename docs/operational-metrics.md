@@ -72,8 +72,27 @@ non-null recipient; legacy unmapped commands are excluded. Email outbox backlog
 counts all `PENDING` rows, excluding `SENT`, `SKIPPED` and `DEAD`. Both counts
 include delayed and leased work; neither measures age or due-only batches.
 Collection failure removes both gauges. Disabled email delivery does not hide
-existing pending rows. Worker failure counters and replica lag remain unknown
-until their owners provide actual observations.
+existing pending rows. Payment workers now observe process-local recovery and
+email delivery failures. Each tick increments its counter at most once, even
+when a provider failure is followed by a persistence failure. Recovery counts
+uncertain/null peer results and dependency/store failures; confirmed ledger
+business rejection is not an operational failure. Email counts permanent
+rejection, throttling, transient delivery and dependency/store failures. Missing
+or unverified email and stale leases retain their existing ordinary outcomes.
+Shutdown interruption is preserved without counting a failure. Callback runtime
+exceptions cannot change payment, retry or outbox outcomes.
+
+Counters reset on process restart and remain omitted/UNKNOWN until the first
+observed failure. Persisted attempt counts are not historical failure totals.
+Replica lag remains unknown in this baseline; its separate owner integration
+is not included here. Queue age is not measured.
+
+On 2026-10-16, the affected Payment check passed 231 tests with zero failures,
+errors or skips, including 26 worker-observation cases and PostgreSQL payment
+and email-outbox recovery assertions. Independent source review found no
+blocking issue. Combined exact-head CI, Compose acceptance and deployment of
+these worker observations remain pending; these local results do not establish
+live delivery or historical failure counts.
 
 The stdlib-only [local collector](../infra/observability/README.md) accepts fixed
 service/DNS or loopback targets and exact private paths, disables redirects and

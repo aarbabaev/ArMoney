@@ -44,11 +44,12 @@ public final class Main {
                         routes.configure(config);
                         configureMetrics(config, System.getenv(), metrics, readiness, observations);
                     });
-            worker = new PaymentWorker(store, peers);
+            worker = new PaymentWorker(store, peers, () -> metrics.increment(OperationalMetrics.Counter.RECOVERY_FAILURES));
             worker.start();
             if (emailConfig.enabled) {
                 delivery = new MailtrapDelivery(emailConfig);
-                emailWorker = new EmailWorker(new PostgresEmailOutbox(db), delivery, emailConfig.mode);
+                emailWorker = new EmailWorker(new PostgresEmailOutbox(db), delivery, emailConfig.mode,
+                        () -> metrics.increment(OperationalMetrics.Counter.OUTBOX_FAILURES));
                 emailWorker.start();
             }
             var closingEmailWorker = emailWorker;
