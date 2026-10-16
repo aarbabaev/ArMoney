@@ -31,6 +31,8 @@ class DiagnosticsTest(unittest.TestCase):
         expected = {"START", "KEY_VALIDATION", "READINESS", "ADMIN_LOGIN", "REALM_SETUP", "CLIENT_SETUP",
                     "ACTION_SETUP", "ACTION_LIST", "ACTION_AVAILABLE", "ACTION_REGISTER", "ACTION_CONFIG",
                     "USER_SETUP", "BROWSER_RENDER", "SEND_RPC", "CROSS_NODE", "READ_ONLY",
+                    "READ_ONLY_RPC", "READ_ONLY_EXPIRY", "READ_ONLY_DTO", "READ_ONLY_INSPECT",
+                    "READ_ONLY_TIMESTAMP", "READ_ONLY_HMAC_DENIAL", "READ_ONLY_SUBJECT_DENIAL", "READ_ONLY_KEY_DENIAL",
                     "EXPIRY", "TAB_REMOVAL", "ROOT_REMOVAL", "DISABLE_DELETE", "CLEANUP", "COMPLETE"}
         self.assertEqual(expected, HARNESS.PHASES)
         for label in sorted(expected):
@@ -126,6 +128,48 @@ class DiagnosticsTest(unittest.TestCase):
         self.assertEqual(3, len(calls))
         self.assertEqual("ACTION_AVAILABLE", HARNESS.current_phase)
 
+
+    def run_read_only_fixture(self, fault=None):
+        flow = {"subject":"original-subject","authentication_session_id":"original-binding"}
+        first = {"authentication_session_expires_at":"2026-10-16T00:00:30Z","private":PRIVATE}
+        def observe(node, received, key=None, diagnostic=None):
+            if received["authentication_session_id"] != flow["authentication_session_id"]:
+                return (200 if fault == "READ_ONLY_HMAC_DENIAL" else 503), None, {}
+            if received["subject"] != flow["subject"]:
+                return (200 if fault == "READ_ONLY_SUBJECT_DENIAL" else 503), None, {}
+            if key is not None:
+                return (200 if fault == "READ_ONLY_KEY_DENIAL" else 401), None, {}
+            if fault == "READ_ONLY_RPC":
+                return 503, None, {}
+            changed = dict(first)
+            if fault == "READ_ONLY_EXPIRY":
+                changed["authentication_session_expires_at"]="2026-10-16T00:00:31Z"
+            if fault == "READ_ONLY_DTO":
+                changed["private"]="different"
+            return 200, changed, {}
+        def inspect(*args):
+            if fault == "READ_ONLY_INSPECT":
+                raise RuntimeError(PRIVATE)
+            return {"root_timestamp":43 if fault == "READ_ONLY_TIMESTAMP" else 42}
+        with patch.object(HARNESS,"observer",side_effect=observe) as observer, \
+                patch.object(HARNESS,"controls",side_effect=inspect) as controls:
+            if fault is None:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    HARNESS.read_only_checks("http://sso-b:8080",flow,first,{"root_timestamp":42})
+                self.assertEqual(6,observer.call_count)
+                self.assertEqual(3,controls.call_count)
+            else:
+                message, output = self.invoke(lambda:HARNESS.read_only_checks(
+                    "http://sso-b:8080",flow,first,{"root_timestamp":42}))
+                self.assertEqual("FAIL: OBSERVER69 "+fault,message)
+                self.assertNotIn(PRIVATE,output)
+
+    def test_read_only_subphases_preserve_every_repetition_and_negative_denial(self):
+        self.run_read_only_fixture()
+        for fault in ("READ_ONLY_RPC","READ_ONLY_EXPIRY","READ_ONLY_DTO","READ_ONLY_INSPECT",
+                      "READ_ONLY_TIMESTAMP","READ_ONLY_HMAC_DENIAL","READ_ONLY_SUBJECT_DENIAL","READ_ONLY_KEY_DENIAL"):
+            with self.subTest(phase=fault):
+                self.run_read_only_fixture(fault)
 
     def boundary_exchange(self, status=200, payload=b"{}", headers=None, open_error=None, read_error=None):
         codes, output = [], io.StringIO()

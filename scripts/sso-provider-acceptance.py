@@ -39,7 +39,9 @@ TARGETS = {
 PHASES = frozenset({"START", "KEY_VALIDATION", "READINESS", "ADMIN_LOGIN", "REALM_SETUP",
                     "CLIENT_SETUP", "ACTION_SETUP", "ACTION_LIST", "ACTION_AVAILABLE", "ACTION_REGISTER",
                     "ACTION_CONFIG", "USER_SETUP", "BROWSER_RENDER", "SEND_RPC",
-                    "CROSS_NODE", "READ_ONLY", "EXPIRY", "TAB_REMOVAL", "ROOT_REMOVAL",
+                    "CROSS_NODE", "READ_ONLY", "READ_ONLY_RPC", "READ_ONLY_EXPIRY", "READ_ONLY_DTO",
+                    "READ_ONLY_INSPECT", "READ_ONLY_TIMESTAMP", "READ_ONLY_HMAC_DENIAL",
+                    "READ_ONLY_SUBJECT_DENIAL", "READ_ONLY_KEY_DENIAL", "EXPIRY", "TAB_REMOVAL", "ROOT_REMOVAL",
                     "DISABLE_DELETE", "CLEANUP", "COMPLETE"})
 BRIDGE_ERRORS = frozenset({"BRIDGE_BODY", "BRIDGE_OBSERVER", "BRIDGE_DTO", "BRIDGE_CONTACTS", "BRIDGE_UNKNOWN"})
 HTTP_CODES = frozenset({200, 400, 401, 403, 404, 405, 500, 503})
@@ -323,6 +325,31 @@ def serve_bridge():
     server.serve_forever(poll_interval=0.2)
 
 
+def read_only_checks(node, flow, first, initial_inspection):
+    for _ in range(3):
+        phase("READ_ONLY_RPC")
+        current = expect(200, observer(node, flow, diagnostic=observer_boundary), "read-only observation")
+        phase("READ_ONLY_EXPIRY")
+        require(current["authentication_session_expires_at"] == first["authentication_session_expires_at"],
+                "observer cannot refresh expiry")
+        phase("READ_ONLY_DTO")
+        require(current == first, "observer cannot change exact observation")
+        phase("READ_ONLY_INSPECT")
+        inspection = controls(node, "inspect", flow)
+        phase("READ_ONLY_TIMESTAMP")
+        require(inspection["root_timestamp"] == initial_inspection["root_timestamp"],
+                "observer cannot refresh root timestamp")
+    for field, replacement, label in (
+            ("authentication_session_id", "A" * 43, "READ_ONLY_HMAC_DENIAL"),
+            ("subject", str(uuid.uuid4()), "READ_ONLY_SUBJECT_DENIAL")):
+        phase(label)
+        changed = dict(flow, **{field: replacement})
+        expect(503, observer(node, changed, diagnostic=observer_boundary), "binding mismatch denial")
+    phase("READ_ONLY_KEY_DENIAL")
+    expect(401, observer(node, flow, "invalid-fixture-status-key", diagnostic=observer_boundary),
+           "private credential denial")
+
+
 def acceptance():
     phase("READINESS")
     from playwright.sync_api import sync_playwright
@@ -414,13 +441,7 @@ def acceptance():
                     and left["action"] == right["action"] == "REQUIRED_ACTIONS"
                     and left["authenticated_user_present"] and right["authenticated_user_present"], "committed cross-node cluster proof")
             phase("READ_ONLY")
-            for _ in range(3):
-                current = expect(200, observer(b, flow), "read-only observation")
-                require(current == first and controls(b, "inspect", flow)["root_timestamp"] == right["root_timestamp"], "observer cannot refresh expiry or root timestamp")
-            for field, replacement in (("authentication_session_id", "A" * 43), ("subject", str(uuid.uuid4()))):
-                changed = dict(flow, **{field: replacement})
-                expect(503, observer(b, changed), "binding mismatch denial")
-            expect(401, observer(b, flow, "invalid-fixture-status-key"), "private credential denial")
+            read_only_checks(b, flow, first, right)
             phase("TAB_REMOVAL")
             controls(a, "delete-tab", flow)
             require(not controls(b, "inspect", flow)["tab_present"], "committed tab removal visible on B")
