@@ -125,6 +125,25 @@ class ResourceGuards(unittest.TestCase):
         self.assertNotIn('GITHUB_PAT_TOKEN', runtime.env)
         self.assertNotIn('OPENAI_API_KEY', runtime.env)
 
+    def test_windows_plugin_discovery_survives_sanitization_at_process_boundary(self):
+        # Docker Desktop discovers its Compose CLI plugin beneath ProgramFiles.
+        # Preserve that installation path without admitting Docker configuration.
+        installation = r'C:\Program Files'
+        with patch.dict('os.environ', {'ProgramFiles': installation, 'PATH': 'synthetic-path',
+                                      'DOCKER_CONFIG': 'private-config', 'DOCKER_CONTEXT': 'private-context',
+                                      'DOCKER_HOST': 'tcp://foreign', 'COMPOSE_FILE': 'private-compose',
+                                      'COMPOSE_PROJECT_NAME': 'arman-bank', 'CI': 'true',
+                                      'GITHUB_PAT_TOKEN': 'private-token', 'OPENAI_API_KEY': 'private-key',
+                                      'PROGRAMDATA': 'unneeded-data', 'PROGRAMFILES(X86)': 'unneeded-installation'}, clear=True):
+            runtime = OwnedRuntime('npipe:////./pipe/synthetic-recovery', TOKEN)
+        with patch('subprocess.run') as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = b'{}'
+            runtime.docker('info', '--format', '{{json .}}')
+        self.assertEqual({key.upper(): value for key, value in run.call_args.kwargs['env'].items()},
+                         {'PROGRAMFILES': installation, 'PATH': 'synthetic-path'})
+        self.assertEqual(run.call_args.args[0][:3], ['docker', '--host', 'npipe:////./pipe/synthetic-recovery'])
+
     def test_daemon_label_and_empty_inventory_required(self):
         for info in ({'Labels': [], 'Containers': 0}, {'Labels': [DAEMON_LABEL], 'Containers': 1}):
             runtime = OwnedRuntime('unix:///tmp/recovery.sock', TOKEN)

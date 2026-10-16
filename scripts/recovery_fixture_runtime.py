@@ -13,7 +13,7 @@ DAEMON_LABEL = 'io.armoney.disposable-recovery=true'
 
 def child_environment():
     allowed = {'PATH', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT', 'USERPROFILE', 'HOME',
-               'LOCALAPPDATA', 'APPDATA', 'TEMP', 'TMP', 'LANG'}
+               'LOCALAPPDATA', 'APPDATA', 'TEMP', 'TMP', 'LANG', 'PROGRAMFILES'}
     return {key: value for key, value in os.environ.items() if key.upper() in allowed}
 
 
