@@ -372,6 +372,170 @@ Introspection copies validated
 original signed claims only, without confirmation or mutable eligibility lookup.
 REUSE event claim is absent (not explicit null), kind is "reuse", eligibility false.
 
+## Pending amendment A: recoverable opaque authentication-session binding
+
+Status: **DRAFT AMENDMENT; NOT COVERED BY THE 0302cd CONTRACT FREEZE.**
+The frozen ban on recoverable authentication-session retention remains effective
+until independent QA/security and orchestrator jointly approve this exception.
+No schema, key provisioning, encryption or confirmation implementation is
+authorized by this amendment text alone.
+
+Pinned OAuth2Code does not carry the original authentication root/tab or opaque
+authentication_session_id. The latter is already a server-derived HMAC over the
+original realm/root/tab/internal-client binding; neither the six-field grant
+binding nor a user-session ID can recover it. Historical resolve and mutable
+provider session notes cannot supply a substitute. Keep the six-field confirmation
+DTO unchanged and accept no extra browser metadata.
+
+Proposed exception: store ONLY the original opaque authentication_session_id in
+the existing short-lived intent detail as AES-256-GCM ciphertext. Use an
+independently provisioned versioned 32-byte key, distinct from retention/code
+HMAC, delivery encryption and every HTTP credential. Each encryption uses a fresh
+12-byte CSPRNG nonce UNIQUE PER ENCRYPTION KEY and 128-bit tag; bound ciphertext to at
+most 1,024 bytes. Exact stage replay retains the ORIGINAL immutable ciphertext,
+nonce, key ID and first-alias binding; it does not encrypt again or choose a new
+nonce/first alias. Concurrent first staging must select exactly one durable
+ciphertext/first alias under the owning transaction. Store the
+original encryption key ID and nonce with ciphertext. No plaintext binding,
+root/tab IDs or duplicate canonical Write JSON goes into durable detail or logs.
+Enforce lifetime UNIQUE(encryption_key_id, nonce) in a SEPARATE PostgreSQL nonce
+registry across processes/restarts. Registry rows contain only key ID and nonce,
+NO intent, actor, timestamp-of-use, contact or person link. After authenticated
+admission/capacity budgeting, durably COMMIT a reservation BEFORE encryption;
+burn it on every later failure or cancellation. Never delete/reuse a reservation
+because intent creation rolled back. On collision generate a fresh CSPRNG nonce
+at most three times, then 503. Bound registry reservations to 100,000 per key and
+the encryption ring to eight keys; a full current key fails 503 until explicit
+rotation. No process-local set or short-lived-detail uniqueness substitute. Before
+decryption require nonce exactly 12 bytes, tag exactly 128 bits and ciphertext
+<=1,024 bytes. Validate decrypted opaque binding against the original string
+type, 1..255 length and whitespace/control exclusions. Never expose plaintext
+through logs, exceptions or toString.
+
+AAD is the canonical four-byte-length-prefixed UTF-8 encoding, in EXACT order:
+domain `armoney-intent-auth-session-v1`, intent UUID, ORIGINAL retention key ID,
+binding HMAC, payload HMAC, code key ID, original issued_at, original expires_at.
+Use canonical lowercase UUID/hash representation and original integer-second UTC
+timestamps. Persisted row metadata supplies AAD; request metadata cannot replace
+or repair it. AEAD authentication precedes reconstruction or any authority write.
+
+Delete ciphertext with its detail at ORIGINAL code expiry + five minutes. Keep
+the original encryption key until its last detail is actually erased, including
+overdue-purge periods; do not renew deadlines or silently decrypt/re-encrypt under
+a new key on lookup. A configured ring of at most EIGHT total encryption key IDs
+(current plus retained), each with independent canonical 32-byte material, looks
+up the stored original key
+ID. Missing key, tag failure, deleted detail, AAD or metadata mismatch returns
+503, never recreation, raw-hash fallback or browser/session-note reconstruction.
+Key rotation and purge must preserve the existing lock order and deletion bounds.
+
+Retain nonce reservations until the key is explicitly RETIRED and ALL details
+using it are actually purged, including overdue-purge periods. Only then may
+nonce-only registry rows be removed. Persist a minimal key-catalog tombstone
+FOREVER within a hard 1,024-entry catalog cap: original key ID, SHA-256 fingerprint
+of the independent random 32-byte key material, and explicit retirement state.
+The fingerprint is not the secret key or a hash of personal data. Enforce unique
+key ID AND unique key-material fingerprint; forbid relabeling/reintroducing old
+material or reusing an erased-registry key ID. Fail closed at the catalog cap;
+never delete catalog history or reset a nonce budget to make space. Record
+retirement as an explicit configuration decision; no request/cleanup auto-rotation.
+Catalog and nonce registry have no intent/person/authority foreign keys.
+
+Confirmation reconstructs the original 13-field Write from its trusted six-field
+binding, immutable parent times/kind, detail event/password time, authenticated
+decrypted opaque binding and the ORIGINAL first stage-command alias. Recompute
+the exact canonical payload HMAC under its original retention key and compare
+before entering the caller-owned positive-write core. Any mismatch denies without
+fresh admission, new event, nested transaction or lifetime renewal. Existing
+metadata fields remain protected by the original hashes; the ciphertext exception
+does not permit additional recoverable identifiers in long-lived tombstones.
+
+Required amendment tests: genuine original reconstruction; byte-for-byte canonical
+comparison; ciphertext/nonce/tag corruption; wrong/retired/missing encryption key;
+swapped row/intent/binding/payload/key IDs/timestamps; rotation during replay;
+detail purge versus confirmation and overdue purge; nonce uniqueness per key;
+immutable ciphertext on replay; duplicate nonce/key across processes and restart;
+durable reservation burn on all failures; admission before reservation; per-key
+100,000 and catalog1,024 caps; retired key with overdue details retains registry;
+registry cleanup only after actual final detail purge; attempted ID/material reuse
+after registry erasure and key relabeling are rejected by persistent catalog;
+strict pre-decrypt bounds and plaintext validation; concurrent first-alias race; actual purge before
+key retirement; original first-alias binding;
+no plaintext/log leakage; unchanged six-field DTO; no mutable/browser fallback;
+final current-evidence/deadline rollback. Actual PostgreSQL/crypto and independent
+security acceptance are required. This amendment makes no erasure SLA during an
+outage and no positive authentication/activation claim.
+
+## Pending amendment B: global authorized in-flight admission
+
+Status: **DRAFT AMENDMENT; INDEPENDENT QA/SECURITY FREEZE REQUIRED.**
+A static per-process semaphore is not the frozen global cap of 16. Do not narrow
+that guarantee or add proof-admission wiring before this seam is approved.
+
+Use a fixed, non-client-selected PostgreSQL TWO-INT SESSION advisory-lock
+namespace with slots 0..15 on the SAME authoritative Auth PRIMARY database for
+stage, explicit confirmation (including replay with remote work) and legacy-proof
+admission across Auth processes. One bounded try-lock scan
+selects a slot; no unbounded wait, client-selected key or TTL expiry. Exclusively
+own the physical session; verify ORIGINAL backend/session identity and ownership
+of the exact slot before any authority writes. Reconnect/replacement never inherits
+admission or capability. A dedicated
+Auth-owned JDBC connection retains the slot in AUTOCOMMIT across bounded provider
+HTTP. No HTTP runs inside a SQL transaction. The final business transaction uses
+that SAME connection and existing V -> projection -> proof control/business lock
+order; do not release/reacquire a connection to resume positive authority writes.
+
+The existing pool limit of five remains a local resource bound, not a promise of
+16 per-instance operations. Never retain one of five connections across HTTP and
+request a second connection for business work. Adapt the owning core to accept
+the original connection, avoiding pool exhaustion/deadlock. Require session
+affinity; PgBouncer transaction pooling is unsupported. Before authority work,
+disconnect/session/slot loss denies and prevents later writes on a replacement
+connection. A confirmed pre-commit rollback has no new durable result. However,
+disconnect DURING COMMIT may follow a durable proof/result commit: classify that
+outcome UNCERTAIN_COMMIT, withhold token release and preserve the ORIGINAL
+intent/confirmation identity. Reconcile only the exact durable result plus current
+gates on a legitimate authorized retry; never invent a new identity, resurrect
+the consumed code or assume rollback. A late remote response cannot authorize
+work on a replacement connection. A durable orphan result remains possible.
+
+Session advisory locks SURVIVE COMMIT, ROLLBACK and pooled logical close. Before
+returning a connection to the pool, explicitly unlock EXACTLY the owned slot,
+verify the unlock result is true and verify
+ZERO locks in this admission namespace owned by that physical session. Never
+reentrantly acquire a slot; track exactly one acquisition per operation. Unknown
+unlock result, session loss or failed zero-lock verification requires eviction/
+closure of the PHYSICAL connection, never return/reuse/reacquire it as a pooled
+session. Never unlock unrelated slots or use unlock-all as an ownership shortcut.
+Every success, failure and cancellation follows this release protocol.
+
+The honest guarantee is at most 16 globally AUTHORIZED operations owning slots,
+not a physical global HTTP-worker cap. Already-issued HTTP may finish after DB
+disconnect releases the slot. Keep local resources bounded/cancelled, but do not
+claim physical cancellation from lock release. Durable TTL leases without an
+authorization/cancellation fence cannot provide that stronger guarantee either.
+
+Stage and legacy proof use the SAME shared DB burst20/refill2-per-second bucket.
+Key/credential migration preserves existing credits, timestamp and logical actor
+identity, with no credit reset or unkeyed retained hash. Fresh correctly bound
+committed denial keeps its positive-create cap/cleanup exemption and bounded
+authenticated execution; its slot/connection path must not undo required denial.
+
+Required real-PostgreSQL acceptance: at least four pool-five Auth processes, OR
+16 independent-session fixtures plus at least two actual Auth processes, competing
+for all 16 slots (two pool-five processes alone cannot saturate the cap);
+bounded rejection; same-connection transaction identity; pool-five saturation
+without second-connection deadlock; shared stage/legacy burst and key migration;
+disconnect during HTTP and before/after durable COMMIT with lost acknowledgement;
+late orphan response denied; exact uncertain-result reconciliation without code
+resurrection; release on all failures/cancellation; reuse the SAME physical pooled
+session after each outcome and prove all 16 slots are available again; inject
+unlock/verification failure and prove physical eviction; no reentrant acquisition
+or unrelated unlock; session affinity and unsupported transaction pooling;
+fresh negative under positive caps. No slot/connection code or runtime setting is
+implemented here. Joint freeze is required before changing the shared-admission
+or caller-owned transaction seam.
+
 ## Required independent acceptance matrix
 
 | Scenario | Required observed result |
