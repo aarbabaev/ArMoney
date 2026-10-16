@@ -67,6 +67,15 @@ is defined separately in [compose.kafka.yaml](compose.kafka.yaml); the banking
 services still use their existing HTTP transport. Native iOS uses SwiftUI; Android uses Kotlin and Jetpack Compose;
 Keycloak and Caddy are optional container services, configured by compose.sso.yaml.
 
+### Internal call inventory
+
+The [service call inventory](docs/internal-call-inventory.md) and
+[auth/SSO inventory](docs/auth-transport-inventory.md) classify implemented calls,
+trust, deadlines and failure behavior at the stated source revision. They are
+preparation for issue #25, not a protocol migration or deployment. The #30
+architecture decision remains a gate before changing affected flows; public
+client/OIDC protocols remain unchanged.
+
 ### Proposed Kafka and Saga direction
 
 [ADR 0022](docs/adr/0022-kafka-payment-saga.md) and the
