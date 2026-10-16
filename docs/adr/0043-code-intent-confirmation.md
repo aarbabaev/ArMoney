@@ -1,6 +1,6 @@
 # ADR 0043: staged code intent and postcommit proof confirmation
 
-Status: **DRAFT FOR JOINT AUTH/SSO, QA AND SECURITY FREEZE. NOT IMPLEMENTED.**
+Status: **CONTRACT FROZEN FOR SCOPED IMPLEMENTATION. NOT IMPLEMENTED OR ACTIVATED.**
 Date: 2026-10-17 (Asia/Dubai).
 
 ## Context
@@ -41,7 +41,10 @@ migrations are append-only.
 The exact draft DTOs, credentials, invalidation/replay rules, timeouts and
 acceptance cases are in
 [the draft contract](../../auth-service/CODE-INTENT-CONFIRMATION-DRAFT.md).
-That draft does not supersede the current contract until joint freeze.
+Independent QA and security approved the contract at `0302cd967769a468fa142c6cd2e5cd3e034d976b`;
+the orchestrator jointly froze it on 2026-10-17. Its managed INTERACTIVE scope
+supersedes only the contradictory pre-write observation ordering; legacy behavior
+is unchanged. The linked filename remains DRAFT for compatibility.
 
 ## Consequences and limits
 
@@ -67,7 +70,7 @@ and require domain-separated keyed hashes plus original key IDs for all retained
 tombstone identities. Missing keys fail closed without record recreation. Clock
 continuity alone does not prove equivalent elapsed-time rates; that assumption
 or a quantified conservative margin remains explicit at the runtime gate. These choices
-remain proposals, not deployed guarantees. Freeze requires independent Auth/SSO
-source assessment and QA/security review of the complete choices, including
-clock-continuity assumptions and retention/privacy constraints. Implementation then needs
+are frozen design choices, not deployed guarantees. Independent Auth/SSO source
+assessment and QA/security contract review do not establish the runtime clock
+assumption or implemented retention/privacy guarantees. Implementation needs
 exact-head full checks, disposable multi-node acceptance and independent review.

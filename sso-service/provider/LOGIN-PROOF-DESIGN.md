@@ -193,21 +193,22 @@ observe the newly attached sessions before releasing that same login request.
 Returning HTTP 503 and losing callback delivery also cannot be used as session
 rollback guarantees.
 
-### Proposed ordering contract: awaiting joint freeze
+### Ordering contract: frozen for scoped implementation
 
 The exact proposed wire/capability and acceptance matrix is in the
-[unfrozen Auth draft](../../auth-service/CODE-INTENT-CONFIRMATION-DRAFT.md), with
+[scoped Auth contract](../../auth-service/CODE-INTENT-CONFIRMATION-DRAFT.md), with
 [ADR 0043](../../docs/adr/0043-code-intent-confirmation.md).
 
-The existing Auth contract remains authoritative and has not been changed by
-this experiment. Its pre-write observation requirement must be reconciled by the
-Auth owner and orchestrator before implementation. The bounded proposal is to
+Independent QA and security GO at `0302cd9` was followed by joint orchestrator
+freeze on 2026-10-17. The scoped contract replaces the contradictory pre-write
+observation ordering for managed INTERACTIVE only; legacy behavior is unchanged.
+The frozen design separates
 separate immutable code-bound precommit recording/admission, granting no banking
 authority or notice eligibility, from postcommit confirmation during validated
 authorization-code redemption. Confirmation must require fresh provider session
 observation and Auth-owned binding, receipts, epoch and eligibility/projection
 checks before any authority is granted. Replay, expiry, uncertain responses and
-concurrent redemption still need an explicit frozen contract and independent
-acceptance. Existing dormant resolve/token-policy seams are candidates, not
+concurrent redemption still need implemented independent acceptance. Existing
+dormant resolve/token-policy seams are candidates, not
 validated production wiring. No implementation or registration is authorized by
-this proposal.
+contract freeze alone. The clock-rate assumption remains an explicit runtime gate.

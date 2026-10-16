@@ -1,8 +1,9 @@
 # Planned auth login proof contract, revision 3
 
-Draft follow-up: [staged intent and explicit confirmation](CODE-INTENT-CONFIRMATION-DRAFT.md)
-records the observed first-login ordering blocker and proposed replacement.
-It is not frozen and does not supersede this agreement or enable any route.
+Frozen scoped follow-up: [staged intent and explicit confirmation](CODE-INTENT-CONFIRMATION-DRAFT.md)
+records the observed first-login ordering blocker and replaces its synchronous
+pre-write observation rule only for the new managed INTERACTIVE flow. It does
+not implement or enable any route; unchanged legacy/historical clauses still apply.
 
 Status: **PLANNED AUTH CONTRACT; DISABLED PROVIDER SOURCE ONLY; NO AUTH PROOF ROUTES REGISTERED.**
 

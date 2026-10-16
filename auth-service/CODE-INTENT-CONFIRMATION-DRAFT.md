@@ -1,12 +1,15 @@
 # Draft code-intent and confirmation contract
 
-Status: **UNFROZEN PROPOSAL; NO IMPLEMENTATION OR ACTIVATION AUTHORIZATION.**
+Status: **CONTRACT FROZEN FOR SCOPED IMPLEMENTATION; NOT IMPLEMENTED OR ACTIVATED.**
 Date: 2026-10-17 (Asia/Dubai). Scope: existing issues #28 and #36.
 
-This is a proposed successor to the synchronous pre-write positive-status
-requirement in LOGIN-PROOF-CONTRACT.md. That contract remains authoritative until
-the orchestrator jointly freezes this draft with Auth/SSO and independent QA and
-security. No existing wire DTO, route, schema or production factory changes here.
+The orchestrator approved joint contract freeze on 2026-10-17 after independent
+QA and security GO at `0302cd967769a468fa142c6cd2e5cd3e034d976b`.
+This contract supersedes the synchronous pre-write positive-status requirement
+ONLY for the explicitly scoped managed INTERACTIVE intent/confirmation flow.
+Unchanged legacy/historical clauses in LOGIN-PROOF-CONTRACT.md still apply.
+The filename retains DRAFT for link compatibility. No existing wire DTO, route,
+schema or production factory changes in this documentation/fixture PR.
 See [ADR 0043](../docs/adr/0043-code-intent-confirmation.md).
 
 ## Initial per-kind scope
@@ -228,7 +231,7 @@ revocation. Continuity alone is insufficient: a slower DB clock can exhaust the
 arbitrarily small flooring margin. This DTO cannot detect or establish equivalent
 rates. Until that normal-clock rate assumption is accepted at the runtime gate,
 retain NO-GO or freeze a quantified conservative rate margin. Independent
-security/SSO must validate these assumptions and floor/unit edge cases before freeze.
+security/SSO must validate these assumptions and floor/unit edge cases before runtime activation.
 
 ## Owning transaction and replay/invalidation
 
@@ -403,10 +406,11 @@ REUSE event claim is absent (not explicit null), kind is "reuse", eligibility fa
 | Detail deletion, minimal tombstone replay, retention expiry and credential rotation | No intent resurrection or lifetime renewal; stable HMAC identity, no retained raw identifiers |
 | Refresh carrying each/all three old claims in access and refresh outputs | Strip all three in BOTH output token types; no intent, confirmation, event or notice |
 
-No row is established by this draft. Existing SSO-VIS-001 proves only its recorded
+No acceptance row is established by contract freeze. Existing SSO-VIS-001 proves only its recorded
 fixture observations; all new production ports, schemas, routes and hooks remain
-unimplemented and default-off. Joint freeze must resolve deadline derivation,
-clock continuity, retention/privacy implementation and actual transaction/lock
-ownership against these proposed choices before a separately scoped implementation
-assignment. QA/security must recheck the consolidated draft; none of these proposed
-decisions is an implemented or runtime-verified guarantee.
+unimplemented and default-off. Scoped implementation must verify deadline
+derivation, clock continuity/equivalent elapsed rates, retention/privacy and actual
+transaction/lock ownership against these frozen choices. The runtime clock gate
+remains NO-GO unless the stated assumption is explicitly accepted or a quantified
+conservative rate margin is approved. Contract GO is not runtime GO, merge
+approval, provider registration or feature completion.
