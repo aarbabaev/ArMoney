@@ -372,13 +372,14 @@ Introspection copies validated
 original signed claims only, without confirmation or mutable eligibility lookup.
 REUSE event claim is absent (not explicit null), kind is "reuse", eligibility false.
 
-## Pending amendment A: recoverable opaque authentication-session binding
+## Frozen amendment A: recoverable opaque authentication-session binding
 
-Status: **DRAFT AMENDMENT; NOT COVERED BY THE 0302cd CONTRACT FREEZE.**
-The frozen ban on recoverable authentication-session retention remains effective
-until independent QA/security and orchestrator jointly approve this exception.
-No schema, key provisioning, encryption or confirmation implementation is
-authorized by this amendment text alone.
+Status: **SCOPED AMENDMENT CONTRACT FROZEN; NOT IMPLEMENTED OR ACTIVATED.**
+Independent QA/security GO and joint orchestrator approval at
+`9ffd447b21a0614b8988b2fe4d4231ed2f340195` on 2026-10-17 separately freeze this
+exception to the original no-recoverable-binding rule. The original 0302cd freeze
+alone did not include it. Scoped file plans and implementation leases remain
+required; no key provisioning or runtime/activation approval follows from freeze.
 
 Pinned OAuth2Code does not carry the original authentication root/tab or opaque
 authentication_session_id. The latter is already a server-derived HMAC over the
@@ -483,11 +484,14 @@ final current-evidence/deadline rollback. Actual PostgreSQL/crypto and independe
 security acceptance are required. This amendment makes no erasure SLA during an
 outage and no positive authentication/activation claim.
 
-## Pending amendment B: global authorized in-flight admission
+## Frozen amendment B: global authorized in-flight admission
 
-Status: **DRAFT AMENDMENT; INDEPENDENT QA/SECURITY FREEZE REQUIRED.**
+Status: **SCOPED AMENDMENT CONTRACT FROZEN AT 9ffd447; NOT IMPLEMENTED.**
+Independent QA/security and orchestrator jointly approved the boundary with
+amendment A on 2026-10-17. The same-connection platform seam still needs a
+separate explicit writable lease and independent implementation/runtime checks.
 A static per-process semaphore is not the frozen global cap of 16. Do not narrow
-that guarantee or add proof-admission wiring before this seam is approved.
+that guarantee or add proof-admission wiring without the scoped implementation lease.
 
 Use a fixed, non-client-selected PostgreSQL TWO-INT SESSION advisory-lock
 namespace with slots 0..15 on the SAME authoritative Auth PRIMARY database for
@@ -550,8 +554,8 @@ session after each outcome and prove all 16 slots are available again; inject
 unlock/verification failure and prove physical eviction; no reentrant acquisition
 or unrelated unlock; session affinity and unsupported transaction pooling;
 fresh negative under positive caps. No slot/connection code or runtime setting is
-implemented here. Joint freeze is required before changing the shared-admission
-or caller-owned transaction seam.
+implemented here. Contract freeze does not close the source security findings or
+authorize platform/shared-admission edits outside their separate exact lease.
 
 ## Required independent acceptance matrix
 
