@@ -478,6 +478,10 @@ triggers do not protect against an administrator. A restricted runtime DB role i
 
 ### Optional ledger replicas
 
+Saved logical backup preflight, persistent-store coverage and disposable recovery
+tooling are documented in [database recovery](docs/backup-recovery.md). Full
+application recovery acceptance and measured production RTO/RPO remain pending.
+
 `compose.ledger-replication.yaml` preserves `ledger-db` and adds two direct
 PostgreSQL physical hot standbys. Application commits require WAL flush on at
 least one synchronous standby. Only account/balance reads can use replica pools:

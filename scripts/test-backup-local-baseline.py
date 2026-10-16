@@ -11,6 +11,50 @@ spec = importlib.util.spec_from_file_location('baseline', Path(__file__).with_na
 b = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(b)
 
+replication_spec = importlib.util.spec_from_file_location(
+    'replication', Path(__file__).with_name('ledger-replication-smoke.py'))
+replication = importlib.util.module_from_spec(replication_spec)
+replication_spec.loader.exec_module(replication)
+
+
+class ReplicationTargetTests(unittest.TestCase):
+    def test_remote_host_rejected_before_fixture_or_docker_execution(self):
+        for host in ('tcp://example.invalid:2375', 'ssh://example.invalid',
+                     'npipe:////remote/pipe/docker_engine'):
+            with self.subTest(host=host), patch.dict(b.os.environ,
+                    {'DOCKER_HOST': host, 'DOCKER_CONTEXT': ''}), \
+                    patch.object(replication.subprocess, 'run') as run, \
+                    patch.object(replication.subprocess, 'Popen') as popen, \
+                    patch.object(replication.tempfile, 'TemporaryDirectory') as temporary:
+                with self.assertRaises(replication.guard.Blocked):
+                    replication.main()
+                run.assert_not_called()
+                popen.assert_not_called()
+                temporary.assert_not_called()
+
+    def test_remote_context_only_inspected_not_operated(self):
+        result = type('Result', (), {'returncode': 0, 'stdout': json.dumps(
+            [{'Endpoints': {'docker': {'Host': 'ssh://example.invalid'}}}]).encode()})()
+        with patch.dict(b.os.environ, {'DOCKER_HOST': '', 'DOCKER_CONTEXT': 'remote'}), \
+                patch.object(replication.subprocess, 'run', return_value=result) as run, \
+                patch.object(replication.tempfile, 'TemporaryDirectory') as temporary:
+            with self.assertRaises(replication.guard.Blocked):
+                replication.main()
+            self.assertEqual(run.call_args.args[0], ['docker', 'context', 'inspect', 'remote'])
+            self.assertEqual(run.call_count, 1)
+            temporary.assert_not_called()
+
+    def test_local_command_and_environment_stay_pinned(self):
+        endpoint = 'npipe:////./pipe/docker_engine'
+        with patch.dict(b.os.environ, {'DOCKER_HOST': endpoint, 'DOCKER_CONTEXT': '',
+                                      'COMPOSE_FILE': 'untrusted.yaml'}):
+            command, environment = replication.local_target()
+        with patch.dict(b.os.environ, {'DOCKER_HOST': 'tcp://remote:2375',
+                                      'DOCKER_CONTEXT': 'production'}):
+            self.assertEqual(command, ['docker', '--host', endpoint])
+            self.assertFalse(any(key.upper().startswith(('DOCKER_', 'COMPOSE_'))
+                                 for key in environment))
+
 
 def fixtures():
     result = []
@@ -175,6 +219,7 @@ class SafetyTests(unittest.TestCase):
         for service in b.WRITERS:
             stopped[service]['State']['Running'] = False
         with tempfile.TemporaryDirectory() as temp, patch.object(b, 'local_daemon'), \
+             patch.object(b, 'source_revision', return_value={}), \
              patch.object(b, 'inventory', side_effect=[found, stopped]), \
              patch.object(b, 'private_directory', return_value=Path(temp)), \
              patch.object(b, 'sql', side_effect=b.Blocked('injected dump failure')), \
@@ -194,10 +239,29 @@ class SafetyTests(unittest.TestCase):
     def test_schema_and_row_metrics_capture_only_aggregates(self):
         tables = [['public', 'profiles'], ['public', 'flyway_schema_history']]
         flyway = [{'version': '1', 'checksum': 123, 'success': True}]
-        with patch.object(b, 'sql', side_effect=[json.dumps(tables), '5', '1', json.dumps(flyway)]):
+        with patch.object(b, 'sql', side_effect=[json.dumps(tables), '5', 'a' * 32, '1', 'b' * 32, json.dumps(flyway)]):
             metrics = b.snapshot_metrics('fake', 'bank', 'bank', 'user-db')
         self.assertEqual(metrics['table_rows'], {'public.profiles': 5, 'public.flyway_schema_history': 1})
         self.assertEqual(metrics['flyway'], flyway)
+        self.assertEqual(metrics['table_fingerprints'], {'public.profiles': 'a' * 32, 'public.flyway_schema_history': 'b' * 32})
+
+    def test_optional_assistant_requires_pinned_image_identity_and_store(self):
+        items = fixtures()
+        assistant = copy.deepcopy(next(x for x in items if x['Config']['Labels']['com.docker.compose.service'] == 'user-db'))
+        assistant['Id'] = 'f' * 64
+        assistant['Config']['Labels']['com.docker.compose.service'] = 'assistant-db'
+        assistant['Config']['Image'] = b.ASSISTANT_IMAGE
+        assistant['Config']['Env'] = ['POSTGRES_DB=assistant', 'POSTGRES_USER=assistant_operator']
+        self.assertIn('assistant-db', b.validate_inventory(items + [assistant]))
+        assistant['Config']['Image'] = 'pgvector/pgvector:latest'
+        with self.assertRaises(b.Blocked):
+            b.validate_inventory(items + [assistant])
+        writer = copy.deepcopy(items[0])
+        writer['Id'] = 'e' * 64
+        writer['Config']['Labels']['com.docker.compose.service'] = 'ai-assistant-service'
+        writer['Config']['Image'] = 'local-service'
+        with self.assertRaises(b.Blocked):
+            b.validate_inventory(items + [writer])
 
     def test_restore_checksum_failure_creates_nothing(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -206,6 +270,11 @@ class SafetyTests(unittest.TestCase):
             with patch.object(b, 'docker') as docker, self.assertRaises(b.Blocked):
                 b.restore_verify(archive, {'database': 'bank', 'user': 'bank', 'image_id': 'sha256:' + 'a' * 64, 'sha256': 'wrong'})
             docker.assert_not_called()
+
+    def test_restore_guard_transport_failure_is_not_immutability_evidence(self):
+        with patch.object(b, 'sql', side_effect=b.Blocked('connection unavailable')):
+            with self.assertRaises(b.Blocked):
+                b.restored_ledger_guards('fixture', 'bank', 'bank', {'financial': {'postings': 2}})
 
     def test_restore_failure_cleans_only_owned_isolated_resources(self):
         token = 'b' * 32
