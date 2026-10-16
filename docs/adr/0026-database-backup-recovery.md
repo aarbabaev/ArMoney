@@ -16,3 +16,11 @@ The disposable database experiment distinguishes database continuity/timing from
 application replay and production RTO/RPO. See
 [inventory and pending acceptance](../backup-recovery.md). Production PITR,
 automated failover and multi-host HA require a separate validated design.
+
+Disposable staging preserves outer image identity and independently verifies the
+exported platform configuration against the imported configuration digest. A
+strict private dependency manifest crosses the stopped-runner boundary; references
+alone are not trusted as image identity. This accommodates containerd and classic
+image-store identity differences without weakening resource ownership. Bounded
+streaming avoids a host image-archive spool. Real application recovery remains
+unverified; see the runbook for limits and the required acceptance gates.

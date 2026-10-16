@@ -225,7 +225,7 @@ and runner images plus the dependencies listed in that script. No pulls occur.
 The stage resolves all local references to immutable image IDs, creates a random
 recovery-only Compose project, and copies a Git bundle of the clean exact source
 into its stopped runner. Dependency images stream directly into the owned labelled
-DinD daemon; imported IDs must match their inspected source identities. The runner
+DinD daemon. The frozen outer identity is retained separately from the exported linux/amd64 configuration digest: Docker image stores can expose different identity types. Exported configuration, platform and root filesystem must match the inspected source; the imported identity must match the SHA-256 of the verified configuration bytes. The runner
 mounts only project volumes, including the dedicated inner socket, never the host
 Docker socket. It clones the bundle and checks out the exact revision before the
 inner wrapper builds six bank images with matching revision labels and runs real
@@ -235,8 +235,7 @@ ownership before operations and removes only individually verified project
 containers, volumes and network; failure cannot invoke a broad Compose teardown.
 Private source bundles are temporary; logs and archives are not published. A
 failed/uncertain resource creation may retain resources and fails acceptance;
-cleanup never guesses ownership. The stage itself has not been executed against
-Docker, and success requires its real acceptance and cleanup checks to finish.
+cleanup never guesses ownership. Runtime attempts have exercised staging but have not passed application recovery. Windows Compose discovery and exact named-volume serialization guards were corrected; cross-store image provenance acceptance remains pending. Success requires real application acceptance and cleanup checks to finish.
 
 Offline guards can be run with bundled Python using `-B` from a temporary copy
 outside the checkout: `test-recovery-fixture-runtime.py` and
@@ -248,3 +247,20 @@ overrides. These tests never simulate financial success.
 Documentation impact: this adds a source acceptance entry point and its limitations;
 it changes no application HTTP/schema/runtime contract. The maintained architecture
 status remains application recovery pending until actual acceptance evidence exists.
+
+The stopped runner receives a private `recovery-dependencies.json` manifest with
+exact source revision, `linux/amd64` platform and the seven allowlisted dependency
+references mapped to frozen outer IDs and verified configuration IDs. Wrapper and
+application validation reject missing, extra or malformed entries. The application
+requires `--dependency-images`; it uses these verified IDs, including the assistant
+dependency whose repository digest may not survive classic Docker import. Temurin
+FROM tags must resolve to the verified configuration immediately before each build.
+No ambient Docker context or dependency map is accepted.
+
+Image transfer has no disk archive spool. A bounded TAR observer rejects unsupported
+extended/link/sparse entries, traversal, duplicates, truncation and trailing data;
+limits are 8 GiB per stream, 4,096 members, 1 MiB per metadata file and 8 MiB
+aggregate metadata. A 600-second watchdog terminates both exporter and loader.
+Full image configuration stays private in memory; handoff evidence contains only
+known references, platform and digests. These implementation limits and offline
+guards do not establish successful recovery or a measured recovery objective.

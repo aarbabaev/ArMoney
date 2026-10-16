@@ -4,12 +4,16 @@ Apply belongs to the orchestrator's reserved heavy-test lease. No image pulls,
 host socket mounts, ambient Docker context or persistent application targets.
 """
 import argparse
+import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
+import threading
 import time
 import uuid
 
@@ -24,6 +28,144 @@ IMAGES = ('docker:29.8.1-dind', 'armoney-local-runner:2.338.0',
           'eclipse-temurin:21-jdk', 'eclipse-temurin:21-jre', 'postgres:17.6-alpine',
           'quay.io/keycloak/keycloak:26.7.4', 'caddy:2.11.4-alpine', 'python:3.13.7-alpine',
           'pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d')
+
+
+def strict_json(raw):
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            require(key not in result, 'Duplicate JSON key rejected')
+            result[key] = value
+        return result
+    def constant(value):
+        raise GuardError('Non-finite JSON value rejected')
+    try:
+        return json.loads(raw, object_pairs_hook=pairs, parse_constant=constant)
+    except (ValueError, TypeError, RecursionError):
+        raise GuardError('Invalid bounded JSON rejected') from None
+
+
+class ArchiveTee:
+    def __init__(self, source, destination, max_bytes, deadline=None):
+        self.source, self.destination = source, destination
+        self.max_bytes, self.deadline, self.bytes = max_bytes, deadline, 0
+
+    def read(self, size=65536):
+        require(self.deadline is None or time.monotonic() < self.deadline, 'Image stream deadline expired')
+        data = self.source.read(min(size, 65536) if size >= 0 else 65536)
+        self.bytes += len(data)
+        require(self.bytes <= self.max_bytes, 'Image stream size limit exceeded')
+        require(self.deadline is None or time.monotonic() < self.deadline, 'Image stream deadline expired')
+        if data:
+            self.destination.write(data)
+        return data
+
+
+def observe_archive(source, destination, expected, max_bytes=8 * 1024**3, deadline=None):
+    """Observe a Docker save tar while forwarding unchanged bytes; never extract."""
+    tee = ArchiveTee(source, destination, max_bytes, deadline)
+    metadata, members, files, metadata_bytes = {}, set(), set(), 0
+    try:
+        def exact(size):
+            result = bytearray()
+            while len(result) < size:
+                block = tee.read(size - len(result))
+                require(bool(block), 'Truncated image archive')
+                result.extend(block)
+            return bytes(result)
+
+        while True:
+            header = exact(512)
+            if header == bytes(512):
+                require(exact(512) == bytes(512), 'Invalid image archive terminator')
+                break
+            # Parse only a fixed-size header. Reject extended/sparse headers so
+            # a hostile PAX length cannot make tarfile allocate unbounded memory.
+            member = tarfile.TarInfo.frombuf(header, 'utf-8', 'strict')
+            name = member.name
+            require(not name.startswith('/') and '\\' not in name and '..' not in name.split('/') and
+                    name not in members and len(members) < 4096, 'Malformed image archive member')
+            require(member.type in (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE) and
+                    0 <= member.size <= max_bytes, 'Image archive special member rejected')
+            members.add(name)
+            if member.isfile():
+                files.add(name)
+            wanted = member.isfile() and member.size <= 1048576 and (name == 'manifest.json' or
+                     name.endswith('.json') or re.fullmatch('blobs/sha256/[0-9a-f]{64}', name))
+            raw = bytearray()
+            remaining = member.size
+            while remaining:
+                block = exact(min(65536, remaining))
+                remaining -= len(block)
+                if wanted:
+                    raw.extend(block)
+            if member.size % 512:
+                exact(512 - member.size % 512)
+            if wanted and (name == 'manifest.json' or raw[:1] in (b'{', b'[')):
+                metadata_bytes += len(raw)
+                require(len(raw) <= 1048576 and metadata_bytes <= 8 * 1048576, 'Image metadata limit exceeded')
+                metadata[name] = bytes(raw)
+        while True:
+            tail = tee.read(65536)
+            if not tail:
+                break
+            require(not tail.strip(b'\0'), 'Unexpected image archive trailing content')
+        manifest = strict_json(metadata['manifest.json'])
+        require(isinstance(manifest, list) and len(manifest) == 1 and isinstance(manifest[0], dict),
+                'One selected platform image required')
+        entry = manifest[0]
+        config_name, layers = entry['Config'], entry['Layers']
+        require(isinstance(config_name, str) and config_name in metadata and isinstance(layers, list) and
+                all(isinstance(layer, str) and layer in files for layer in layers) and
+                len(layers) == len(set(layers)), 'Image config or layers unavailable')
+        raw = metadata[config_name]
+        config = strict_json(raw)
+        require(isinstance(config, dict) and isinstance(config.get('config'), dict) and
+                config.get('os') == 'linux' and config.get('architecture') == 'amd64',
+                'Image archive platform differs')
+        rootfs = config.get('rootfs')
+        require(isinstance(rootfs, dict) and rootfs.get('type') == 'layers' and
+                isinstance(rootfs.get('diff_ids'), list) and len(rootfs['diff_ids']) == len(layers) and
+                all(isinstance(value, str) and re.fullmatch('sha256:[0-9a-f]{64}', value) for value in rootfs['diff_ids']),
+                'Image root filesystem metadata invalid')
+        require(expected.get('Os') == config['os'] and expected.get('Architecture') == config['architecture'] and
+                expected.get('Config') == config.get('config') and
+                expected.get('RootFS', {}).get('Type') == rootfs['type'] and
+                expected.get('RootFS', {}).get('Layers') == rootfs['diff_ids'], 'Exported source platform/config/layers differ')
+        return {'config_id': 'sha256:' + hashlib.sha256(raw).hexdigest(), 'os': config['os'],
+                'architecture': config['architecture'], 'config': config['config'], 'rootfs': rootfs,
+                'stream_bytes': tee.bytes}
+    except (tarfile.TarError, ValueError, KeyError, TypeError, AttributeError):
+        raise GuardError('Image archive verification failed; details withheld') from None
+
+
+def verify_loaded_image(rows, provenance):
+    require(isinstance(rows, list) and len(rows) == 1 and isinstance(rows[0], dict), 'Imported image unavailable')
+    row = rows[0]
+    require(row.get('Id') == provenance['config_id'] and row.get('Os') == provenance['os'] and
+            row.get('Architecture') == provenance['architecture'] and row.get('Config') == provenance['config'] and
+            isinstance(row.get('RootFS'), dict) and
+            row.get('RootFS', {}).get('Type') == provenance['rootfs']['type'] and
+            row.get('RootFS', {}).get('Layers') == provenance['rootfs']['diff_ids'],
+            'Imported platform/config digest/layers differ')
+    return row['Id']
+
+
+def load_dependencies(path, revision):
+    path = Path(path)
+    require(path.is_absolute() and path.is_file() and not path.is_symlink() and
+            0 < path.stat().st_size <= 65536, 'Private dependency manifest required')
+    require(os.name != 'posix' or path.stat().st_mode & 0o077 == 0, 'Dependency manifest must be private')
+    data = strict_json(path.read_text(encoding='utf-8'))
+    require(isinstance(data, dict) and set(data) == {'revision', 'platform', 'images'} and
+            data['revision'] == revision and data['platform'] == 'linux/amd64' and
+            isinstance(data['images'], dict) and set(data['images']) == set(IMAGES[2:]),
+            'Dependency manifest revision/platform/inventory differs')
+    for item in data['images'].values():
+        require(isinstance(item, dict) and set(item) == {'outer_id', 'config_id'} and
+                all(isinstance(value, str) and re.fullmatch('sha256:[0-9a-f]{64}', value)
+                    for value in item.values()), 'Dependency provenance identity invalid')
+    return data
 
 
 class Stage:
@@ -127,6 +269,81 @@ class Stage:
                 re.fullmatch('sha256:[0-9a-f]{64}', rows[0].get('Id', '')) is not None, 'Local image unavailable')
         return rows[0]['Id']
 
+    def transfer_image(self, reference, outer_id, timeout=600):
+        require(type(timeout) in (int, float) and 0 < timeout <= 600, 'Bounded image transfer timeout required')
+        require(reference in IMAGES[2:] and self.image(reference) == outer_id, 'Dependency source identity changed')
+        rows = json.loads(self.docker('image', 'inspect', '--platform', 'linux/amd64', reference))
+        require(isinstance(rows, list) and len(rows) == 1 and isinstance(rows[0], dict), 'Source platform unavailable')
+        expected = rows[0]
+        require(expected.get('Os') == 'linux' and expected.get('Architecture') == 'amd64', 'Source platform differs')
+        self.owned('daemon')
+        self.inner('info', '--format', '{{json .}}')
+        deadline = time.monotonic() + timeout
+        producer = consumer = None
+        expired = threading.Event()
+
+        def stop():
+            expired.set()
+            for process in (producer, consumer):
+                try:
+                    if process is not None and process.poll() is None:
+                        process.kill()
+                except OSError:
+                    pass
+
+        watchdog = threading.Timer(timeout, stop)
+        watchdog.daemon = True
+        watchdog.start()
+        try:
+            producer = subprocess.Popen(['docker', '--host', self.endpoint, 'image', 'save',
+                                         '--platform', 'linux/amd64', reference], cwd=self.source, env=self.env,
+                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            self.owned('daemon')
+            self.inner('info', '--format', '{{json .}}')
+            consumer = subprocess.Popen(['docker', '--host', self.endpoint, 'exec', '-i', self.names['daemon'],
+                                         'docker', '--host', ENDPOINT, 'image', 'load', '--platform', 'linux/amd64'],
+                                        cwd=self.source, env=self.env, stdin=subprocess.PIPE,
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            provenance = observe_archive(producer.stdout, consumer.stdin, expected, deadline=deadline)
+            consumer.stdin.close()
+            producer.stdout.close()
+            require(producer.wait(timeout=30) == 0 and consumer.wait(timeout=30) == 0 and
+                    not expired.is_set() and time.monotonic() < deadline, 'Image stream failed or expired')
+        finally:
+            failed = sys.exc_info()[0] is not None
+            watchdog.cancel()
+            process_cleanup_failed = False
+            # Kill both endpoints before waiting for either, so a broken pipe
+            # cannot strand the peer when parsing or a command fails.
+            for process in (producer, consumer):
+                if process is not None:
+                    try:
+                        if process.poll() is None:
+                            process.kill()
+                    except OSError:
+                        process_cleanup_failed = True
+            for process in (producer, consumer):
+                if process is not None:
+                    try:
+                        process.wait(timeout=30)
+                    except (OSError, subprocess.SubprocessError):
+                        process_cleanup_failed = True
+                    for stream in (process.stdin, process.stdout):
+                        if stream is not None:
+                            try:
+                                stream.close()
+                            except OSError:
+                                process_cleanup_failed = True
+            if process_cleanup_failed and not failed:
+                raise GuardError('Image stream process cleanup incomplete')
+        require(self.image(reference) == outer_id, 'Dependency source identity changed during export')
+        loaded = json.loads(self.inner('image', 'inspect', provenance['config_id']))
+        config_id = verify_loaded_image(loaded, provenance)
+        if reference in ('eclipse-temurin:21-jdk', 'eclipse-temurin:21-jre'):
+            require(json.loads(self.inner('image', 'inspect', reference))[0]['Id'] == config_id,
+                    'Imported build tag identity differs')
+        return {'outer_id': outer_id, 'config_id': config_id}
+
     def cleanup(self):
         # Exact project names only. Missing resources are allowed after partial
         # creation; ownership/daemon uncertainty stops cleanup, never broad down.
@@ -203,26 +420,15 @@ class Stage:
                         'Fresh labelled inner daemon required')
                 self.inner_id = inner['ID']
                 self.phase = 'import'
+                dependencies = {'revision': self.revision, 'platform': 'linux/amd64', 'images': {}}
                 for reference in IMAGES[2:]:
-                    require(self.image(reference) == images[reference], 'Dependency image changed before staging')
-                    # Stream directly; no large image archive or host socket in runner.
-                    self.owned('daemon')
-                    self.inner('info', '--format', '{{json .}}')
-                    with tempfile.TemporaryFile() as errors:
-                        producer = subprocess.Popen(['docker', '--host', self.endpoint, 'image', 'save', reference],
-                                                    cwd=self.source, env=self.env, stdout=subprocess.PIPE, stderr=errors)
-                        try:
-                            result = subprocess.run(['docker', '--host', self.endpoint, 'exec', '-i', self.names['daemon'],
-                                                     'docker', '--host', ENDPOINT, 'image', 'load'],
-                                                    stdin=producer.stdout, capture_output=True, env=self.env, timeout=600)
-                            producer.stdout.close()
-                            require(producer.wait(timeout=30) == 0 and result.returncode == 0, 'Image stream failed')
-                        finally:
-                            if producer.poll() is None:
-                                producer.kill()
-                                producer.wait()
-                    loaded = json.loads(self.inner('image', 'inspect', reference))
-                    require(loaded[0]['Id'] == images[reference], 'Imported immutable image identity differs')
+                    dependencies['images'][reference] = self.transfer_image(reference, images[reference])
+                dependency_manifest = directory / 'recovery-dependencies.json'
+                dependency_manifest.write_text(json.dumps(dependencies), encoding='utf-8')
+                dependency_manifest.chmod(0o600)
+                load_dependencies(dependency_manifest, self.revision)
+                self.owned('runner')
+                self.docker('cp', str(dependency_manifest), self.names['runner'] + ':/work/recovery-dependencies.json')
                 self.source_check()
                 self.phase = 'build'
                 self.owned('runner')
@@ -266,6 +472,7 @@ class Stage:
                         self.phase = failure_phase
             print(json.dumps({'status': 'application_recovery_verified', 'revision': self.revision,
                               'dependency_image_ids': images, 'project': self.project,
+                              'dependency_provenance': dependencies,
                               'acceptance': report}))
 
 

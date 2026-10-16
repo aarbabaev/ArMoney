@@ -62,7 +62,7 @@ class ApplicationGuards(unittest.TestCase):
                   patch.object(app, 'OwnedRuntime', side_effect=AssertionError('Runtime created')),
                   patch('subprocess.run', side_effect=AssertionError('Process invoked'))):
                 with self.assertRaises(GuardError):
-                    app.apply('unix:///tmp/recovery.sock', path)
+                    app.apply('unix:///tmp/recovery.sock', path, path)
 
     def test_image_manifest_rejects_non_string_ids_and_revision_types(self):
         valid = {'revision': 'a' * 40, 'images': {s: 'sha256:' + 'b' * 64 for s in app.SERVICES}}

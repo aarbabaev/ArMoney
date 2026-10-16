@@ -8,6 +8,7 @@ set -euo pipefail
 unset DOCKER_HOST DOCKER_CONTEXT DOCKER_TLS_VERIFY DOCKER_CERT_PATH DOCKER_CONFIG COMPOSE_FILE COMPOSE_PROJECT_NAME
 python3 -B - <<'PY'
 import json
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -24,6 +25,10 @@ DEPENDENCIES = ('eclipse-temurin:21-jdk', 'eclipse-temurin:21-jre', 'postgres:17
                 'quay.io/keycloak/keycloak:26.7.4', 'caddy:2.11.4-alpine', 'python:3.13.7-alpine',
                 'pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d')
 repo = Path.cwd().resolve()
+loader = importlib.util.spec_from_file_location('recovery_stage', repo / 'scripts/stage-application-recovery-ci.py')
+staging = importlib.util.module_from_spec(loader)
+sys.path.insert(0, str(repo / 'scripts'))
+loader.loader.exec_module(staging)
 
 class Rejected(RuntimeError):
     pass
@@ -56,13 +61,15 @@ def preflight(expected=None):
         raise Rejected('Recovery daemon contains custom networks')
     return identity
 
-def image(reference, revision=None):
+def image(reference, revision=None, platform=False):
     rows = json.loads(docker('image', 'inspect', reference))
     if not isinstance(rows, list) or len(rows) != 1:
         raise Rejected('Preprovisioned image unavailable')
     row = rows[0]
     if not re.fullmatch('sha256:[0-9a-f]{64}', row.get('Id', '')):
         raise Rejected('Immutable image identity unavailable')
+    if platform and (row.get('Os') != 'linux' or row.get('Architecture') != 'amd64'):
+        raise Rejected('Dependency platform differs')
     if revision is not None and (row.get('Config', {}).get('Labels') or {}).get('org.opencontainers.image.revision') != revision:
         raise Rejected('Staged image revision differs from source')
     return row['Id']
@@ -70,14 +77,22 @@ def image(reference, revision=None):
 try:
     revision = source()
     identity = preflight()
+    dependencies = staging.load_dependencies(Path('/work/recovery-dependencies.json'), revision)
+    if set(dependencies['images']) != set(DEPENDENCIES):
+        raise Rejected('Dependency inventory differs')
     for dependency in DEPENDENCIES:
-        image(dependency)
+        expected = dependencies['images'][dependency]['config_id']
+        if image(expected, platform=True) != expected:
+            raise Rejected('Imported dependency identity differs')
     images = {}
     print('RECOVERY_STAGE:build', flush=True)
     for service in SERVICES:
         if source() != revision:
             raise Rejected('Source changed during staging')
         preflight(identity)
+        for base in ('eclipse-temurin:21-jdk', 'eclipse-temurin:21-jre'):
+            if image(base, platform=True) != dependencies['images'][base]['config_id']:
+                raise Rejected('Build base tag changed')
         tag = 'armoney-recovery-stage/' + service + ':' + revision
         docker('build', '--pull=false', '--label', 'org.opencontainers.image.revision=' + revision,
                '--build-arg', 'SERVICE=' + service, '--tag', tag, '--file', str(repo / 'Dockerfile'), str(repo), timeout=1800)
@@ -96,9 +111,10 @@ try:
         # The real acceptance retains its ownership/cleanup guards and controls fixtures.
         print('RECOVERY_STAGE:application', flush=True)
         code = subprocess.call([sys.executable, '-B', str(repo / 'scripts/backup-application-recovery-smoke.py'),
-                                '--apply', '--daemon', ENDPOINT, '--bank-images', str(manifest)], cwd=repo)
+                                '--apply', '--daemon', ENDPOINT, '--bank-images', str(manifest),
+                                '--dependency-images', '/work/recovery-dependencies.json'], cwd=repo)
         preflight(identity)
         raise SystemExit(code)
-except (Rejected, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+except (Rejected, staging.GuardError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
     raise SystemExit('Application recovery staging failed; private diagnostics withheld') from None
 PY

@@ -6,6 +6,7 @@ host ports, host CI override, provider credentials, builds or image pulls.
 import argparse
 from datetime import datetime, timezone
 import hashlib
+import importlib.util
 import ipaddress
 import json
 from pathlib import Path
@@ -29,6 +30,9 @@ PINNED = {'postgres': 'postgres:17.6-alpine', 'keycloak': 'quay.io/keycloak/keyc
           'assistant': 'pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d'}
 ISSUER = 'https://recovery.test/sso/realms/armoney'
 CALLBACK = 'com.armoney.android:/oauth/callback'
+_loader = importlib.util.spec_from_file_location('recovery_stage', Path(__file__).with_name('stage-application-recovery-ci.py'))
+_staging = importlib.util.module_from_spec(_loader)
+_loader.loader.exec_module(_staging)
 
 # Minimal real Keycloak login-form/authorization-code/S256 flow, no password grant
 # for native clients. The custom-scheme redirect is captured without opening it.
@@ -392,17 +396,22 @@ def replica_recovery(runtime, network, images, names, directory, payment_id, exp
             'promotion': False, 'scope': 'restored synthetic ledger primary only'}
 
 
-def apply(endpoint, manifest):
+def apply(endpoint, manifest, dependency_manifest):
     head = revision()
     bank_images = load_images(manifest, head)
+    dependencies = _staging.load_dependencies(dependency_manifest, head)
     runtime = OwnedRuntime(endpoint)
     runtime.preflight()
-    images = {key: runtime.image(reference) for key, reference in PINNED.items()}
+    images = {key: runtime.image(dependencies['images'][reference]['config_id']) for key, reference in PINNED.items()}
+    for key in PINNED:
+        metadata = runtime.inspect('image', images[key])
+        require(metadata.get('Os') == 'linux' and metadata.get('Architecture') == 'amd64', 'Dependency platform differs')
     images.update({service: runtime.image(image, head) for service, image in bank_images.items()})
     credentials = {key: secrets.token_urlsafe(36) for key in ('db', 'internal', 'admin', 'client')}
     report = {'revision': head, 'scope': 'synthetic application recovery', 'stores': list(STORES), 'image_ids': images,
               'acceptance_tool_sha256': {name: hashlib.sha256((Path(__file__).parent / name).read_bytes()).hexdigest()
-                  for name in ('backup-application-recovery-smoke.py', 'recovery_fixture_runtime.py')}}
+                  for name in ('backup-application-recovery-smoke.py', 'recovery_fixture_runtime.py', 'stage-application-recovery-ci.py')},
+              'dependency_provenance': dependencies}
     def phase(name):
         print('RECOVERY_PHASE:' + name, file=sys.stderr, flush=True)
     try:
@@ -539,12 +548,14 @@ def main():
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--daemon')
     parser.add_argument('--bank-images', type=Path)
+    parser.add_argument('--dependency-images', type=Path)
     args = parser.parse_args()
     if not args.apply:
         print('PLAN ONLY: real pinned Keycloak, nine synthetic stores, fenced fresh restore, HTTPS bank session/owner/payment replay; no Docker access')
         return
-    require(args.daemon is not None and args.bank_images is not None, 'Apply requires explicit disposable daemon and bank image manifest')
-    apply(args.daemon, args.bank_images)
+    require(args.daemon is not None and args.bank_images is not None and args.dependency_images is not None,
+            'Apply requires explicit disposable daemon, bank images and dependency provenance')
+    apply(args.daemon, args.bank_images, args.dependency_images)
 
 
 if __name__ == '__main__':

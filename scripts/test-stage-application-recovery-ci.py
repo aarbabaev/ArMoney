@@ -1,15 +1,112 @@
 """Offline staging rejection cases; never contacts Docker or simulates money."""
 import importlib.util
+import hashlib
 import io
 import json
 from pathlib import Path
 import tempfile
+import tarfile
+import sys
+import threading
+import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 spec = importlib.util.spec_from_file_location('stage_recovery', Path(__file__).with_name('stage-application-recovery-ci.py'))
 stage = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(stage)
+
+
+class ArchiveGuards(unittest.TestCase):
+    def test_json_duplicate_nonfinite_truncated_and_excessive_depth_fail_closed(self):
+        for raw in ('{"revision":"a","revision":"b"}', '{"value":NaN}', '{', '[' * 10000 + '0' + ']' * 10000):
+            with self.subTest(size=len(raw)), self.assertRaises(stage.GuardError):
+                stage.strict_json(raw)
+    def test_dependency_manifest_requires_exact_inventory_revision_platform_and_digest_schema(self):
+        valid = {'revision': 'a' * 40, 'platform': 'linux/amd64',
+                 'images': {ref: {'outer_id': 'sha256:' + 'b' * 64, 'config_id': 'sha256:' + 'c' * 64}
+                            for ref in stage.IMAGES[2:]}}
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'dependencies.json'
+            path.write_text(json.dumps(valid))
+            path.chmod(0o600)
+            self.assertEqual(stage.load_dependencies(path, 'a' * 40), valid)
+            invalids = [dict(valid, revision='d' * 40), dict(valid, platform='linux/arm64'),
+                        dict(valid, images={}), dict(valid, extra='private'),
+                        dict(valid, images={**valid['images'], 'foreign:tag': {'outer_id': 'sha256:' + 'b' * 64, 'config_id': 'sha256:' + 'c' * 64}}),
+                        dict(valid, images={ref: {'outer_id': 'tag', 'config_id': 'sha256:' + 'c' * 64} for ref in stage.IMAGES[2:]}),
+                        dict(valid, images={ref: {'outer_id': 'sha256:' + 'b' * 64, 'config_id': 'sha256:' + 'c' * 64, 'extra': 'private'} for ref in stage.IMAGES[2:]})]
+            for invalid in invalids:
+                path.write_text(json.dumps(invalid))
+                with self.assertRaises(stage.GuardError):
+                    stage.load_dependencies(path, 'a' * 40)
+            path.write_bytes(b'x' * 65537)
+            with self.assertRaises(stage.GuardError):
+                stage.load_dependencies(path, 'a' * 40)
+            path.write_text(json.dumps(valid))
+            with patch.object(Path, 'is_symlink', return_value=True), self.assertRaises(stage.GuardError):
+                stage.load_dependencies(path, 'a' * 40)
+
+    def fixture(self, config=None, manifest=None, extra=()):
+        config = config or {'os': 'linux', 'architecture': 'amd64', 'config': {'Cmd': ['synthetic']},
+                            'rootfs': {'type': 'layers', 'diff_ids': ['sha256:' + hashlib.sha256(b'layer').hexdigest()]}}
+        raw = json.dumps(config).encode()
+        config_name = hashlib.sha256(raw).hexdigest() + '.json'
+        manifest = manifest if manifest is not None else [{'Config': config_name, 'RepoTags': ['synthetic:fixture'],
+                                                          'Layers': ['layer/layer.tar']}]
+        output = io.BytesIO()
+        with tarfile.open(fileobj=output, mode='w', format=tarfile.USTAR_FORMAT) as archive:
+            for name, data in ((config_name, raw), ('layer/layer.tar', b'layer'),
+                               ('manifest.json', json.dumps(manifest).encode()), *extra):
+                entry = tarfile.TarInfo(name)
+                entry.size = len(data)
+                archive.addfile(entry, io.BytesIO(data))
+        expected = {'Os': config['os'], 'Architecture': config['architecture'], 'Config': config['config'],
+                    'RootFS': {'Type': config['rootfs']['type'], 'Layers': config['rootfs']['diff_ids']}}
+        return output.getvalue(), expected, 'sha256:' + hashlib.sha256(raw).hexdigest()
+
+    def test_archive_is_forwarded_unchanged_and_config_digest_is_not_index_identity(self):
+        archive, expected, digest = self.fixture()
+        destination = io.BytesIO()
+        result = stage.observe_archive(io.BytesIO(archive), destination, expected)
+        self.assertEqual(destination.getvalue(), archive)
+        self.assertEqual(result['config_id'], digest)
+        loaded = dict(expected, Id=digest)
+        self.assertEqual(stage.verify_loaded_image([loaded], result), digest)
+        with self.assertRaises(stage.GuardError):
+            stage.verify_loaded_image([dict(loaded, Id='sha256:' + 'b' * 64)], result)
+
+    def test_wrong_platform_source_config_or_layers_are_rejected(self):
+        archive, expected, _ = self.fixture()
+        for field, value in (('Os', 'windows'), ('Architecture', 'arm64'), ('Config', {'Cmd': ['foreign']}),
+                             ('RootFS', {'Type': 'layers', 'Layers': ['sha256:' + 'b' * 64]})):
+            with self.subTest(field=field), self.assertRaises(stage.GuardError):
+                stage.observe_archive(io.BytesIO(archive), io.BytesIO(), dict(expected, **{field: value}))
+        expected['Architecture'] = 'arm64'
+        with self.assertRaises(stage.GuardError):
+            stage.observe_archive(io.BytesIO(self.fixture(config={'os': 'linux', 'architecture': 'arm64',
+                'config': {}, 'rootfs': {'type': 'layers', 'diff_ids': ['sha256:' + 'a' * 64]}})[0]), io.BytesIO(), expected)
+
+    def test_malformed_missing_duplicate_and_traversal_archive_members_are_rejected(self):
+        archive, expected, _ = self.fixture()
+        invalids = [b'not a tar archive', archive[:100], self.fixture(manifest=[])[0],
+                    self.fixture(manifest=[{'Config': 'missing.json', 'Layers': []}])[0],
+                    self.fixture(extra=(('manifest.json', b'[]'),))[0],
+                    self.fixture(extra=(('../outside', b'synthetic'),))[0], archive + b'private-trailing-data']
+        for data in invalids:
+            with self.subTest(size=len(data)), self.assertRaises(stage.GuardError):
+                stage.observe_archive(io.BytesIO(data), io.BytesIO(), expected)
+
+    def test_archive_byte_budget_deadline_and_extended_header_fail_closed(self):
+        archive, expected, _ = self.fixture()
+        with self.assertRaises(stage.GuardError):
+            stage.observe_archive(io.BytesIO(archive), io.BytesIO(), expected, max_bytes=511)
+        with patch.object(stage.time, 'monotonic', return_value=20), self.assertRaises(stage.GuardError):
+            stage.observe_archive(io.BytesIO(archive), io.BytesIO(), expected, deadline=10)
+        entry = tarfile.TarInfo('unsafe-extended-header')
+        entry.type, entry.size = tarfile.XHDTYPE, 2**32
+        with self.assertRaises(stage.GuardError):
+            stage.observe_archive(io.BytesIO(entry.tobuf()), io.BytesIO(), expected)
 
 
 class StageGuards(unittest.TestCase):
@@ -20,6 +117,119 @@ class StageGuards(unittest.TestCase):
         self.source.mkdir()
         (self.source / '.git').mkdir()
         self.subject = stage.Stage('unix:///tmp/synthetic-outer.sock', self.source, 'a' * 40)
+
+    def test_stream_transfer_binds_frozen_outer_identity_to_exact_imported_config_and_cancels_watchdog(self):
+        archive, source, digest = ArchiveGuards().fixture()
+        outer = 'sha256:' + 'b' * 64
+        for failure in (None, 'source_changed', 'loaded_changed'):
+            producer, consumer = MagicMock(), MagicMock()
+            producer.stdout, producer.stdin = io.BytesIO(archive), None
+            consumer.stdout, consumer.stdin = None, io.BytesIO()
+            for process in (producer, consumer):
+                process.wait.return_value = 0
+                process.poll.return_value = 0
+            loaded = dict(source, Id=digest if failure != 'loaded_changed' else 'sha256:' + 'd' * 64)
+            def inner(*args):
+                return json.dumps([loaded] if args[:2] == ('image', 'inspect') else {}).encode()
+            with (self.subTest(failure=failure), patch.object(self.subject, 'owned'),
+                  patch.object(self.subject, 'image', side_effect=[outer, outer if failure != 'source_changed' else 'sha256:' + 'e' * 64]),
+                  patch.object(self.subject, 'docker', return_value=json.dumps([source]).encode()),
+                  patch.object(self.subject, 'inner', side_effect=inner),
+                  patch.object(stage.subprocess, 'Popen', side_effect=[producer, consumer]) as processes,
+                  patch.object(stage.threading, 'Timer') as timer):
+                if failure:
+                    with self.assertRaises(stage.GuardError):
+                        self.subject.transfer_image('postgres:17.6-alpine', outer)
+                else:
+                    self.assertEqual(self.subject.transfer_image('postgres:17.6-alpine', outer),
+                                     {'outer_id': outer, 'config_id': digest})
+                timer.return_value.start.assert_called_once()
+                timer.return_value.cancel.assert_called_once()
+                self.assertIn('--platform', processes.call_args_list[0].args[0])
+                self.assertIn('--platform', processes.call_args_list[1].args[0])
+                self.assertTrue(consumer.stdin.closed)
+
+    def test_malformed_stream_terminates_both_processes_and_closes_pipes(self):
+        _, source, _ = ArchiveGuards().fixture()
+        producer, consumer = MagicMock(), MagicMock()
+        producer.stdout, producer.stdin = io.BytesIO(b'invalid'), None
+        consumer.stdout, consumer.stdin = None, io.BytesIO()
+        for process in (producer, consumer):
+            process.wait.return_value = 0
+            process.poll.return_value = None
+        outer = 'sha256:' + 'b' * 64
+        with (patch.object(self.subject, 'owned'), patch.object(self.subject, 'image', return_value=outer),
+              patch.object(self.subject, 'docker', return_value=json.dumps([source]).encode()),
+              patch.object(self.subject, 'inner', return_value=b'{}'),
+              patch.object(stage.subprocess, 'Popen', side_effect=[producer, consumer]),
+              patch.object(stage.threading, 'Timer') as timer):
+            with self.assertRaises(stage.GuardError):
+                self.subject.transfer_image('postgres:17.6-alpine', outer)
+        for process in (producer, consumer):
+            process.kill.assert_called_once()
+            process.wait.assert_called_once_with(timeout=30)
+        self.assertTrue(producer.stdout.closed)
+        self.assertTrue(consumer.stdin.closed)
+        timer.return_value.cancel.assert_called_once()
+
+    def test_real_watchdog_unblocks_stalled_read_and_write_and_reaps_both_local_processes(self):
+        # Real OS pipes, real subprocesses and a real Timer; only Docker/ownership
+        # boundaries are replaced. No container, network or financial fixture.
+        real_popen = stage.subprocess.Popen
+        _, source, _ = ArchiveGuards().fixture()
+        header = tarfile.TarInfo('layer/layer.tar')
+        header.size = 64 * 1024**2
+        for mode in ('read', 'write'):
+            processes, failures = [], []
+            producer_script = ('import threading; threading.Event().wait()' if mode == 'read' else
+                'import sys; sys.stdout.buffer.write(bytes.fromhex(sys.argv[1])); sys.stdout.buffer.flush(); '
+                'block=bytes(65536)\nwhile True: sys.stdout.buffer.write(block); sys.stdout.buffer.flush()')
+            consumer_script = 'import threading; threading.Event().wait()'
+            def local_process(arguments, **kwargs):
+                script = producer_script if not processes else consumer_script
+                command = [sys.executable, '-u', '-c', script]
+                if not processes and mode == 'write':
+                    command.append(header.tobuf().hex())
+                process = real_popen(command, stdin=kwargs.get('stdin'), stdout=kwargs.get('stdout'),
+                                     stderr=kwargs.get('stderr'), cwd=self.source)
+                processes.append(process)
+                return process
+            def transfer():
+                try:
+                    self.subject.transfer_image('postgres:17.6-alpine', 'sha256:' + 'b' * 64, timeout=1)
+                except BaseException as error:
+                    failures.append(error)
+            with (self.subTest(mode=mode), patch.object(self.subject, 'owned'),
+                  patch.object(self.subject, 'image', return_value='sha256:' + 'b' * 64),
+                  patch.object(self.subject, 'docker', return_value=json.dumps([source]).encode()),
+                  patch.object(self.subject, 'inner', return_value=b'{}'),
+                  patch.object(stage.subprocess, 'Popen', side_effect=local_process)):
+                started = time.monotonic()
+                worker = threading.Thread(target=transfer, daemon=True)
+                worker.start()
+                worker.join(timeout=5)
+                watchdog_failed = worker.is_alive()
+                # Independent rescue makes a broken watchdog fail within a bound
+                # instead of hanging this offline test or retaining child processes.
+                if watchdog_failed:
+                    for process in processes:
+                        if process.poll() is None:
+                            process.kill()
+                    worker.join(timeout=2)
+                for process in processes:
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait(timeout=2)
+                self.assertFalse(watchdog_failed, 'Real watchdog did not unblock stalled image I/O')
+                self.assertFalse(worker.is_alive())
+                elapsed = time.monotonic() - started
+                self.assertGreaterEqual(elapsed, 0.8, 'Synthetic child failed before the real watchdog deadline')
+                self.assertLess(elapsed, 5)
+                self.assertEqual(len(processes), 2)
+                self.assertTrue(failures, 'Stalled stream must fail, never report a successful import')
+                self.assertTrue(all(process.returncode is not None for process in processes))
+                self.assertTrue(processes[0].stdout.closed)
+                self.assertTrue(processes[1].stdin.closed)
 
     def container(self, service='runner'):
         network = self.subject.project + '_default'
