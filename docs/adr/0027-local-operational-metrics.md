@@ -73,3 +73,12 @@ The main-based integration passed full Gradle check on 2026-10-16: 1,210 tests,
 100 suites and zero failures, errors or skips, including 64 metrics cases.
 Exact-head CI and independent security/failure verification remain pending. See
 [operational metrics](../operational-metrics.md).
+
+## Dated baseline delivery checkpoint
+
+PR #73 passed exact-head CI and real metrics failure acceptance on 2026-10-16
+before merge as `a0fab1b0afa3ea98f6cb0d437550aedf3cf04c82`. This supersedes
+earlier pending-acceptance statements for that baseline only. Persistent deployment
+remains pending. The replica-observation follow-up is covered by ADR 0040 and
+requires its own combined-head checks; no worker-age/counter implementation is
+implied.
