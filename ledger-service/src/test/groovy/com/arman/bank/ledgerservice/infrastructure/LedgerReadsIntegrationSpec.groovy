@@ -1,6 +1,7 @@
 package com.arman.bank.ledgerservice.infrastructure
 
 import com.arman.bank.runtime.Database
+import com.arman.bank.runtime.OperationalMetrics
 import com.arman.bank.ledgerservice.infrastructure.*
 import org.testcontainers.containers.*
 import org.testcontainers.containers.wait.strategy.Wait
@@ -140,7 +141,7 @@ class LedgerReadsIntegrationSpec extends Specification {
             def replica = new GenericContainer('postgres:17.6-alpine')
                 .withNetwork(network).withExposedPorts(5432)
                 .withEnv('PGDATA', '/tmp/standby')
-                .withCommand('sh', '-c', "mkdir -m 700 /tmp/standby && pg_basebackup -c fast -h primary -U ${pg.username} -D /tmp/standby -R && chown -R postgres:postgres /tmp/standby && exec docker-entrypoint.sh postgres -c cluster_name=replica${n}")
+                .withCommand('sh', '-c', "mkdir -m 700 /tmp/standby && pg_basebackup -c fast -d 'host=primary user=${pg.username} application_name=ledger_replica${n}' -D /tmp/standby -R && chown -R postgres:postgres /tmp/standby && exec docker-entrypoint.sh postgres -c cluster_name=replica${n}")
                 .waitingFor(Wait.forLogMessage('.*database system is ready to accept read-only connections.*\\n', 1))
                 .withStartupTimeout(Duration.ofSeconds(60))
             replicas.add(replica)
@@ -152,11 +153,18 @@ class LedgerReadsIntegrationSpec extends Specification {
         def owner = UUID.randomUUID()
         def account = store.open(owner, UUID.randomUUID(), 'AED')
         def source = { reads.read { it.fetchOne("select current_setting('cluster_name')").get(0, String) } }
+        def metrics = new OperationalMetrics()
+        def observationEnvironment = [INTERNAL_METRICS_KEY: 'synthetic-ledger-metrics-key-32-characters',
+            LEDGER_METRICS_REPLICA_NAMES: 'ledger_replica1,ledger_replica2', LEDGER_READ_DB_URLS: urls.join(','),
+            DB_URL: pg.jdbcUrl, DB_USER: pg.username, DB_PASSWORD: pg.password]
+        def observer = new LedgerReplicaObservation(observationEnvironment, metrics)
+        def measured = { observer.observe(); metrics.render() }
 
         expect: 'constructing standby pools runs no Flyway writes and immediate reads see primary commits'
         store.account(owner, account.id()).get() == account
         [source(), source()].toSet() == ['replica1', 'replica2'].toSet()
         store.account(UUID.randomUUID(), account.id()).isEmpty()
+        eventually { measured().contains('armoney_replica_lag_seconds 0\n') }
 
         when: 'both physical replicas stop applying WAL before a new primary commit'
         def connections = urls.collect { DriverManager.getConnection(it, pg.username, pg.password) }
@@ -171,6 +179,7 @@ class LedgerReadsIntegrationSpec extends Specification {
         visible.get() == fresh
         pausedElapsed < Duration.ofSeconds(3).toNanos()
         source() == 'primary'
+        !measured().contains('armoney_replica_lag_seconds 0\n')
 
         when:
         connections.each { DSL.using(it, SQLDialect.POSTGRES).execute('select pg_wal_replay_resume()') }
@@ -178,6 +187,18 @@ class LedgerReadsIntegrationSpec extends Specification {
 
         then:
         [source(), source()].toSet() == ['replica1', 'replica2'].toSet()
+        eventually { measured().contains('armoney_replica_lag_seconds 0\n') }
+
+        when: 'a restricted monitoring login cannot see sender observations'
+        db.transaction { it.execute("create role synthetic_observer login password 'synthetic-only-password'") }
+        def restrictedMetrics = new OperationalMetrics()
+        restrictedMetrics.set(OperationalMetrics.Gauge.REPLICA_LAG_SECONDS, 0)
+        def restrictedObserver = new LedgerReplicaObservation(observationEnvironment +
+            [DB_USER: 'synthetic_observer', DB_PASSWORD: 'synthetic-only-password'], restrictedMetrics)
+        restrictedObserver.observe()
+
+        then:
+        !restrictedMetrics.render().contains('replica_lag')
 
         when: 'a read URL selects another database in the same physical cluster'
         def wrongDatabase = new LedgerReads(db, urls[0].replace('/' + pg.databaseName, '/postgres'), pg.username, pg.password)
@@ -226,6 +247,7 @@ class LedgerReadsIntegrationSpec extends Specification {
         then:
         outageSource == 'primary'
         outageElapsed < Duration.ofSeconds(3).toNanos()
+        eventually { !measured().contains('replica_lag') }
 
         when: 'a configured read endpoint is actually a writable primary'
         def wrong = new LedgerReads(db, pg.jdbcUrl, pg.username, pg.password)
@@ -235,6 +257,8 @@ class LedgerReadsIntegrationSpec extends Specification {
         reads.ready()
 
         cleanup:
+        restrictedObserver?.close()
+        observer?.close()
         foreignReads?.close()
         foreignConnection?.close()
         foreignReplica?.stop()
