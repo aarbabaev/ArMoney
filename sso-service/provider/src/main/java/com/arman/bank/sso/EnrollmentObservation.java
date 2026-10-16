@@ -74,7 +74,7 @@ final class EnrollmentObservation {
                 || !client.getId().equals(auth.getClient().getId())
                 || !"REQUIRED_ACTIONS".equals(auth.getAction())) throw new Bridge.Unavailable();
         UserModel user = auth.getAuthenticatedUser();
-        if (user == null || !binding.subject().equals(user.getId()) || !user.isEnabled()) throw new Bridge.Unavailable();
+        if (user == null || !binding.subject().equals(user.getId())) throw new Bridge.Unavailable();
         String expected = SessionBinding.derive(key, realm.getId(), root.getId(), auth.getTabId(), client.getId());
         if (!SessionBinding.matches(expected, binding.digest())) throw new Bridge.Unavailable();
         String phone = user.getUsername(), email = user.getEmail();
@@ -87,7 +87,10 @@ final class EnrollmentObservation {
                 .isActionActive(ClientSessionCode.ActionType.USER)) throw new Bridge.Unavailable();
         var result = binding.fields();
         result.put("username", phone); result.put("email", email); result.put("phone_number", phone);
-        result.put("enabled", true); result.put("authentication_session_active", true);
+        // A disabled existing account is a current negative fact only after all
+        // identity, HMAC, contact and live-flow checks above. This is not receipt
+        // or eligibility authority; positive consumers must still require true.
+        result.put("enabled", user.isEnabled()); result.put("authentication_session_active", true);
         result.put("authentication_session_expires_at", Instant.ofEpochSecond(deadline).toString());
         return result;
     }

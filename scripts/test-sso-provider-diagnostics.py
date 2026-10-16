@@ -199,6 +199,36 @@ class DiagnosticsTest(unittest.TestCase):
                             message,_ = self.invoke(lambda:HARNESS.removal_checks("node-a","node-b",{},kind))
                             self.assertEqual("FAIL: OBSERVER69 "+prefix+"_"+fault,message)
 
+    def test_disabled_observation_requires_same_exact_negative_evidence_and_future_unchanged_deadline(self):
+        flow = {key: "synthetic-" + key for key in HARNESS.FLOW}
+        first = dict(flow, username="+971501234567", email="synthetic@example.invalid",
+                     phone_number="+971501234567", enabled=True, authentication_session_active=True,
+                     authentication_session_expires_at="2026-10-16T00:00:30Z")
+        now = HARNESS.datetime.datetime.fromisoformat("2026-10-16T00:00:00+00:00").timestamp()
+        for fault in (None, "unavailable", "missing", "extra", "binding", "contacts", "enabled",
+                      "flag_type", "inactive", "renewed", "expired"):
+            with self.subTest(fault=fault):
+                current = dict(first, enabled=False)
+                status = 503 if fault == "unavailable" else 200
+                if fault == "missing": current.pop("email")
+                if fault == "extra": current["authority"] = "ACTIVE"
+                if fault == "binding": current["subject"] = "other-subject"
+                if fault == "contacts": current["email"] = "other@example.invalid"
+                if fault == "enabled": current["enabled"] = True
+                if fault == "flag_type": current["enabled"] = 0
+                if fault == "inactive": current["authentication_session_active"] = False
+                if fault == "renewed": current["authentication_session_expires_at"] = "2026-10-16T00:00:31Z"
+                server_time = now + 30 if fault == "expired" else now
+                with patch.object(HARNESS, "observer", return_value=(status, current, {})) as observed, \
+                        patch.object(HARNESS, "controls", return_value={"server_time": server_time}) as inspected:
+                    if fault is None:
+                        HARNESS.disabled_observation_checks("node-b", flow, first)
+                        self.assertEqual(("node-b", flow), observed.call_args.args)
+                        inspected.assert_called_once_with("node-b", "inspect", flow)
+                    else:
+                        with self.assertRaises(AssertionError):
+                            HARNESS.disabled_observation_checks("node-b", flow, first)
+
     def boundary_exchange(self, status=200, payload=b"{}", headers=None, open_error=None, read_error=None):
         codes, output = [], io.StringIO()
         class Response:

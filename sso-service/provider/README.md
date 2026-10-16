@@ -33,6 +33,23 @@ Its standalone settings avoid changing the root service dependency graph.
   These are observations, never OTP receipts or eligibility proof. Auth must
   compare them to its own verified candidate versions/epoch on all entry paths.
 
+## Live enrollment observation and disabled accounts
+
+The separate enrollment observer keeps its exact twelve-field response. An
+existing disabled account may return `enabled: false` and `authentication_session_active: true`
+only after the current server flow, issuer, subject, client, HMAC binding,
+canonical contacts and original deadline all validate. Missing/deleted users or
+flows, expiry and binding failures remain unavailable; no negative session fact
+is inferred from absence. Responses remain `no-store`.
+
+Auth's status-only consumer can use this negative observation to invalidate
+eligibility. Positive enrollment/proof consumers still require both flags true.
+This does not establish ACTIVE enrollment, create a banking session or activate
+registration. On 2026-10-16, nine focused provider tests and the full provider check/package
+run (54 tests, zero failures/errors/skips; counts are not additive) passed.
+Fourteen offline diagnostic tests also passed. Actual pinned two-node disable/read
+acceptance remains pending; these checks do not prove that Keycloak retains the
+flow after disabling its user.
 ## Private auth wire
 
 The destination is fixed by `ARMONEY_AUTH_BRIDGE_URL`: HTTPS, or the exact

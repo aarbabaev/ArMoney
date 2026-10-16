@@ -64,10 +64,11 @@ final class EnrollmentObservationTest {
         Fixture fixture = new Fixture();
         var result = EnrollmentObservation.observe(fixture.session(),binding(),KEY);
         assertEquals(12,result.size()); assertEquals(true,result.get("authentication_session_active"));
+        assertEquals(true,result.get("enabled"));
         assertEquals("+971501234567",result.get("phone_number"));
         assertEquals(Instant.ofEpochSecond(fixture.timestamp+120).toString(),result.get("authentication_session_expires_at"));
         assertFalse(result.containsKey("email_verified")); assertFalse(result.containsKey("verification_epoch"));
-        for (String bad : List.of("missing-root","missing-tab","wrong-user","wrong-client","wrong-phase","disabled-user",
+        for (String bad : List.of("missing-root","missing-tab","wrong-user","wrong-client","wrong-phase",
                 "disabled-client","direct-grant-only","noncanonical-phone","noncanonical-email","expired","future")) {
             fixture.fault = bad;
             assertThrows(Bridge.Unavailable.class, () -> EnrollmentObservation.observe(fixture.session(),binding(),KEY),bad);
@@ -78,6 +79,77 @@ final class EnrollmentObservationTest {
         assertThrows(Bridge.Unavailable.class, () -> EnrollmentObservation.observe(fixture.session(),wrongIssuer,KEY));
         var wrongClient = new EnrollmentObservation.Binding(ISSUER,"subject","other-client","root","tab",binding().digest());
         assertThrows(Bridge.Unavailable.class, () -> EnrollmentObservation.observe(fixture.session(),wrongClient,KEY));
+    }
+    @Test void disabledBoundAccountReturnsCurrentNegativeFlagsWithoutEligibility() {
+        var fixture = new Fixture();
+        fixture.userEnabled = false;
+        var result = EnrollmentObservation.observe(fixture.session(), binding(), KEY);
+        assertEquals(12, result.size());
+        assertEquals(false, result.get("enabled"));
+        assertEquals(true, result.get("authentication_session_active"));
+        assertEquals(Instant.ofEpochSecond(fixture.timestamp + 120).toString(),
+                result.get("authentication_session_expires_at"));
+        binding().fields().forEach((name, value) -> assertEquals(value, result.get(name)));
+        assertEquals("+971501234567", result.get("username"));
+        assertEquals("+971501234567", result.get("phone_number"));
+        assertEquals("fixture@example.test", result.get("email"));
+        assertFalse(result.containsKey("state"));
+        assertFalse(result.containsKey("email_verified"));
+        assertFalse(result.containsKey("verification_epoch"));
+        assertFalse(result.containsKey("login_notice_eligible"));
+    }
+    @Test void disabledAccountStillRequiresExactLiveServerBinding() throws Exception {
+        var fixture = new Fixture();
+        fixture.userEnabled = false;
+        var resource = new StatusResource(fixture.session(), () -> KEY, () -> KEY, () -> true);
+        var wrongHmac = binding().fields();
+        wrongHmac.put("authentication_session_id", "A".repeat(43));
+        var wrongSubject = binding().fields();
+        wrongSubject.put("subject", "another-subject");
+        for (var body : List.of(wrongHmac, wrongSubject)) {
+            try (var response = resource.enrollment(KEY, org.keycloak.util.JsonSerialization.writeValueAsBytes(body))) {
+                assertEquals(503, response.getStatus());
+                assertNull(response.getEntity());
+                assertEquals("no-store", response.getHeaderString("Cache-Control"));
+                assertDoesNotThrow(() -> StatusBoundaryTest.applyPinnedSecurityHeaders(response));
+            }
+        }
+        for (String fault : List.of("missing-root","missing-tab","wrong-user","wrong-client","wrong-phase",
+                "disabled-client","direct-grant-only","noncanonical-phone","noncanonical-email","expired","future")) {
+            fixture.fault = fault;
+            assertThrows(Bridge.Unavailable.class,
+                    () -> EnrollmentObservation.observe(fixture.session(), binding(), KEY), fault);
+        }
+    }
+    @Test void disabledNegativeSurvivesResourceSerializationAndSecurityHeaders() throws Exception {
+        var fixture = new Fixture();
+        fixture.userEnabled = false;
+        var resource = new StatusResource(fixture.session(), () -> KEY, () -> KEY, () -> true);
+        try (var response = resource.enrollment(KEY,
+                org.keycloak.util.JsonSerialization.writeValueAsBytes(binding().fields()))) {
+            assertEquals(200, response.getStatus());
+            assertEquals("no-store", response.getHeaderString("Cache-Control"));
+            var serialized = Bridge.strictJson(org.keycloak.util.JsonSerialization.writeValueAsBytes(response.getEntity()));
+            var fields = new HashSet<String>();
+            serialized.fieldNames().forEachRemaining(fields::add);
+            var expected = new HashSet<>(binding().fields().keySet());
+            expected.addAll(Set.of("username","email","phone_number","enabled","authentication_session_active",
+                    "authentication_session_expires_at"));
+            assertEquals(expected, fields);
+            assertTrue(serialized.get("enabled").isBoolean());
+            assertFalse(serialized.get("enabled").booleanValue());
+            assertTrue(serialized.get("authentication_session_active").isBoolean());
+            assertTrue(serialized.get("authentication_session_active").booleanValue());
+            // The HTTP runtime supplies the method's @Produces media type for
+            // entity responses. Model that negotiation before the actual filter.
+            String mediaType = StatusResource.class.getMethod("enrollment", String.class, byte[].class)
+                    .getAnnotation(jakarta.ws.rs.Produces.class).value()[0];
+            try (var negotiated = jakarta.ws.rs.core.Response.fromResponse(response).type(mediaType).build()) {
+                assertDoesNotThrow(() -> StatusBoundaryTest.applyPinnedSecurityHeaders(negotiated));
+                assertEquals(200, negotiated.getStatus());
+                assertEquals("no-store", negotiated.getHeaderString("Cache-Control"));
+            }
+        }
     }
     private static EnrollmentObservation.Binding binding() {
         return new EnrollmentObservation.Binding(ISSUER,"subject","armoney-web","root","tab",
@@ -105,6 +177,7 @@ final class EnrollmentObservationTest {
     private static final class Fixture {
         final int timestamp = Time.currentTime()-10;
         String fault = "";
+        boolean userEnabled = true;
         KeycloakSession session() {
             return model(KeycloakSession.class, Map.of("getContext", (Call)(args,type) -> model(type,Map.of(
                     "getRealm",(Call)(a,t)->realm(), "getUri",(Call)(a,t)->uri())),
@@ -127,7 +200,7 @@ final class EnrollmentObservationTest {
                 "getClient",(Call)(a,t)->client(),"getParentSession",(Call)(a,t)->root(),
                 "getAction",fault.equals("wrong-phase")?"AUTHENTICATE":"REQUIRED_ACTIONS",
                 "getAuthenticatedUser",(Call)(a,t)->model(UserModel.class,Map.of("getId",fault.equals("wrong-user")?"other":"subject",
-                        "isEnabled",!fault.equals("disabled-user"),"getUsername",fault.equals("noncanonical-phone")?"legacy":"+971501234567",
+                        "isEnabled",userEnabled,"getUsername",fault.equals("noncanonical-phone")?"legacy":"+971501234567",
                         "getEmail",fault.equals("noncanonical-email")?"Upper@example.test":"fixture@example.test")))); }
     }
     private interface Call { Object invoke(Object[] args, Class<?> returnType); }
