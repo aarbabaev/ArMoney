@@ -93,6 +93,31 @@ class LedgerMetricsSpec extends Specification {
             { config -> Main.configureMetrics(config, environment, new OperationalMetrics(), readiness) })
     }
 
+    def "observation runs only after authentication and removes a previous zero on failure"() {
+        given:
+        def calls = new AtomicInteger()
+        def metrics = new OperationalMetrics()
+        def runtime = ServiceRuntime.start('ledger-service', 0, { true } as BooleanSupplier, null,
+            { config -> Main.configureMetrics(config, ['INTERNAL_METRICS_KEY': KEY], metrics,
+                { true } as BooleanSupplier, {
+                    if (calls.incrementAndGet() == 1) metrics.set(OperationalMetrics.Gauge.REPLICA_LAG_SECONDS, 0)
+                    else throw new IllegalStateException('synthetic observation failure')
+                } as Runnable) })
+        def client = HttpClient.newHttpClient()
+        expect:
+        scrape(client, runtime, 'incorrect').statusCode() == 401
+        calls.get() == 0
+        scrape(client, runtime, KEY).body().contains('armoney_replica_lag_seconds 0\n')
+        def unavailable = scrape(client, runtime, KEY)
+        unavailable.statusCode() == 200
+        unavailable.body().contains('armoney_ready 1\n')
+        !unavailable.body().contains('replica_lag')
+        calls.get() == 2
+        cleanup:
+        client?.close()
+        runtime?.close()
+    }
+
     private static HttpResponse<String> scrape(HttpClient client, ServiceRuntime runtime, String key) {
         def request = HttpRequest.newBuilder(URI.create("http://localhost:${runtime.port()}/internal/metrics")).GET()
         if (key != null) request.header('X-Service-Key', key)
