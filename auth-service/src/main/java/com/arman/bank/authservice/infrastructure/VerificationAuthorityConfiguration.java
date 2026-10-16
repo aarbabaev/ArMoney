@@ -8,17 +8,24 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.*;
 
-/** Independent default-off staging bridge. No projection/proof positive supplier is wired. */
+/** Independent default-off staging bridge; separate opt-in completion supplies projection but never banking eligibility. */
 public final class VerificationAuthorityConfiguration {
     public final boolean enabled;
+    public final boolean completionEnabled;
+    private final VerificationProjectionConfiguration completionProjection;
     private final String bridgeKey,statusKey;
     private final URI origin;
     private final Policy policy;
     private final VerificationCrypto crypto;
     private final byte[] retentionKey;
     public VerificationAuthorityConfiguration(Map<String,String> environment){
+        String completion=environment.getOrDefault("AUTH_REGISTRATION_AUTHORITY_COMPLETION_ENABLED","false");
+        if(!Set.of("true","false").contains(completion))invalid();
+        completionEnabled=completion.equals("true");
+        completionProjection=completionEnabled?new VerificationProjectionConfiguration(environment):null;
         String flag=environment.getOrDefault("AUTH_VERIFICATION_AUTHORITY_BRIDGE_ENABLED","false");
         if(!Set.of("true","false").contains(flag))invalid();enabled=flag.equals("true");
+        if(completionEnabled&&(!enabled||!completionProjection.enabled))invalid();
         if(!enabled){bridgeKey=statusKey=null;origin=null;policy=null;crypto=null;retentionKey=null;return;}
         if(!"false".equals(environment.getOrDefault("AUTH_VERIFICATION_BRIDGE_ENABLED","false")))invalid();
         bridgeKey=required(environment,"SSO_VERIFICATION_BRIDGE_KEY");statusKey=required(environment,"AUTH_TO_SSO_STATUS_KEY");
@@ -49,16 +56,19 @@ public final class VerificationAuthorityConfiguration {
         if(!enabled)return null;Objects.requireNonNull(database);
         var observer=new HttpVerificationObservations(origin,statusKey,policy);
         try{
-            var store=new PostgresIdentityVerificationStore(database,crypto,retentionKey,policy,null);
+            var reader=new PostgresIdentityVerificationStore(database,crypto,retentionKey,policy,null);
+            var projections=completionEnabled?completionProjection.store(database,sql->(identity,now)->reader.projectionAuthorityInTransaction(sql,identity,now)):null;
+            var store=new PostgresIdentityVerificationStore(database,crypto,retentionKey,policy,projections,completionEnabled?completionProjection.writer():null);
             var routes=new VerificationRoutes(new IdentityVerificationService(store,observer,policy),bridgeKey);
-            return new Resources(routes,observer);
+            return new Resources(routes,observer,completionEnabled?completionProjection.worker(projections,store):null);
         }catch(RuntimeException failure){observer.close();throw failure;}
     }
     public static final class Resources implements AutoCloseable {
-        private final VerificationRoutes routes;private final HttpVerificationObservations observer;
-        private Resources(VerificationRoutes routes,HttpVerificationObservations observer){this.routes=routes;this.observer=observer;}
+        private final VerificationRoutes routes;private final HttpVerificationObservations observer;private final VerificationProjectionWorker projectionWorker;
+        private Resources(VerificationRoutes routes,HttpVerificationObservations observer,VerificationProjectionWorker projectionWorker){this.routes=routes;this.observer=observer;this.projectionWorker=projectionWorker;}
         public VerificationRoutes routes(){return routes;}
-        @Override public void close(){observer.close();}
+        public VerificationProjectionWorker projectionWorker(){return projectionWorker;}
+        @Override public void close(){try{if(projectionWorker!=null)projectionWorker.close();}finally{observer.close();}}
         @Override public String toString(){return "VerificationAuthorityResources[redacted]";}
     }
     private static String required(Map<String,String> environment,String name){String value=environment.get(name);if(value==null||value.isBlank())invalid();return value;}

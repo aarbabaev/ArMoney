@@ -1047,8 +1047,8 @@ Main source wiring now constructs projection configuration with false defaults.
 Enabled user configuration pairs the dedicated route with its exact exemption;
 enabled auth configuration constructs a worker, starts it after HTTP runtime and
 closes it on shutdown/error. These flags have not been enabled for deployment.
-Auth's production authority is UNAVAILABLE: no positive identity/
-contact-version/epoch supplier, ACTIVE eligibility, session/notice capture, legacy
+Standalone projection authority is UNAVAILABLE; separately gated completion source
+supplies current receipt authority only to projection. No ACTIVE eligibility, session/notice capture, legacy
 migration or provider activation is supplied. Issues #28/#36/#37 remain partial.
 Bounded cleanup helpers exist; the auth worker runs cleanup ticks only if
 explicitly enabled and started. User cleanup scheduling and operational
@@ -1067,9 +1067,11 @@ and the [projection contract](docs/verification-projection-contract.md).
 Auth V9 source adds stable pending association, independent contact candidates/
 versions and current receipt pointers, bounded authorized flows, permanent
 contact-free denial barriers, command replay and reservation history. Pending
-UUIDs stay outside banking identities. New-subject projection remains unavailable;
+UUIDs stay outside banking identities when completion is disabled. Separate
+default-off completion source materializes managed principals without banking
+access, as described below. In staging-only mode, new-subject projection remains unavailable;
 caller-owned preparation/ACK helpers stage existing-mapped projection under the
-global verification-control-first/projection-control-second transaction order.
+shared verification-control, projection-control, then login-proof-control order.
 ACK can yield PROJECTED only. Final disabled auth source has independent bounded
 source/security clearance and passing focused unit/PostgreSQL evidence, including
 the trusted timing-anchor regression. Full auth check passed 513 tests without failures, errors or skips;
@@ -1091,8 +1093,8 @@ activation is introduced, and the final action still requires ACTIVE.
 
 The earlier authority stage did not wire an observation supplier. The observation
 integration now provides explicit Main/routes/configuration wiring behind the
-default-false authority-bridge flag. Positive proof/projection eligibility remains UNAVAILABLE;
-no ACTIVE, principal materialization, legacy cutoff, bank-session or notice flow
+default-false authority-bridge flag. Bridge-only positive proof/projection eligibility remains UNAVAILABLE;
+the bridge alone supplies no ACTIVE, principal materialization, legacy cutoff, bank-session or notice flow
 is activated. The earlier projection deployment remains default-off; this is
 not new authority rollout evidence. Candidate/contact and immutable phone-claim
 history retention differs from bounded flow/command-response cleanup; no general
@@ -1113,7 +1115,7 @@ Compose and realm configuration do not activate them. Exactly three allowlisted
 SPI descriptors are packaged. Proof protocol, token policy and introspection
 factories remain unregistered, and provider observations do not grant eligibility.
 
-Auth owns verification receipts. Positive eligibility/projection authority and
+Auth owns verification receipts. Positive login-proof eligibility and
 enforcement across every session/token entry path remain planned, as recorded in
 the [proof contract](auth-service/LOGIN-PROOF-CONTRACT.md). Existing web/native
 OIDC behavior remains unchanged. Standalone checks and package provenance do not
@@ -1164,4 +1166,27 @@ PR #70 passed exact-head CI and was deployed at af1f7975 with the bridge disable
 
 ### Default-off banking eligibility barrier
 
-Auth includes the independent strict AUTH_BANKING_ELIGIBILITY_ENFORCED switch, default false. Its deny-only path rejects all authority-associated V9 staging identities before profile provisioning and during session creation/validation under the authority control lock. Off preserves legacy compatibility, including populated staging. Unassociated identities remain compatible: this is not complete dual-OTP enforcement, new-principal materialization, provider proof or activation. Source and checks are tracked separately; no deployment enables the switch. See [ADR 0038](docs/adr/0038-default-off-banking-eligibility.md).
+Auth includes the independent strict AUTH_BANKING_ELIGIBILITY_ENFORCED switch, default false. Its deny-only path rejects all authority-associated V9 staging identities before profile provisioning and during session creation/validation under the shared control prefix. Off preserves compatibility for unmanaged historical identities, including populated staging. Permanent V10 managed-principal denial applies in every flag mode, as described below. This is not complete dual-OTP enforcement, provider proof or activation. Source and checks are tracked separately; no deployment enables the switch. See [ADR 0038](docs/adr/0038-default-off-banking-eligibility.md).
+
+### Managed registration completion: source implemented, default-disabled
+
+The independent strict `AUTH_REGISTRATION_AUTHORITY_COMPLETION_ENABLED` defaults
+false and requires authority bridge and projection enabled. With both current
+contact receipts, completion atomically materializes the reserved UUID, exact
+issuer/subject mapping, permanent V10 managed marker and business intent, and V8
+projection command under verification, projection, then login-proof control locks.
+Replays of the same current candidate/receipt pair preserve original operation,
+epoch and payload even with another command UUID. No HTTP runs in the transaction.
+A current fenced worker ACK can set `PROJECTED` only.
+
+Managed identities are denied before banking provisioning and during exchange,
+session creation and validation even after every flag is disabled. This adds no
+ACTIVE, positive proof authority, bank-session grant, notice or legacy backfill;
+the 200-owner baseline is not converted. Public enrollment/status retains seven
+fields. Permanent contact-free marker/intent IDs and hashes outlive V8 command
+cleanup and have no authority-row foreign key; existing retained contact and
+external-mapping limits still apply. Once materialized, rollback requires binaries
+enforcing the marker in every mode: disabling flags does not make older binaries
+safe. Source checks are running; runtime activation, deployment and complete
+registration enforcement are not claimed. See
+[ADR 0039](docs/adr/0039-managed-registration-completion.md).

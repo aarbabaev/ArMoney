@@ -30,7 +30,8 @@ public final class PostgresVerificationProjectionStore implements VerificationPr
     /** Global prefix for every projection/verification writer; marker is scoped to this DB transaction. */
     public static void lockControls(DSLContext sql) {
         if(sql.fetchOne("select id from verification_control where id=1 for update")==null
-                ||sql.fetchOne("select id from auth_verification_projection_control where id=1 for update")==null)throw new Failure(Error.UNAVAILABLE);
+                ||sql.fetchOne("select id from auth_verification_projection_control where id=1 for update")==null
+                ||sql.fetchOne("select id from sso_login_proof_control where id=1 for update")==null)throw new Failure(Error.UNAVAILABLE);
         sql.configuration().data(LOCK_CONTEXT,new Locked(sql,sql.fetchOne("select txid_current() as id").get("id",Long.class)));
     }
     public static void requireLocked(DSLContext sql) {
@@ -129,6 +130,15 @@ public final class PostgresVerificationProjectionStore implements VerificationPr
             if (full == null) throw new Failure(Error.UNAVAILABLE);
             return status(full, tomb);
         });
+    }
+    public Status statusInTransaction(DSLContext sql,String writer,UUID operation) {
+        requireLocked(sql); VerificationProjection.writer(writer,policy);
+        var tomb=tombstone(sql,writerHash(writer),operation);
+        if(tomb==null)throw new Failure(Error.CONFLICT);
+        if(!now(sql).isBefore(time(tomb,"expires_at")))throw new Failure(Error.EXPIRED);
+        var full=full(sql,writerHash(writer),operation);
+        if(full==null)throw new Failure(Error.UNAVAILABLE);
+        return status(full,tomb);
     }
     @Override public Optional<Claim> claim(String writer) {
         VerificationProjection.writer(writer, policy);

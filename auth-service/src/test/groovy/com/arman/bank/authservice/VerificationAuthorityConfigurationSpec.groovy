@@ -91,4 +91,27 @@ class VerificationAuthorityConfigurationSpec extends Specification {
         'ARMONEY_LOGIN_CODE_HMAC_KEY' | 'transport' | true
         'ARMONEY_LOGIN_CODE_HMAC_KEY' | 'retention' | false
     }
+    def 'completion flag is independent strict default off and requires bridge and projection'(){
+        expect:
+        !new VerificationAuthorityConfiguration(environment()).completionEnabled
+        when:
+        new VerificationAuthorityConfiguration([AUTH_REGISTRATION_AUTHORITY_COMPLETION_ENABLED:value])
+        then:
+        thrown(IllegalArgumentException)
+        where:
+        value << ['true','TRUE','1',' true','']
+    }
+    def 'completion mode validates complete projection settings without activating a resource'(){
+        given:
+        def env=environment()+[AUTH_REGISTRATION_AUTHORITY_COMPLETION_ENABLED:'true',AUTH_VERIFICATION_PROJECTION_ENABLED:'true',
+            AUTH_VERIFICATION_PROJECTION_WRITER_ID:'auth-projection',AUTH_TO_USER_VERIFICATION_PROJECTION_KEY:'synthetic-projection-credential-unique',
+            AUTH_VERIFICATION_PROJECTION_RETENTION_KEY:encoded(14),USER_BASE_URL:'http://user-service:8080']
+        expect:
+        new VerificationAuthorityConfiguration(env).completionEnabled
+        when:
+        env.remove('AUTH_VERIFICATION_PROJECTION_RETENTION_KEY')
+        new VerificationAuthorityConfiguration(env)
+        then:
+        thrown(IllegalArgumentException)
+    }
 }
