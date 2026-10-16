@@ -441,6 +441,21 @@ never delete catalog history or reset a nonce budget to make space. Record
 retirement as an explicit configuration decision; no request/cleanup auto-rotation.
 Catalog and nonce registry have no intent/person/authority foreign keys.
 
+Cross-transaction retirement fence: a committed nonce reservation is NOT
+permission to insert detail under a cached key indefinitely. In the SAME final
+detail-insert transaction lock the original key-catalog row and recheck ACTIVE
+state plus original key generation before any ciphertext/detail insert. Within
+the existing V -> projection -> proof order, acquire that catalog row before
+intent/detail rows; retirement follows the same control prefix/catalog order.
+Retirement takes the SAME catalog lock, fences new reservations and pending
+writers, then checks actual last detail and removes registry rows only when
+eligible. A worker paused after reservation and resumed after retirement must
+deny, burn the nonce and never recreate a retired-key detail or registry entry.
+Use the owning connection; no second-connection acquisition or new resource.
+An ambiguous nonce-reservation COMMIT permits NO encryption until durability is
+known under the original reservation identity; never assume rollback and retry
+with an untracked nonce. The catalog fence covers all final insert paths/replay.
+
 Confirmation reconstructs the original 13-field Write from its trusted six-field
 binding, immutable parent times/kind, detail event/password time, authenticated
 decrypted opaque binding and the ORIGINAL first stage-command alias. Recompute
@@ -458,6 +473,8 @@ immutable ciphertext on replay; duplicate nonce/key across processes and restart
 durable reservation burn on all failures; admission before reservation; per-key
 100,000 and catalog1,024 caps; retired key with overdue details retains registry;
 registry cleanup only after actual final detail purge; attempted ID/material reuse
+paused reservation -> retirement -> resumed final insert rejects under real PG
+catalog locking; ambiguous reservation acknowledgement prevents encryption;
 after registry erasure and key relabeling are rejected by persistent catalog;
 strict pre-decrypt bounds and plaintext validation; concurrent first-alias race; actual purge before
 key retirement; original first-alias binding;

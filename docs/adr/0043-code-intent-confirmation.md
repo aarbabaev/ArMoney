@@ -92,6 +92,11 @@ actual final detail purge. A persistent key catalog (cap1,024) uniquely retains
 key IDs and fingerprints of random key material to prohibit ID/material reuse
 after registry erasure; no person/intent links or catalog deletion. Admission
 budget precedes nonce reservation. This is a pending amendment, not implemented.
+Final detail insertion and retirement lock the same original catalog row:
+insertion rechecks ACTIVE plus key generation in its owning transaction;
+retirement fences pending/new writers before last-detail check and registry
+deletion. A paused reserved worker cannot resurrect retired-key detail. Ambiguous
+reservation commit prohibits encryption until original durability is known.
 
 ## Pending amendment: global authorized in-flight admission
 
