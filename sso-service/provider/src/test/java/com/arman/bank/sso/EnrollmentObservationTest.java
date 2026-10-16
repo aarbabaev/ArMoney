@@ -96,6 +96,7 @@ final class EnrollmentObservationTest {
             assertEquals(503, response.getStatus());
             assertNull(response.getEntity());
             assertEquals("no-store", response.getHeaderString("Cache-Control"));
+            assertDoesNotThrow(() -> StatusBoundaryTest.applyPinnedSecurityHeaders(response));
         }
     }
     private static com.fasterxml.jackson.databind.JsonNode json(String input) throws java.io.IOException {
