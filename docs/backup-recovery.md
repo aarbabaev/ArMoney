@@ -1,5 +1,22 @@
 # Database backup and recovery
 
+On 2026-10-17, the isolated drill also passed at integrated revision
+`a3fd9cec8d1eb8a77dd0ddbd02c0a059153f498a`: nine stores, capture **82.102s**,
+outage through acceptance **231.073s**, and total staging/cleanup **718.438s**.
+Independent reviewer and financial QA audited the retained report, executed tool
+hashes and source assertions. Cleanup completed; a fresh outer inventory contained
+zero owned containers, volumes and networks. Independent security audit is also clear; exact-head CI is
+separate delivery gates. The workflow does not itself invoke this full drill.
+
+Zero missing acknowledgements covers one completed, pre-capture synthetic payment,
+not arbitrary acknowledgement-set recovery or an in-flight transaction. The drill
+funds 1,000 fils through a balanced clearing counterpart and transfers 250 fils;
+restored customer balances are 750, 250 and 0 fils. It checks replay, payload and
+owner rejection, immutable journal reconciliation and standby restart/rebuild.
+No individual SQL/HTTP input receipts or full Git/backup bundle were retained for
+independent replay. This result does not establish concurrency/rollback recovery,
+PITR, HA, privileged-administrator resistance or production RTO/RPO.
+
 Disposable application recovery passed on 2026-10-16 at revision
 `960087d863fbd4e57d0c1b78109ae91fe277b64d`, within the synthetic scope below.
 This does not establish production recovery objectives or validation of a later

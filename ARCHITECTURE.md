@@ -533,6 +533,16 @@ triggers do not protect against an administrator. A restricted runtime DB role i
 
 ### Optional ledger replicas
 
+The isolated nine-store recovery drill passed again on 2026-10-17 at
+`a3fd9cec8d1eb8a77dd0ddbd02c0a059153f498a`: 82.102 seconds capture,
+231.073 seconds outage through acceptance, and 718.438 seconds total staging and
+cleanup. Independent retained-evidence review and financial QA cover one completed
+pre-capture synthetic payment, balanced AED replay and standby restart/rebuild.
+They do not establish in-flight/concurrent recovery or production RTO/RPO.
+Independent security review is also clear. Exact-head CI remains a separate gate; the workflow does not
+invoke this full drill. See the dated evidence and retention limits in
+[database recovery](docs/backup-recovery.md).
+
 Saved logical backup preflight, persistent-store coverage and disposable recovery
 tooling are documented in [database recovery](docs/backup-recovery.md). Disposable
 application recovery passed on 2026-10-16 at `960087d863fbd4e57d0c1b78109ae91fe277b64d`:
