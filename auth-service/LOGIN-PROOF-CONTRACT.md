@@ -1,6 +1,24 @@
 # Planned auth login proof contract, revision 3
 
-Status: **PLANNED AUTH CONTRACT; DISABLED PROVIDER SOURCE ONLY; NO AUTH PROOF ROUTES REGISTERED.**
+Status: **PLANNED POSITIVE AUTH CONTRACT; DEFAULT-OFF PRIVATE BRIDGE SOURCE;
+NO POSITIVE PROVIDER OR BANKING ACTIVATION.**
+
+## Current integration boundary
+
+Main now optionally registers private proof handlers through strict default-off
+`AUTH_LOGIN_PROOF_BRIDGE_ENABLED` configuration. Defaults retain 404; the
+production eligibility supplier remains unavailable and positive enforcement is
+rejected. Internal V12 staging, AEAD detail retention and global callback-scoped
+request ownership are described in [CODE-INTENT-STAGING.md](CODE-INTENT-STAGING.md).
+No stage HTTP endpoint, confirmation service, positive provider hook, ACTIVE
+banking session or login-notice completion is supplied.
+
+The approved [joint code-intent contract](CODE-INTENT-CONFIRMATION-DRAFT.md) and
+[ADR 0043](../docs/adr/0043-code-intent-confirmation.md) supersede this document's
+earlier synchronous redirect-time positive-proof assumptions. In particular,
+pre-commit staging is non-authoritative and cannot substitute for post-commit
+confirmation. Sections explicitly describing the earlier baseline below are
+historical source evidence, not the current Main wiring boundary.
 
 Reconciled against main baseline `8b8f8aca9a82f8fc76ae302a748fd61bca91ddd4`
 and separately ported disabled provider source on 2026-10-15. This recovers the
@@ -9,7 +27,7 @@ migrations or test evidence. All normative sections below describe the intended
 contract, not completed production behavior. See the
 [disabled provider design](../sso-service/provider/LOGIN-PROOF-DESIGN.md).
 
-## Current source boundary
+## Historical source boundary at the recorded baseline
 
 At this baseline Main registers only AuthRoutes, not VerificationRoutes or proof
 routes. Verification core and encrypted delivery storage exist; the separately
@@ -286,7 +304,8 @@ The clean PROOF66 slice contains LoginProof, LoginProofStore,
 PostgresLoginProofStore, LoginProofConfiguration and LoginProofRoutes, plus
 V7__sso_login_proofs.sql. It implements disabled storage/transport and shared
 durable admission, not the historical dirty worktree's notice/session integration.
-Main still registers no proof routes. Preserve V6 registration verification and
+That baseline registered no proof routes; the current bridge boundary is recorded
+above. Preserve V6 registration verification and
 this V7 lineage; any later schema extension needs a separately allocated next
 unused append-only migration. Do not copy old Main, notice lifecycle, migration
 numbers or historical test results wholesale.
@@ -299,8 +318,8 @@ Required auth closure before positive proof:
 - PROOF66 supplies directional write/resolve configuration, strict bounded JSON,
   allowlists, generic errors and no-store. An explicitly constructed enabled
   route uses the actual configuration factory's unavailable eligibility adapter
-  and returns 503 for otherwise valid new writes. Main lifecycle/route wiring
-  remains absent, yielding 404 in the application; positive eligibility is absent.
+  and returns 503 for otherwise valid new writes. Current Main adds strict
+  default-off bridge registration; positive eligibility remains absent.
 - Trusted eligibility authority for issuer/subject, both current contact versions
   and receipts, verification epoch and exact user-projection acknowledgement.
   Provider observations do not certify verification or ACTIVE. Uncertain or
@@ -317,9 +336,9 @@ Required auth closure before positive proof:
   old worktree's first-observation notices are absent from this baseline.
 
 ARMONEY_LOGIN_PROOF_ENABLED names the disabled provider proof opt-in.
-AUTH_LOGIN_PROOF_BRIDGE_ENABLED names the earlier auth transport candidate; it
-is not read or wired by current Main. AUTH_SSO_LOGIN_PROOF_ENABLED remains a
-proposed positive-enforcement gate, also unimplemented here. Revision 2 below specifies proposed final flags and budgets. No flag supplies missing
+AUTH_LOGIN_PROOF_BRIDGE_ENABLED now controls the default-off private bridge in
+Main. AUTH_SSO_LOGIN_PROOF_ENABLED remains a rejected positive-enforcement gate.
+Revision 2 below specifies historical proposed flags and budgets. No flag supplies missing
 projection authority. OTP delivery opt-in cannot activate proof or login notices.
 
 Keep provider factories unregistered and every proof/bridge/enforcement gate

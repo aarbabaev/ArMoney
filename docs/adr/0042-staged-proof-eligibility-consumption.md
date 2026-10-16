@@ -16,11 +16,16 @@ public PROJECTED status do not mean ACTIVE.
 
 ## Decision
 
-An opaque, store-owned admission capability binds one writer, complete request,
-issuer/subject/client/session tuple and database observation anchor. Admission
+An opaque admission capability belongs to one live request callback and binds
+the store, writer, complete request, issuer/subject/client/session tuple and
+database observation anchor. It cannot cross callbacks, threads or request
+lifetimes; unscoped staged consumption fails closed. Admission
 charges its existing budget first; a separate database transaction captures the
 immutable anchor after charging and before provider I/O. Provider observation
 occurs outside the proof-write transaction and cannot refresh this anchor.
+The same exclusive physical PRIMARY connection and global operation permit span
+admission, observation and final business transactions; no second pool borrow is
+used. This callback scope adds no positive provider adapter or confirmation.
 
 The staged INTERACTIVE-only creation path consumes explicit current evidence.
 It requires the existing trusted password event; observations cannot invent an
