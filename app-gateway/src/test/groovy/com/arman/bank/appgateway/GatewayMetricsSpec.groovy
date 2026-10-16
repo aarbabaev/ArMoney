@@ -130,4 +130,3 @@ class GatewayMetricsSpec extends Specification {
         client.send(request.build(), HttpResponse.BodyHandlers.ofString())
     }
 }
-
