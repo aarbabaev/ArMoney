@@ -1,0 +1,40 @@
+{
+  "interval_seconds": 15,
+  "timeout_seconds": 3,
+  "stale_after_seconds": 45,
+  "recovery_backlog_limit": 100,
+  "outbox_backlog_limit": 100,
+  "replica_lag_seconds_limit": 30,
+  "targets": [
+    {
+      "service": "payment-service",
+      "url": "http://payment-service:8080/internal/metrics",
+      "key_env": "INTERNAL_METRICS_KEY"
+    },
+    {
+      "service": "auth-service",
+      "url": "http://auth-service:8080/internal/metrics",
+      "key_env": "INTERNAL_METRICS_KEY"
+    },
+    {
+      "service": "user-service",
+      "url": "http://user-service:8080/internal/metrics",
+      "key_env": "INTERNAL_METRICS_KEY"
+    },
+    {
+      "service": "wallet-service",
+      "url": "http://wallet-service:8080/internal/metrics",
+      "key_env": "INTERNAL_METRICS_KEY"
+    },
+    {
+      "service": "ledger-service",
+      "url": "http://ledger-service:8080/internal/metrics",
+      "key_env": "INTERNAL_METRICS_KEY"
+    },
+    {
+      "service": "app-gateway",
+      "url": "http://app-gateway:8080/internal/metrics",
+      "key_env": "INTERNAL_METRICS_KEY"
+    }
+  ]
+}
