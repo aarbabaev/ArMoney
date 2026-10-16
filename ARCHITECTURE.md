@@ -450,8 +450,10 @@ leased work; failed collection removes those observations.
 The local collector authenticates fixed private targets, refuses redirects and
 environment proxies, bounds I/O and emits expiring atomic status snapshots plus
 finite stdout state-transition alerts. Missing/stale data stays unknown; no
-external notification provider is used. Worker counters, queue age and replica
-lag remain unobserved. An explicit `compose.metrics.yaml` override provides a
+external notification provider is used. Payment worker failure counters are
+process-local observations and remain unknown until the first failure; they
+reset on restart. Queue age is absent and replica lag is a separate integration.
+An explicit `compose.metrics.yaml` override provides a
 nonroot collector without published ports; private deployment and key provisioning
 are pending. CI source includes an isolated UUID-project fixture with owned-resource
 cleanup, real edge exclusion and a reversible payment-database outage.
