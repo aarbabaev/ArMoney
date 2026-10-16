@@ -35,6 +35,43 @@ Its standalone settings avoid changing the root service dependency graph.
 
 ## Private auth wire
 
+### Default-off code-session observation
+
+`POST /realms/{realm}/armoney-status/code-session` is a separate source-level
+observer gated by `ARMONEY_CODE_SESSION_OBSERVATION_ENABLED` (only literal `true`
+enables it; absent/default remains false). It authenticates the independent
+`AUTH_TO_SSO_STATUS_KEY` / `X-ArMoney-Auth-Status-Key` before parsing. The existing
+eight-field status and enrollment endpoints retain their contracts.
+
+The request has exactly `issuer`, `subject`, `client_id`, `user_session_id`.
+Only enabled public clients `armoney-ios`, `armoney-android`, `armoney-web` are
+supported. Require the exact persistent online LOGGED_IN user session and its
+authenticated client membership, plus both pinned manager validity checks.
+The exact response has the four bindings, `username`, `email`, `phone_number`,
+`enabled`, `user_session_active`, `client_session_active`, `observed_at` and
+`valid_until`. Contacts are canonical or explicit null; malformed/noncanonical
+email fails closed without normalization. Disabled-user negative observations
+require the same valid live binding. Positive consumers require all three flags.
+
+The deadline is the floored minimum of capture+five seconds and all finite
+user/client idle/max deadlines, with pinned remember-me/client overrides. Only
+maximum-lifespan `-1` is unbounded; idle grace is excluded. Missing, foreign,
+expired, offline, transient, unsupported or uncertain state fails closed.
+Timestamps are observations, not verification receipts, a provider lease or
+banking authority. The frozen relative Auth conversion and its equivalent-clock-
+rate assumption are described in [PR #85](https://github.com/aarbabaev/ArMoney/pull/85).
+Source review does not prove that runtime clock assumption or production safety.
+
+On 2026-10-17 (Asia/Dubai), provider `check jar --rerun-tasks` passed 64 tests in
+13 suites with zero failures, errors or skips; the 11 new observer tests are
+included. Independent QA bound reports, unchanged source manifests and the JAR
+with three production SPI descriptors and no fixture classes. Two earlier failed
+runs (64/7 and 64/5) remain retained; fixes corrected strict test-model policy
+inputs and pinned Profile lifecycle without changing production checks.
+Two-node runtime acceptance and exact-head required CI remain pending.
+No production flag, realm, route consumer, proof
+hook registration or banking eligibility is activated by this implementation.
+
 The destination is fixed by `ARMONEY_AUTH_BRIDGE_URL`: HTTPS, or the exact
 private HTTP hostname `auth-service`. No redirects; two-second connect and
 four-second total exchange deadline; request/response bodies are bounded to 12 KiB.

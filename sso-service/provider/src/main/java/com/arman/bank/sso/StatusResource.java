@@ -16,14 +16,35 @@ public final class StatusResource {
     private final java.util.function.Supplier<String> statusKey;
     private final java.util.function.Supplier<String> bindingKey;
     private final java.util.function.BooleanSupplier enrollmentEnabled;
+    private final java.util.function.BooleanSupplier codeSessionEnabled;
     StatusResource(KeycloakSession session) { this(session, () -> System.getenv("AUTH_TO_SSO_STATUS_KEY")); }
     StatusResource(KeycloakSession session, java.util.function.Supplier<String> statusKey) {
         this(session, statusKey, () -> Bridge.required("ARMONEY_PROVIDER_BINDING_KEY"), Bridge::enabled);
     }
     StatusResource(KeycloakSession session, java.util.function.Supplier<String> statusKey,
                    java.util.function.Supplier<String> bindingKey, java.util.function.BooleanSupplier enrollmentEnabled) {
+        this(session,statusKey,bindingKey,enrollmentEnabled,()->"true".equals(System.getenv("ARMONEY_CODE_SESSION_OBSERVATION_ENABLED")));
+    }
+    StatusResource(KeycloakSession session, java.util.function.Supplier<String> statusKey,
+                   java.util.function.Supplier<String> bindingKey, java.util.function.BooleanSupplier enrollmentEnabled,
+                   java.util.function.BooleanSupplier codeSessionEnabled) {
         this.session = session; this.statusKey = statusKey; this.bindingKey = bindingKey;
         this.enrollmentEnabled = enrollmentEnabled;
+        this.codeSessionEnabled=codeSessionEnabled;
+    }
+
+    @POST @Path("code-session") @Consumes(MediaType.APPLICATION_JSON) @Produces(MediaType.APPLICATION_JSON)
+    public Response codeSession(@HeaderParam("X-ArMoney-Auth-Status-Key") String supplied,byte[] body) {
+        String configured=statusKey.get();
+        if(configured==null || configured.length()<32 || configured.length()>256 || configured.chars().anyMatch(c->c<33||c>126)) return empty(503);
+        if(supplied==null || supplied.length()>256 || !MessageDigest.isEqual(configured.getBytes(StandardCharsets.UTF_8),supplied.getBytes(StandardCharsets.UTF_8))) return empty(401);
+        if(!codeSessionEnabled.getAsBoolean()) return empty(503);
+        if(body==null || body.length>12288) return empty(400);
+        final CodeSessionObservation.Binding binding;
+        try { binding=CodeSessionObservation.parse(Bridge.strictJson(body)); }
+        catch(IllegalArgumentException | java.io.IOException invalid) { return empty(400); }
+        try { return Response.ok(CodeSessionObservation.observe(session,binding,java.time.Clock.systemUTC())).type(MediaType.APPLICATION_JSON_TYPE).header("Cache-Control","no-store").build(); }
+        catch(RuntimeException unavailable) { return empty(503); }
     }
 
     @POST @Path("enrollment") @Consumes(MediaType.APPLICATION_JSON) @Produces(MediaType.APPLICATION_JSON)

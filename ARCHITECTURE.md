@@ -1271,3 +1271,19 @@ rollback. Independent QA and security bound the result to the fixture artifacts
 and verified cleanup. Production positive-proof hooks remain unregistered;
 the precommit recording/postcommit authority contract remains an activation gate.
 See [the proof design](sso-service/provider/LOGIN-PROOF-DESIGN.md#first-login-transaction-visibility-gate-sso-vis-001).
+
+### Default-off client-session observer follow-up
+
+The provider source adds private `armoney-status/code-session`, separately gated
+by default-false `ARMONEY_CODE_SESSION_OBSERVATION_ENABLED`. Its strict four-field
+request binds the exact user/session/public client; the exact twelve-field
+response includes both session flags and observed/deadline timestamps. Existing
+status/enrollment contracts and production factory registrations are unchanged.
+Canonical contacts, LOGGED_IN online persistence, exact client membership and
+pinned user/client idle/max validity are required. This is observation only,
+not Auth receipts/projection/ACTIVE authority. Local provider checks passed
+64 tests across 13 suites, independently bound to unchanged source and packaged
+SPI evidence. Two-node runtime acceptance and exact-head required CI remain
+pending. See the provider README and scoped frozen contract in
+[PR #85](https://github.com/aarbabaev/ArMoney/pull/85); clock-rate assumptions and
+all activation gates remain explicit.
