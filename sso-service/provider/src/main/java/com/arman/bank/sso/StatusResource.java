@@ -80,5 +80,9 @@ public final class StatusResource {
                 || value.asText().chars().anyMatch(c -> c < 33 || c == 127)) throw new IllegalArgumentException();
         return value.asText();
     }
-    private static Response empty(int status) { return Response.status(status).header("Cache-Control", "no-store").build(); }
+    private static Response empty(int status) {
+        // Keycloak's security-header filter rejects POST 503 responses without a
+        // media type, even when @Produces is present and the entity is empty.
+        return Response.status(status).type(MediaType.APPLICATION_JSON_TYPE).header("Cache-Control", "no-store").build();
+    }
 }
