@@ -90,6 +90,26 @@ remained. This focused run does not establish full provider check, packaging,
 required PR CI, runtime wiring or activation. The URI error-redaction and Unicode
 space findings are verified only within this unwired parser scope.
 
+### Unwired invocation deadline
+
+`InvocationDeadline` provides one fixed four-second monotonic budget, started
+before serialization/DNS by a future consumer. It owns only explicitly registered
+exchange futures/body cancellation hooks; completed registrations detach without
+renewing the budget. Expiry, backward elapsed time or close terminally cancels
+owned resources, including late registrations. Cancellation callbacks run outside
+the ownership monitor. The utility creates no executor, thread, scheduler, HTTP
+client or database resource. Existing `DeadlineHttp`, `ProofClient`, token hooks
+and SPI registrations are unchanged.
+
+At source `34a153`, the isolated focused check actually passed eight deadline
+tests and eight configuration tests: 16 tests across two suites, zero failures,
+errors or skips. Independent review verified retained XML and source/archive
+matching. Evidence prefix:
+`D:/ArMoneyDockerRecovery/2026-10-17/auth-code-confirmation/armoney-sso-deadline-8cf71eb6f45b40578c40c7513349a3f0`.
+These deterministic tests do not establish physical DNS/HTTP termination or a
+runtime aggregate lookup/confirmation deadline. Consumer integration and
+exact-head required CI remain unproven; no production activation follows.
+
 ### Default-off code-session observation
 
 `POST /realms/{realm}/armoney-status/code-session` is a separate source-level

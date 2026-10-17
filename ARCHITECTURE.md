@@ -1380,3 +1380,10 @@ client models and deployment state are outside this parser's validation boundary
 At `89a7404`, isolated Java 21 compilation and eight focused configuration tests
 passed with zero failures, errors or skips; confirmation and activation remain
 gated. See the provider README for the exact source scope and limitations.
+
+The provider also contains an unwired invocation-owned deadline utility. At
+34a1537855f551ed269d49f1c3bf8177bcc15796, eight deterministic deadline tests and
+eight configuration tests passed with zero failures, errors or skips; independent
+review verified retained results and source provenance. Existing transports and
+hooks do not consume this utility. Aggregate transport integration and physical
+DNS/HTTP termination remain unproven; these tests do not authorize activation.
