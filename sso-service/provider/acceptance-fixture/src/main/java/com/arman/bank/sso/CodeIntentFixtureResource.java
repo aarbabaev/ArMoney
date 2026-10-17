@@ -31,7 +31,7 @@ public final class CodeIntentFixtureResource {
                 case "arm"->{fields(input,"subject","client_id");result=Map.of("experiment_handle",support.arm(text(input,"subject"),text(input,"client_id")));}
                 case "state"->{fields(input,"experiment_handle");result=Map.of("state",support.state(handle(input,"experiment_handle")));}
                 case "cancel"->{fields(input,"experiment_handle");result=Map.of("state",support.cancel(handle(input,"experiment_handle")));}
-                case "bind-stage"->{fields(input,"experiment_handle","stage_handle","command_id");result=Map.of("state",support.bindStage(handle(input,"experiment_handle"),handle(input,"stage_handle"),LoginProof.uuid(text(input,"command_id"))));}
+                case "bind-stage"->{fields(input,"experiment_handle","command_id");result=Map.of("state",support.bindStage(handle(input,"experiment_handle"),LoginProof.uuid(text(input,"command_id"))));}
                 case "confirm"->{fields(input,"experiment_handle","command_id");result=Map.of("state",support.confirm(handle(input,"experiment_handle"),LoginProof.uuid(text(input,"command_id"))));}
                 case "membership"->{fields(input,"issuer","subject","client_id","user_session_id");result=membership(input);}
                 default->{return reply(404,null);}
