@@ -20,15 +20,20 @@ fixed-delay maintenance scheduler with bounded shutdown. Its nine additional
 tests remain uncompiled and unrun; fake maintenance does not establish actual
 join, interruption or concurrent shutdown behavior. A configured subject UUID is
 not evidence of a persisted identity: disposable provisioning must precede startup.
-Factories delegate only to explicitly supplied bootstrap configuration and do not
-scan the environment or enable the fixture automatically. Disposable SPI/theme,
-image and bootstrap invocation remain unwired.
+Core bootstrap accepts explicit configuration; the guarded fixture-only launch
+adapter supplies it. `Dockerfile.code-intent` now declares dedicated disposable
+SPI/theme assembly, without default enable flags or credentials. This image source
+has not been built. Actual orchestration, disabled provisioning followed by restart,
+classloader compatibility and bootstrap invocation remain unverified.
 
 The code-intent fixture is acceptance-only source, not a completed combined
-acceptance flow. Its 24 fixture tests and 12 invocation-deadline tests have not
-been compiled or executed. Independent source review checked the bounded control
-state, native request ownership, strict UTF-8 parsing and original deadline
-intersection; this does not establish runtime readiness.
+acceptance flow. An isolated earlier checkpoint passed 104 provider unit tests in
+18 suites with no failures, errors or skips, including the 12 deadline tests.
+Fixture production Java and its JAR compiled, but fixture test compilation failed:
+the pinned realm-resource provider is not AutoCloseable. A separately reviewed
+test-only explicit-cleanup correction is prepared; the 24 fixture tests remain
+unexecuted. Bootstrap and adapter additions remain uncompiled and unrun.
+Independent source review is not runtime readiness.
 
 Explicit disposable bootstrap must install the fixture's settings, code-intent
 resources and transport. Factories remain unavailable without installation.
@@ -145,3 +150,19 @@ root/tab removal, expiry and the acceptance image require separately authorized
 execution. The bridge fixture must return503 after recording/calling the real
 observer, never a receipt or fake enrollment success. Positive authority, ACTIVE,
 real delivery, auth route wiring and production activation remain unavailable.
+
+## Dedicated code-intent image source
+
+The dedicated profile replaces the observer realm-resource descriptor with only
+`CodeIntentFixtureResourceFactory`, adds the disposable continuation action and
+uses the existing visibility protocol factory for the reviewed code-generation
+hook. It does not register old observer or visibility control resources. Theme
+discovery metadata and the continuation theme inheriting `armoney` are generated
+only inside this fixture build. Production provider packaging and SPI descriptors
+remain separate and unchanged. Generated fixture inputs and the dedicated
+Dockerfile are included in retained provenance.
+
+Source inspection is not an image build, JAR inventory inspection or native
+Keycloak acceptance. Production password proof and eligibility stay unchanged;
+this assembly source establishes no token redemption, session authority or
+activation.

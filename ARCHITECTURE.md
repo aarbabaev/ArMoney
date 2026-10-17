@@ -1441,11 +1441,14 @@ transaction outcome tracking and authenticated node-B membership before lookup
 and confirmation. Its local body timer retains only a transport connection and
 serializes completion against expiry. The invocation deadline retains its original
 sample and caps both the outer bound and four-second producer window without
-renewal. Independent source review is not runtime proof: 24 fixture tests and
-12 deadline tests remain uncompiled and unrun. Bootstrap, disposable SPI/theme
-wiring, physical body/DNS termination, classloader compatibility, clocks and
-genuine combined acceptance remain open; production eligibility and activation
-are unchanged. See the acceptance-fixture README for the evidence boundary.
+renewal. An isolated checkpoint passed 104 provider unit tests in 18 suites,
+including 12 deadline tests, with no failures, errors or skips. Fixture production
+Java and its JAR compiled; fixture test compilation failed against the pinned
+non-AutoCloseable realm-resource API. A reviewed test-only cleanup correction is
+prepared, while all 24 fixture tests remain unexecuted. Bootstrap, physical
+body/DNS termination, classloader compatibility, clocks and genuine combined
+acceptance remain open; production eligibility and activation are unchanged.
+See the acceptance-fixture README for the evidence boundary.
 
 A subsequent acceptance-only bootstrap source owns explicit configuration,
 caller-local secret inventory, install-last lifecycle and one maintenance
@@ -1460,3 +1463,10 @@ isolation gates. Atomic configuration/start/close prevents hot replacement and
 reopening closed owners. Eleven adapter tests remain uncompiled and unrun; core
 bootstrap still accepts explicit inputs only. Persisted synthetic provisioning,
 disposable image wiring and native runtime verification remain separate gates.
+
+A dedicated `Dockerfile.code-intent` source now assembles only the disposable
+code-intent realm resource, continuation action and existing code-generation
+protocol hook, with fixture-theme discovery and separate provenance. It sets no
+default enable flags or credentials and does not change production SPI packaging.
+This profile has not been built; actual image inventory, classloading, theme
+inheritance and two-stage disposable startup remain verification gates.
