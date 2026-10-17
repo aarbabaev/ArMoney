@@ -179,7 +179,8 @@ class CodeIntentRegistrationReadinessIntegrationSpec extends Specification {
                 Instant bound=confirmation?
                     validator.requireLocalForConfirmation(new L.Binding(ISSUER,flow.subject(),flow.clientId(),'synthetic-provider-session')):
                     validator.requireCurrentLocalRegistration(ISSUER,flow.subject())
-                assert sql.fetchOne('select clock_timestamp() < ?',[java.time.OffsetDateTime.ofInstant(bound,ZoneOffset.UTC)] as Object[]).get(0,Boolean)
+                boolean deadlineCurrent=sql.fetchOne('select clock_timestamp() < ?',[java.time.OffsetDateTime.ofInstant(bound,ZoneOffset.UTC)] as Object[]).get(0,Boolean)
+                assert deadlineCurrent
                 bound
             }
             [deadline:deadline]
@@ -216,9 +217,14 @@ class CodeIntentRegistrationReadinessIntegrationSpec extends Specification {
     }
     def 'full real receipt projection and grant predicate returns identical original deadline'(){
         given:UUID enrollment=eligible()
-        when:def ready=outcome()
-        then:ready.deadline instanceof Instant;outcome(true)==ready
-        database.transaction{it.fetchOne('select count(*) from banking_eligibility_grants g join managed_registration_principals m on m.identity_id=g.identity_id where m.enrollment_id=?',enrollment).get(0,Integer)}==1
+        when:
+        def ready=outcome()
+        def confirmation=outcome(true)
+        int grantCount=database.transaction{it.fetchOne('select count(*) from banking_eligibility_grants g join managed_registration_principals m on m.identity_id=g.identity_id where m.enrollment_id=?',enrollment).get(0,Integer)}
+        then:
+        ready.deadline instanceof Instant
+        confirmation==ready
+        grantCount==1
     }
     def 'consumed challenge regression invalidates both entry points'(){
         given:UUID enrollment=eligible()
