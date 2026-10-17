@@ -1,4 +1,66 @@
-# Disposable observer acceptance fixture
+# Disposable observer and code-intent acceptance fixtures
+
+## Code-intent source candidate
+
+The disposable launch adapter source now reads only named environment values in
+the fixture factory, after literal fixture/CI/isolation gates. Disabled mode reads
+no secret material. Core bootstrap remains environment-free. Configure, start and
+close share atomic ownership with terminal OFF/FAILED/CLOSED states, immutable
+selection and no hot replacement. Strict local material parsing is bounded to
+16 KiB, 64 entries and canonical Base64; a configured UUID still does not prove
+persisted identity. Provision while disabled, stop, then enable and restart the
+disposable nodes before experiments. Eleven adapter tests remain uncompiled and
+unrun; source reviews do not prove factory environment-read ordering or lifecycle
+races at runtime. No production SPI or default enablement is added.
+
+The later bootstrap source adds explicit `start(configuration, localMaterial,
+settings)` ownership, returning empty without allocation when disabled. It checks
+copied local material before allocation, installs support last and owns one
+fixed-delay maintenance scheduler with bounded shutdown. Its nine additional
+tests remain uncompiled and unrun; fake maintenance does not establish actual
+join, interruption or concurrent shutdown behavior. A configured subject UUID is
+not evidence of a persisted identity: disposable provisioning must precede startup.
+Core bootstrap accepts explicit configuration; the guarded fixture-only launch
+adapter supplies it. `Dockerfile.code-intent` now declares dedicated disposable
+SPI/theme assembly, without default enable flags or credentials. This image source
+has not been built. Actual orchestration, disabled provisioning followed by restart,
+classloader compatibility and bootstrap invocation remain unverified.
+
+The code-intent fixture is acceptance-only source, not a completed combined
+acceptance flow. An isolated earlier checkpoint passed 104 provider unit tests in
+18 suites with no failures, errors or skips, including the 12 deadline tests.
+Fixture production Java and its JAR compiled, but fixture test compilation failed:
+the pinned realm-resource provider is not AutoCloseable. A separately reviewed
+test-only explicit-cleanup correction is prepared; the 24 fixture tests remain
+unexecuted. Bootstrap and adapter additions remain uncompiled and unrun.
+Independent source review is not runtime readiness.
+
+Explicit disposable bootstrap must install the fixture's settings, code-intent
+resources and transport. Factories remain unavailable without installation.
+Production SPI registration and `VerificationAction` eligibility rules are
+unchanged. Disposable SPI/theme packaging, bootstrap, lifecycle maintenance and
+the exact HTTPS `/sso/realms/armoney` two-node topology still need integration.
+Auth authority must come from real verification consumption, materialization and
+persisted User projection acknowledgements. LOCALSMTPTEST evidence uses an
+ephemeral in-process transport peer and is not Mailtrap Sandbox delivery proof.
+
+The request-body guard source authenticates before allocating one of eight local
+permits, uses HTTP/1.1 connection-only timer capture and serializes completion
+against expiry. The original transaction callback captures only experiment ID;
+transaction commit is distinct from the driver's HTTP-response assertion.
+Authenticated node-B membership, lookup and confirmation share one original
+four-second invocation budget. These are source properties pending compilation
+and independent execution, not physical-timeout guarantees.
+
+Required open gates include locator-before-buffering behavior, stalled/drip body
+termination and reader release, keep-alive/timer cleanup races, physical DNS
+cancellation, clock assumptions, cross-JAR classloader compatibility and genuine
+native two-node acceptance. No token redemption, banking session, notice,
+production hook activation or positive feature-completion claim follows from
+this candidate.
+
+The observer fixture contract and historical build instructions below describe
+the existing observer tooling; they do not establish code-intent acceptance.
 
 This independent Java 21 / Keycloak 26.7.4 module is destructive test tooling,
 not part of the production provider, its SPI descriptors, or its image. Never
@@ -88,3 +150,19 @@ root/tab removal, expiry and the acceptance image require separately authorized
 execution. The bridge fixture must return503 after recording/calling the real
 observer, never a receipt or fake enrollment success. Positive authority, ACTIVE,
 real delivery, auth route wiring and production activation remain unavailable.
+
+## Dedicated code-intent image source
+
+The dedicated profile replaces the observer realm-resource descriptor with only
+`CodeIntentFixtureResourceFactory`, adds the disposable continuation action and
+uses the existing visibility protocol factory for the reviewed code-generation
+hook. It does not register old observer or visibility control resources. Theme
+discovery metadata and the continuation theme inheriting `armoney` are generated
+only inside this fixture build. Production provider packaging and SPI descriptors
+remain separate and unchanged. Generated fixture inputs and the dedicated
+Dockerfile are included in retained provenance.
+
+Source inspection is not an image build, JAR inventory inspection or native
+Keycloak acceptance. Production password proof and eligibility stay unchanged;
+this assembly source establishes no token redemption, session authority or
+activation.

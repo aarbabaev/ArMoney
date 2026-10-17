@@ -1451,7 +1451,45 @@ cleans up failed construction and closes owned resources idempotently; callers
 remain responsible for a complete local current/retained secret inventory.
 At `d8638d0eff87c5802c7b4a187e40154d8b14a4fe`, isolated Java 21 compilation and
 32 focused tests across five suites passed with zero failures, errors or skips,
-including four lifecycle tests. Independent QA and security verified the retained
-reports and source provenance. These unit tests use fake clients and do not prove
-physical transport shutdown or key zeroization. It adds no SPI registration, hook or token release.
+including four lifecycle tests. Independent QA and security verified retained
+reports and source provenance. These unit tests use fake clients; they do not
+prove physical transport shutdown or key zeroization. It adds no SPI registration,
+hook or token release. The later fixture and modified deadline source described
+below have separate scoped evidence; neither establishes combined acceptance.
 Runtime lifecycle, combined Auth confirmation, DNS and clock gates remain open.
+
+An acceptance-only code-intent fixture source candidate adds explicit installation,
+bounded control handles, a native required-action continuation, original-request
+transaction outcome tracking and authenticated node-B membership before lookup
+and confirmation. Its local body timer retains only a transport connection and
+serializes completion against expiry. The invocation deadline retains its original
+sample and caps both the outer bound and four-second producer window without
+renewal. An isolated checkpoint passed 104 provider unit tests in 18 suites,
+including 12 deadline tests, with no failures, errors or skips. Fixture production
+Java and its JAR compiled; fixture test compilation failed against the pinned
+non-AutoCloseable realm-resource API. A reviewed test-only cleanup correction is
+prepared, while all 24 fixture tests remain unexecuted. Bootstrap, physical
+body/DNS termination, classloader compatibility, clocks and genuine combined
+acceptance remain open; production eligibility and activation are unchanged.
+See the acceptance-fixture README for the evidence boundary.
+
+A subsequent acceptance-only bootstrap source owns explicit configuration,
+caller-local secret inventory, install-last lifecycle and one maintenance
+scheduler. Disabled startup allocates nothing. Independent source review passed;
+nine bootstrap tests remain uncompiled and unrun. Actual scheduler shutdown,
+preprovisioned persisted identity, disposable wiring and combined acceptance are
+still required. No production environment scan or automatic registration is added.
+
+The disposable fixture factory has a separately reviewed launch-adapter source
+that reads an exact environment allowlist only after explicit fixture, CI and
+isolation gates. Atomic configuration/start/close prevents hot replacement and
+reopening closed owners. Eleven adapter tests remain uncompiled and unrun; core
+bootstrap still accepts explicit inputs only. Persisted synthetic provisioning,
+disposable image wiring and native runtime verification remain separate gates.
+
+A dedicated `Dockerfile.code-intent` source now assembles only the disposable
+code-intent realm resource, continuation action and existing code-generation
+protocol hook, with fixture-theme discovery and separate provenance. It sets no
+default enable flags or credentials and does not change production SPI packaging.
+This profile has not been built; actual image inventory, classloading, theme
+inheritance and two-stage disposable startup remain verification gates.

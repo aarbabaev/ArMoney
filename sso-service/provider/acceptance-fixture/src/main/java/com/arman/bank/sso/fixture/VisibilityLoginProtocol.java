@@ -14,6 +14,8 @@ public final class VisibilityLoginProtocol extends OIDCLoginProtocol {
     public VisibilityLoginProtocol(OIDCProviderConfig config) { super(config); }
     @Override public Response buildRedirectUri(OIDCRedirectUriBuilder builder,AuthenticationSessionModel auth,
                                                UserSessionModel user,ClientSessionContext context) {
+        if(com.arman.bank.sso.CodeIntentFixtureSupport.handles(auth))
+            return com.arman.bank.sso.CodeIntentFixtureSupport.generated(session,builder,auth,user,context);
         VisibilityState.Entry held=null;
         try {
             VisibilityState.boundary(VisibilityState.Boundary.ENTERED);
