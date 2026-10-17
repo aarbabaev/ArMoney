@@ -21,6 +21,6 @@ public final class CodeIntentFixtureResourceFactory implements RealmResourceProv
     static void authenticate(java.util.List<String> values,boolean peer){if(values==null||values.size()!=1||!CodeIntentFixtureSupport.current().authenticate(values.getFirst(),peer))throw new CodeIntentFixtureSupport.Rejected(401);}
     private static jakarta.ws.rs.WebApplicationException denied(int status){return new jakarta.ws.rs.WebApplicationException(jakarta.ws.rs.core.Response.status(status).type("application/json").header("Cache-Control","no-store").build());}
     @Override public void init(Config.Scope scope){}
-    @Override public void postInit(KeycloakSessionFactory factory){}
-    @Override public void close(){}
+    @Override public void postInit(KeycloakSessionFactory factory){CodeIntentFixtureBootstrap.postInit();}
+    @Override public void close(){CodeIntentFixtureBootstrap.closeInstalled();}
 }

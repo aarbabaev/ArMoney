@@ -1446,3 +1446,10 @@ renewal. Independent source review is not runtime proof: 24 fixture tests and
 wiring, physical body/DNS termination, classloader compatibility, clocks and
 genuine combined acceptance remain open; production eligibility and activation
 are unchanged. See the acceptance-fixture README for the evidence boundary.
+
+A subsequent acceptance-only bootstrap source owns explicit configuration,
+caller-local secret inventory, install-last lifecycle and one maintenance
+scheduler. Disabled startup allocates nothing. Independent source review passed;
+nine bootstrap tests remain uncompiled and unrun. Actual scheduler shutdown,
+preprovisioned persisted identity, disposable wiring and combined acceptance are
+still required. No production environment scan or automatic registration is added.

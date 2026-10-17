@@ -2,6 +2,17 @@
 
 ## Code-intent source candidate
 
+The later bootstrap source adds explicit `start(configuration, localMaterial,
+settings)` ownership, returning empty without allocation when disabled. It checks
+copied local material before allocation, installs support last and owns one
+fixed-delay maintenance scheduler with bounded shutdown. Its nine additional
+tests remain uncompiled and unrun; fake maintenance does not establish actual
+join, interruption or concurrent shutdown behavior. A configured subject UUID is
+not evidence of a persisted identity: disposable provisioning must precede startup.
+Factories delegate only to explicitly supplied bootstrap configuration and do not
+scan the environment or enable the fixture automatically. Disposable SPI/theme,
+image and bootstrap invocation remain unwired.
+
 The code-intent fixture is acceptance-only source, not a completed combined
 acceptance flow. Its 24 fixture tests and 12 invocation-deadline tests have not
 been compiled or executed. Independent source review checked the bounded control
