@@ -1409,6 +1409,19 @@ gated. See the provider README for the exact source scope and limitations.
 The provider also contains an unwired invocation-owned deadline utility. At
 34a1537855f551ed269d49f1c3bf8177bcc15796, eight deterministic deadline tests and
 eight configuration tests passed with zero failures, errors or skips; independent
-review verified retained results and source provenance. Existing transports and
-hooks do not consume this utility. Aggregate transport integration and physical
+review verified retained results and source provenance. Existing production
+transports and hooks do not consume this utility. Aggregate transport integration and physical
 DNS/HTTP termination remain unproven; these tests do not authorize activation.
+
+An unwired code-intent client now provides narrow stage, key-selection and
+confirmation calls. Exact enabled managed-pair checks precede network fanout;
+lookup and confirmation share the original invocation deadline. Its transport
+caps streamed responses and distinguishes owned clients, which must be closed,
+from injected clients retained by their caller. At
+`c6b42ba5d1b240f8605fc94c2371babfee770164`, isolated Java 21 compilation and
+28 focused tests passed: eight configuration, eight deadline, six client and six
+HTTP transport tests, with zero failures, errors or skips. Independent review
+verified source provenance and test results. The transport tests use fake clients;
+they do not establish real-network or physical DNS cancellation, full provider
+checks or packaging. Production factory integration, token release and activation
+remain pending.

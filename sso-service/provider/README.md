@@ -110,6 +110,33 @@ These deterministic tests do not establish physical DNS/HTTP termination or a
 runtime aggregate lookup/confirmation deadline. Consumer integration and
 exact-head required CI remain unproven; no production activation follows.
 
+### Unwired code-intent client
+
+`CodeIntentClient` and `CodeIntentHttp` provide separate narrow stage, original-key
+lookup and confirmation operations at `/internal/sso-code-intents`,
+`/internal/sso-code-intents/key` and `/internal/sso-code-intents/confirm`.
+The client requires exact enabled managed-pair membership before fanout, separate
+directional credentials, strict acknowledgements and a directly returned
+confirmation snapshot. There is no historical-resolve fallback or inline retry.
+Lookup and confirmation share the caller-created `InvocationDeadline`, including
+serialization, body parsing and selection. The transport caps streaming bodies,
+requests HTTP/1.1 without redirects, and owns only its invocation cancellation.
+Transport owners must close it: internally constructed HTTP clients are shut down;
+injected HTTP clients remain caller-owned. Existing bridges, token hooks and the
+three SPI descriptors remain unchanged; no factory wires this client.
+
+At source `c6b42ba5d1b240f8605fc94c2371babfee770164`, the isolated focused run
+compiled all provider sources and passed
+28 tests across four suites: six client, six HTTP, eight configuration and eight
+deadline tests, zero failures, errors or skips. Independent review verified the
+retained evidence; overall elapsed time was 89.313 seconds. Evidence prefix:
+`D:/ArMoneyDockerRecovery/2026-10-17/auth-code-confirmation/armoney-sso-client-b361df009d71468e91fb3b6f40bc6d92`.
+The HTTP tests use synthetic clients, not real network/DNS operations. They do not
+establish physical DNS/HTTP termination, a real aggregate transport deadline,
+full provider check, packaging, required CI or production activation. The four
+source files were subsequently ported unchanged onto the newer main-based client
+branch; the focused result remains attributed to its tested source.
+
 ### Default-off code-session observation
 
 `POST /realms/{realm}/armoney-status/code-session` is a separate source-level
