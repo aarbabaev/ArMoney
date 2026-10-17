@@ -28,6 +28,10 @@ class Rejected(Exception):
     pass
 
 
+class CleanupFailure(Rejected):
+    pass
+
+
 def require(ok):
     if not ok:
         raise Rejected()
@@ -151,6 +155,8 @@ class Browser:
         if (parsed.scheme, parsed.netloc) == ('https', 'fixture-client'):
             try:
                 require(not self.callback)
+                require(route.request.method == 'GET' and route.request.is_navigation_request()
+                        and route.request.frame is self.page.main_frame)
                 callback_valid(route.request.url, self.state)
                 self.callback = True
             except Exception:
@@ -190,11 +196,14 @@ class Browser:
         require(self.callback and not self.violation)
 
     def __exit__(self, *_):
-        try:
-            self.context.close()
-            self.browser.close()
-        finally:
-            self.runtime.stop()
+        failed = False
+        for target, operation in ((self.context, 'close'), (self.browser, 'close'), (self.runtime, 'stop')):
+            try:
+                getattr(target, operation)()
+            except Exception:
+                failed = True
+        if failed:
+            raise CleanupFailure()
 
 
 def execute(data, transport, browser, clock=time.monotonic, pause=time.sleep):
@@ -250,6 +259,15 @@ def execute(data, transport, browser, clock=time.monotonic, pause=time.sleep):
         return {'status': 'not_verified', 'phase': phase}
 
 
+def run_browser(data):
+    try:
+        with Browser() as browser:
+            result = execute(data, Controls(data['controller_key']), browser)
+        return result
+    except CleanupFailure:
+        return {'status': 'not_verified', 'phase': 'teardown'}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--input', required=True)
@@ -270,8 +288,7 @@ def main():
         watchdog.daemon = True
         watchdog.start()
         result['phase'] = 'browser'
-        with Browser() as browser:
-            result = execute(data, Controls(data['controller_key']), browser)
+        result = run_browser(data)
     except Exception:
         pass
     finally:

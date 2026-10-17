@@ -44,6 +44,26 @@ class Browser:
             raise m.Rejected()
 
 
+class Request:
+    def __init__(self, frame, method='GET', navigation=True):
+        self.url = m.CALLBACK + '?state=s&code=opaque'
+        self.method, self.frame, self.navigation = method, frame, navigation
+
+    def is_navigation_request(self):
+        return self.navigation
+
+
+class Route:
+    def __init__(self, request):
+        self.request, self.aborted = request, False
+
+    def abort(self):
+        self.aborted = True
+
+    def continue_(self):
+        raise AssertionError('callback reached sink')
+
+
 class ControllerTests(unittest.TestCase):
     def test_exact_input(self):
         self.assertEqual(m.parse_input(json.dumps(data()).encode()), data())
@@ -97,20 +117,51 @@ class ControllerTests(unittest.TestCase):
     def test_callback_intercept_aborts_before_sink(self):
         b = m.Browser()
         b.state, b.callback, b.violation = 's', False, False
-
-        class Route:
-            request = type('Request', (), {'url': m.CALLBACK + '?state=s&code=opaque'})()
-            aborted = False
-
-            def abort(self):
-                self.aborted = True
-
-            def continue_(self):
-                self.fail('callback reached sink')
-
-        route = Route()
+        b.page = type('Page', (), {'main_frame': object()})()
+        route = Route(Request(b.page.main_frame))
         b.route(route)
         self.assertTrue(route.aborted and b.callback and not b.violation)
+
+    def test_callback_rejects_post_fetch_subresource_and_foreign_frame(self):
+        frame = object()
+        for method, navigation, origin in [('POST', True, frame), ('GET', False, frame), ('GET', True, object())]:
+            with self.subTest(method=method, navigation=navigation):
+                b = m.Browser()
+                b.state, b.callback, b.violation = 's', False, False
+                b.page = type('Page', (), {'main_frame': frame})()
+                route = Route(Request(origin, method, navigation))
+                b.route(route)
+                self.assertTrue(route.aborted and b.violation and not b.callback)
+
+    def test_callback_replay_is_rejected(self):
+        b = m.Browser()
+        b.state, b.callback, b.violation = 's', True, False
+        b.page = type('Page', (), {'main_frame': object()})()
+        route = Route(Request(b.page.main_frame))
+        b.route(route)
+        self.assertTrue(route.aborted and b.violation)
+
+    def test_teardown_attempts_all_resources_and_overrides_confirmed(self):
+        events = []
+
+        class Resource:
+            def __init__(self, name, fail):
+                self.name, self.fail = name, fail
+
+            def close(self):
+                events.append(self.name)
+                if self.fail:
+                    raise RuntimeError('synthetic cleanup failure')
+
+            stop = close
+
+        for failing in ('context', 'browser', 'runtime'):
+            events.clear()
+            b = m.Browser()
+            b.context, b.browser, b.runtime = [Resource(name, name == failing) for name in ('context', 'browser', 'runtime')]
+            with patch.object(m.Browser, '__enter__', return_value=b), patch.object(m, 'Browser', return_value=b), patch.object(m, 'execute', return_value={'status': 'confirmed', 'phase': 'confirm'}):
+                self.assertEqual(m.run_browser(data()), {'status': 'not_verified', 'phase': 'teardown'})
+            self.assertEqual(events, ['context', 'browser', 'runtime'])
 
     def test_unknown_origin_is_aborted(self):
         b = m.Browser()
