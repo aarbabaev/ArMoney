@@ -1,0 +1,153 @@
+# DISPOSABLE acceptance topology. Root must verify fresh owned DinD before use.
+# No host ports, external networks, named volumes or default credentials/images.
+# Always pass this file explicitly and an explicit private --env-file; never merge
+# persistent Compose overrides. Runtime inputs must be newly generated in the
+# owned runner workspace. Their values and rendered Compose must not be logged.
+x-process: &process
+  init: true
+  restart: "no"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ["/tmp:rw,nosuid,nodev,mode=1777"]
+  pids_limit: 256
+  networks: [code-intent]
+
+x-postgres: &postgres
+  <<: *process
+  image: ${CODE_INTENT_POSTGRES_IMAGE:?Supply a verified pinned disposable PostgreSQL image}
+  tmpfs: ["/tmp:rw,nosuid,nodev,mode=1777", "/var/run/postgresql:rw,nosuid,nodev,mode=1777", "/var/lib/postgresql/data:rw,nosuid,nodev"]
+  # PostgreSQL initializes its empty owned tmpfs before dropping privileges.
+  cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+  healthcheck:
+    test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+    interval: 2s
+    timeout: 3s
+    retries: 40
+
+x-sso: &sso
+  <<: *process
+  image: ${CODE_INTENT_SSO_IMAGE:?Supply the verified dedicated code-intent image}
+  command: [start, --optimized, --cache-stack=jdbc-ping]
+  env_file: ["${CODE_INTENT_SSO_ENV:?Supply phase-specific private SSO configuration}"]
+  environment:
+    KC_DB: postgres
+    KC_DB_URL: jdbc:postgresql://sso-db:5432/keycloak
+    KC_HTTP_ENABLED: "true"
+    KC_HTTP_RELATIVE_PATH: /sso
+    KC_HOSTNAME: https://sso-edge:8443
+    KC_PROXY_HEADERS: xforwarded
+  tmpfs: ["/tmp:rw,nosuid,nodev,mode=1777", "/opt/keycloak/data:rw,nosuid,nodev,uid=1000,gid=0,mode=0700"]
+  depends_on:
+    sso-db: {condition: service_healthy}
+
+services:
+  auth-db:
+    <<: *postgres
+    env_file: ["${CODE_INTENT_AUTH_DB_ENV:?Supply private Auth database configuration}"]
+    environment: {POSTGRES_DB: auth, POSTGRES_USER: auth}
+  user-db:
+    <<: *postgres
+    env_file: ["${CODE_INTENT_USER_DB_ENV:?Supply private User database configuration}"]
+    environment: {POSTGRES_DB: users, POSTGRES_USER: users}
+  sso-db:
+    <<: *postgres
+    env_file: ["${CODE_INTENT_SSO_DB_ENV:?Supply private SSO database configuration}"]
+    environment: {POSTGRES_DB: keycloak, POSTGRES_USER: keycloak}
+  user-service:
+    <<: *process
+    image: ${CODE_INTENT_USER_IMAGE:?Supply fixture-user target image}
+    env_file: ["${CODE_INTENT_USER_ENV:?Supply private User configuration}"]
+    environment:
+      PORT: "8080"
+      DB_URL: jdbc:postgresql://user-db:5432/users
+      DB_USER: users
+      USER_VERIFICATION_PROJECTION_ENABLED: "true"
+    depends_on:
+      user-db: {condition: service_healthy}
+  sms-sandbox:
+    <<: *process
+    image: ${CODE_INTENT_SMS_IMAGE:?Supply fixture-sms target image}
+    env_file: ["${CODE_INTENT_SMS_ENV:?Supply independent private SMS credentials}"]
+    environment: {PORT: "8080", SMS_SANDBOX_DATA_DIR: /tmp/sms-inbox}
+  auth-service:
+    <<: *process
+    image: ${CODE_INTENT_AUTH_IMAGE:?Supply verified Auth authority image}
+    entrypoint: [java, -Xms32m, -Xmx256m, -cp, "/opt/auth/lib/*", com.arman.bank.authservice.Main]
+    env_file: ["${CODE_INTENT_AUTH_ENV:?Supply private Auth Main configuration}"]
+    environment:
+      PORT: "8080"
+      DB_URL: jdbc:postgresql://auth-db:5432/auth
+      DB_USER: auth
+      USER_BASE_URL: http://user-service:8080
+      SSO_ISSUER: https://sso-edge:8443/sso/realms/armoney
+      SSO_ENROLLMENT_STATUS_ORIGIN: http://sso-service:8080
+      AUTH_SSO_LOGIN_PROOF_ENABLED: "false"
+      AUTH_VERIFICATION_DELIVERY_ENABLED: "false"
+    depends_on:
+      auth-db: {condition: service_healthy}
+      user-service: {condition: service_started}
+      sms-sandbox: {condition: service_started}
+  authority-fixture:
+    <<: *process
+    image: ${CODE_INTENT_AUTH_IMAGE:?Supply verified Auth authority image}
+    env_file: ["${CODE_INTENT_AUTHORITY_ENV:?Supply private companion configuration}"]
+    environment:
+      CI: "true"
+      CODE_SESSION_ACCEPTANCE_ISOLATED: "true"
+      DB_URL: jdbc:postgresql://auth-db:5432/auth
+      DB_USER: auth
+      USER_BASE_URL: http://user-service:8080
+      VERIFICATION_SMS_BASE_URL: http://sms-sandbox:8080
+      SSO_ISSUER: https://sso-edge:8443/sso/realms/armoney
+      SSO_ENROLLMENT_STATUS_ORIGIN: http://sso-service:8080
+      AUTH_SSO_LOGIN_PROOF_ENABLED: "false"
+      AUTH_VERIFICATION_DELIVERY_ENABLED: "false"
+    depends_on:
+      auth-service: {condition: service_started}
+    # Only authenticated POST controls on8091; deliberately no invented health route.
+  sso-a:
+    <<: *sso
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://sso-db:5432/keycloak
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_RELATIVE_PATH: /sso
+      KC_HOSTNAME: https://sso-edge:8443
+      KC_PROXY_HEADERS: xforwarded
+      KC_NODE_NAME: code-intent-a
+  sso-b:
+    <<: *sso
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://sso-db:5432/keycloak
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_RELATIVE_PATH: /sso
+      KC_HOSTNAME: https://sso-edge:8443
+      KC_PROXY_HEADERS: xforwarded
+      KC_NODE_NAME: code-intent-b
+    networks:
+      code-intent:
+        aliases: [sso-service]
+  sso-edge:
+    <<: *process
+    image: ${CODE_INTENT_CADDY_IMAGE:?Supply pinned disposable Caddy image}
+    user: "1000:1000"
+    environment: {XDG_CONFIG_HOME: /tmp/config, XDG_DATA_HOME: /tmp/data}
+    volumes:
+      - type: bind
+        source: ./infra/sso-code-intent/Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${CODE_INTENT_TLS_DIR:?Supply newly owned private fixture certificate directory}
+        target: /fixture/certs
+        read_only: true
+        bind: {create_host_path: false}
+    depends_on:
+      sso-a: {condition: service_started}
+
+networks:
+  code-intent:
+    internal: true

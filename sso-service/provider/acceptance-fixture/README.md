@@ -224,3 +224,40 @@ not been imported or exercised. Provision a complete synthetic user while both
 fixtures are disabled, read back its persisted UUID, stop both nodes and restart
 with the enabled exact subject/pair configuration. Production realm data and
 clients remain unchanged.
+
+## Isolated native-flow wiring source
+
+`compose.sso-code-intent.yaml` is a separate, unexecuted topology source. It uses
+three empty tmpfs PostgreSQL instances, real Auth/User/SMS processes, the Auth
+companion, two dedicated Keycloak nodes and a private HTTPS Caddy edge. There
+are no host ports, external networks or named volumes. All images and component
+environment files are required explicit inputs; the lifecycle owner must bind
+verified image IDs, newly owned private paths and a fresh isolated Docker daemon.
+The Compose file itself does not prove that isolation or reserve build capacity.
+
+The canonical issuer is `https://sso-edge:8443/sso/realms/armoney`; only node B has
+the private `sso-service` alias. Both nodes share the disposable SSO database and
+JDBC discovery. The edge uses newly generated private fixture certificates and
+HTTP/1.1 upstream. The test browser must explicitly trust the ephemeral fixture
+CA in its own disposable trust store; global host trust and TLS verification
+must not be weakened. No realm import, secrets or enablement are baked into
+images. Phase-specific private SSO inputs select disabled provisioning, then the
+root stops both nodes before restarting enabled with the read-back UUID.
+
+The companion image Dockerfile also defines separate `fixture-user` and
+`fixture-sms` targets using real production service distributions without test
+classes. These new targets, Caddy syntax, schema startup, cluster behavior and
+the complete topology have not been built or exercised. Static Compose parsing
+with dummy inputs passed; that is not a runtime smoke test. The companion has
+no health endpoint; only Auth/User/SMS expose `/health/ready`.
+
+`provision-code-intent-realm.py` is the phase-one private-input helper. It accepts
+literal isolation/disabled gates, a validated canonical issuer, synthetic admin
+credentials and a complete synthetic UAE user through a private JSON file or
+stdin, then writes an exclusive private result file. It refuses an existing
+realm on either fixed node before mutation, validates realm/client/flow/user
+readbacks and captures the persisted subject. Nine lightweight synthetic unit
+tests passed; no actual import or login is implied. A failed import/provision
+requires owned disposable teardown, not an automatic retry against the partial
+realm. Observed 503 fixture responses show unavailability only. Physical DNS
+cancellation, flags, native flow and authority remain independent runtime gates.
