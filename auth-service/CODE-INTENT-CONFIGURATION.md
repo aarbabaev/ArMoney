@@ -116,3 +116,5 @@ Provider must match exact names/header/pair schema/logical actor and fixed inter
 ## Current source and validation boundary
 
 CodeConfirmationConfiguration and CodeIntentPairScopes provide pure configuration/value parsing only. They construct no database, client, route, scheduler or runtime store and are not registered by Main. Independent QA and security reviewed the source and fixes, including raw/canonical-base64 secret separation and exact issuer-port/pair bounds. Compilation and tests remain pending. Runtime adapters, durable confirmation storage, observation and aggregate deadline evidence are separate pending work.
+
+The internal confirmation application/storage core and unpublished V13 migration are now source-only. Independent source review covers creator-only anchors, original-origin accounting and final local-deadline checks; compilation, real PostgreSQL execution, HTTP/provider integration and activation remain pending.

@@ -33,8 +33,8 @@ class CodeIntentUpgradeIntegrationSpec extends Specification {
         then:
         database.transaction{current->
             before.each{table,rows->assert current.fetch('select row_to_json(t)::text as snapshot from '+table+' t order by row_to_json(t)::text').getValues('snapshot',String)==rows}
-            assert current.fetch('select * from flyway_schema_history where version<>? order by installed_rank','12').intoMaps()==history
-            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get(0,String)=='12'
+            assert current.fetch('select * from flyway_schema_history where version not in (?,?) order by installed_rank','12','13').intoMaps()==history
+            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get(0,String)=='13'
             ['sso_code_intents','sso_code_intent_details','sso_code_intent_commands','sso_code_intent_admission','sso_login_creation_reservations','sso_code_intent_encryption_keys','sso_code_intent_nonces'].each{table->assert current.fetchOne('select count(*) from '+table).get(0,Integer)==0}
             true
         }

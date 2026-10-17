@@ -21,7 +21,9 @@ final class PostgresLoginCreationBudget {
         var count = sql.fetchOne("""
             select (select count(*) from sso_login_creation_reservations where created_at>cast(? as timestamptz))
              +(select count(*) from sso_login_proofs p where p.created_at>cast(? as timestamptz)
-               and not exists(select 1 from sso_login_creation_reservations r where r.id=p.id)) as n
+               and not exists(select 1 from sso_login_creation_reservations r where r.id=p.id)
+               and not exists(select 1 from sso_code_confirmation_results c
+                 join sso_code_intents i on i.id=c.intent_id where c.proof_id=p.id and c.budget_origin_id=i.id)) as n
             """, now.minusSeconds(3600).toString(), now.minusSeconds(3600).toString());
         if (count == null || count.get("n", Long.class) >= limit) throw new LoginProof.Failure(LoginProof.Error.RATE_LIMITED);
     }

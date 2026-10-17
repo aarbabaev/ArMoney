@@ -121,6 +121,41 @@ public final class PostgresLoginProofStore implements LoginProofStore {
             return new Snapshot(proof, input.codeKeyId(), input.eventId(), input.kind(), input.kind() == Kind.INTERACTIVE, input.issuedAt(), input.expiresAt());
         });
     }
+    boolean owns(Database candidate){return database==candidate;}
+    /** Caller already owns catalog/local evidence/intent locks. No transaction, HTTP, fresh-CREATE
+     * cutoff or hourly reservation here: C2 consumes the ORIGINAL intent's charged admission. */
+    Snapshot confirmInTransaction(DSLContext sql,String writer,Write input,UUID committedProof,Supplier<CurrentEvidence> evidence){
+        PostgresVerificationProjectionStore.requireLocked(sql);LoginProof.validate(input,writer,policy);
+        if(input.kind()!=Kind.INTERACTIVE)throw new Failure(Error.CONFLICT);
+        CurrentEvidence current=evidence.get();
+        if(!current.completeFor(input.binding(),now(sql)))throw new Failure(Error.CONFLICT);
+        var active=new Authority(null,current);
+        byte[] requester=LoginProof.requesterHash(writer,input.issuer(),input.clientId()),payload=LoginProof.payloadHash(input);
+        var original=sql.fetchOne("select * from sso_login_proofs where issuer=? and code_digest=?",input.issuer(),input.codeDigest());
+        var command=sql.fetchOne("select * from sso_login_proof_commands where requester_hash=? and command_id=?",requester,input.commandId());
+        Snapshot result;
+        if(committedProof!=null){
+            if(original==null||command==null||!committedProof.equals(original.get("id",UUID.class))||!committedProof.equals(command.get("proof_id",UUID.class)))throw new Failure(Error.UNAVAILABLE);
+            same(original.get("payload_hash",byte[].class),payload);same(command.get("payload_hash",byte[].class),payload);
+            LoginProof.unexpired(time(original,"expires_at"),now(sql));LoginProof.unexpired(time(command,"retained_until"),now(sql));
+            event(sql,input,active,now(sql),false);result=snapshot(original);
+        }else{
+            if(original!=null||command!=null)throw new Failure(Error.CONFLICT);
+            if(count(sql,"select count(*) as n from sso_login_proofs")>=policy.maxProofs()
+                ||count(sql,"select count(*) as n from sso_login_proof_commands")>=policy.maxCommands())throw new Failure(Error.RATE_LIMITED);
+            Instant now=now(sql);LoginProof.unexpired(input.expiresAt(),now);event(sql,input,active,now,true);
+            UUID proof=UUID.randomUUID();
+            sql.execute("""
+                insert into sso_login_proofs(id,issuer,code_digest,code_key_id,binding_hash,payload_hash,kind,event_id,login_notice_eligible,issued_at,expires_at,created_at,retained_until)
+                values(?,?,?,?,?,?, 'interactive',?,true,cast(? as timestamptz),cast(? as timestamptz),cast(? as timestamptz),cast(? as timestamptz))
+                """,proof,input.issuer(),input.codeDigest(),input.codeKeyId(),LoginProof.bindingHash(input.binding()),payload,input.eventId(),at(input.issuedAt()),at(input.expiresAt()),at(now),at(now.plusSeconds(604800)));
+            reserveCommand(sql,requester,input.commandId(),payload,proof,now);
+            result=new Snapshot(proof,input.codeKeyId(),input.eventId(),Kind.INTERACTIVE,true,input.issuedAt(),input.expiresAt());
+        }
+        CurrentEvidence checked=evidence.get();
+        if(!current.equals(checked)||!checked.completeFor(input.binding(),now(sql)))throw new Failure(Error.CONFLICT);
+        LoginProof.unexpired(input.expiresAt(),now(sql));return result;
+    }
     private void event(DSLContext sql, Write input, Authority active, Instant now, boolean mayCreate) {
         var event = sql.fetchOne("select * from sso_login_events where issuer = ? and event_id = ?", input.issuer(), input.eventId());
         if (event != null) {

@@ -1129,8 +1129,11 @@ future steps from implemented staging. The accepted [durable confirmation
 amendment](docs/adr/0045-durable-code-confirmation-anchors.md) specifies original-actor
 anchors, replay completion, original-key lookup and one producer deadline.
 Pure default-off confirmation configuration and exact pair parsers now exist in source,
-without resource construction or Main registration. Confirmation, lookup, observer
-transport, configuration wiring and activation remain unimplemented. See the
+without resource construction or Main registration. Internal durable confirmation
+application/storage core and an unpublished V13 migration exist in source, with
+independent source review but compilation and tests still pending. Lookup and
+confirmation HTTP adapters, observer transport, configuration wiring and activation
+remain unimplemented. See the
 [configuration contract](auth-service/CODE-INTENT-CONFIGURATION.md).
 
 ## Disabled verification projection plumbing

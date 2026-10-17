@@ -146,11 +146,70 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
         return new Outcome(new CodeIntent.Snapshot(id,input.codeKeyId(),input.issuedAt(),input.expiresAt()),null);
     }
     private byte[] aad(Record row){return CodeIntentDetailCrypto.aad(row.get("id",UUID.class),row.get("retention_key_id",String.class),row.get("binding_hash",byte[].class),row.get("payload_hash",byte[].class),row.get("code_key_id",String.class),time(row,"issued_at"),time(row,"expires_at"));}
+    boolean owns(Database candidate){return database==candidate;}
+    byte[] confirmationHash(String key,String domain,String... values){return keys.hash(key,domain,values);}
+    record ConfirmationContext(Record intent,Record authority,UUID identity,LoginProof.Write write,Instant localDeadline){
+        // Stamp-only views do not perform admission or return confirmation capabilities.
+        ConfirmationContext(Record intent,Record authority,UUID identity,LoginProof.Write write){this(intent,authority,identity,write,null);}
+    }
+    /** Controls already held. Catalog precedes every authority/identity/contact/projection/intent lock. */
+    ConfirmationContext confirmationContext(DSLContext sql,String actor,LoginProof.Resolve code){
+        return confirmationContext(sql,actor,code,null);
+    }
+    ConfirmationContext confirmationContext(DSLContext sql,String actor,LoginProof.Resolve code,byte[] expectedStamp){
+        PostgresVerificationProjectionStore.requireLocked(sql);LoginProof.writer(actor,policy);LoginProof.validate(code,policy);
+        if(catalog==null)fail(Error.UNAVAILABLE);catalog.synchronize(sql,true);
+        var authority=sql.fetchOne("""
+            select a.*,e.expires_at as enrollment_deadline,e.state as enrollment_state from verification_authorities a
+            join verification_enrollments e on e.id=a.enrollment_id where e.issuer=? and e.subject=? for update of a,e
+            """,code.issuer(),code.subject());
+        if(authority==null||!"PROJECTED".equals(authority.get("state"))||!"VERIFIED".equals(authority.get("enrollment_state")))fail(Error.CONFLICT);
+        UUID identity=authority.get("mapped_identity_id",UUID.class);
+        if(identity==null||!identity.equals(authority.get("pending_identity_id",UUID.class))
+            ||sql.fetchOne("select id from identities where id=? for update",identity)==null
+            ||sql.fetchOne("select identity_id from managed_registration_principals where identity_id=? and enrollment_id=? for update",identity,authority.get("enrollment_id",UUID.class))==null
+            ||sql.fetchOne("select identity_id from external_identities where issuer=? and subject=? and identity_id=? for update",code.issuer(),code.subject(),identity)==null)fail(Error.CONFLICT);
+        // Compare the admitted stamp before following any possibly replaced contact/projection IDs.
+        if(expectedStamp!=null){
+            var original=sql.fetchOne("select * from sso_code_intents where code_digest=?",code.codeDigest());
+            if(original==null)fail(Error.MISSING);
+            same(expectedStamp,confirmationStamp(new ConfirmationContext(original,authority,identity,null)));
+        }
+        if(sql.fetchOne("select identity_id from banking_eligibility_grants where identity_id=? and verification_epoch=? and enrollment_id=?",identity,authority.get("verification_epoch",Long.class),authority.get("enrollment_id",UUID.class))==null)fail(Error.CONFLICT);
+        UUID email=authority.get("email_candidate_id",UUID.class),phone=authority.get("phone_candidate_id",UUID.class);
+        sql.fetch("select id from verification_candidates where id in (?,?) order by purpose,id for update",email,phone);
+        sql.fetch("""
+            select r.id,c.id from verification_receipts r join verification_challenges c on c.id=r.challenge_id
+            where r.candidate_id in (?,?) order by r.purpose,r.id for update of r,c
+            """,email,phone);
+        var command=sql.fetchOne("select * from auth_verification_projection_commands where operation_id=? for update",authority.get("projection_operation_id",UUID.class));
+        if(command==null)fail(Error.CONFLICT);
+        sql.fetchOne("select operation_id from auth_verification_projection_tombstones where writer_hash=? and operation_id=? for update",command.get("writer_hash",byte[].class),command.get("operation_id",UUID.class));
+        var write=reconstructLocked(sql,actor,code);
+        var intent=sql.fetchOne("select * from sso_code_intents where code_digest=?",code.codeDigest());
+        String key=intent.get("retention_key_id",String.class);
+        same(intent.get("authority_hash",byte[].class),stamp(key,authority,identity));
+        Instant localDeadline;
+        try{localDeadline=new PostgresBankingEligibilityStore(sql).requireLocalForConfirmation(code.binding());}
+        catch(com.arman.bank.authservice.domain.Verification.Failure invalid){
+            throw new LoginProof.Failure(invalid.error()==com.arman.bank.authservice.domain.Verification.Error.CONFLICT?Error.CONFLICT:Error.UNAVAILABLE);
+        }
+        LoginProof.unexpired(time(authority,"expires_at"),now(sql));LoginProof.unexpired(time(authority,"enrollment_deadline"),now(sql));
+        return new ConfirmationContext(intent,authority,identity,write,localDeadline);
+    }
+    byte[] confirmationStamp(ConfirmationContext context){
+        var a=context.authority();String key=context.intent().get("retention_key_id",String.class);
+        return keys.hash(key,"armoney-confirmation-authority-v1",context.identity().toString(),a.get("enrollment_id").toString(),a.get("state").toString(),a.get("verification_epoch").toString(),a.get("revision").toString(),
+            Objects.toString(a.get("email_candidate_id"),""),Objects.toString(a.get("phone_candidate_id"),""),Objects.toString(a.get("projection_operation_id"),""),a.get("projection_revision").toString(),Objects.toString(a.get("projection_command_id"),""),time(a,"expires_at").toString(),time(a,"enrollment_deadline").toString());
+    }
     /** Internal caller-owned reconstruction only. It neither confirms authority nor creates a proof. */
     public LoginProof.Write reconstructInTransaction(DSLContext sql,String actor,LoginProof.Resolve trusted){
         PostgresVerificationProjectionStore.requireLocked(sql);LoginProof.writer(actor,policy);LoginProof.validate(trusted,policy);
         if(catalog==null)fail(Error.UNAVAILABLE);
         catalog.synchronize(sql,true);
+        return reconstructLocked(sql,actor,trusted);
+    }
+    private LoginProof.Write reconstructLocked(DSLContext sql,String actor,LoginProof.Resolve trusted){
         var row=sql.fetchOne("select * from sso_code_intents where code_digest=? for update",trusted.codeDigest());
         if(row==null)fail(Error.MISSING);
         String key=row.get("retention_key_id",String.class);
@@ -242,23 +301,47 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
                 select i.id,i.retained_until from sso_code_intents i
                 where i.retained_until<clock_timestamp() or exists
                   (select 1 from sso_code_intent_details d where d.intent_id=i.id and d.erase_at<clock_timestamp())
+                  or exists(select 1 from sso_code_confirmation_anchors a where a.intent_id=i.id and a.erase_at<clock_timestamp())
+                  or exists(select 1 from sso_code_confirmation_results r where r.intent_id=i.id and r.retained_until<clock_timestamp())
                 order by i.retained_until,i.id limit 25 for update of i
                 """);
             Instant now=now(sql);
+            int completionBudget=100,anchorBudget=100,resultBudget=100;
             for(var victim:victims){
                 UUID id=victim.get("id",UUID.class);
                 sql.fetch("select intent_id from sso_code_intent_commands where intent_id=? order by command_id for update",id);
                 sql.fetch("select intent_id from sso_code_intent_details where intent_id=? for update",id);
+                sql.fetch("select id from sso_code_confirmation_anchors where intent_id=? order by generation,id for update",id);
+                int completions=sql.execute("""
+                    delete from sso_code_confirmation_anchor_completions where anchor_id in
+                    (select c.anchor_id from sso_code_confirmation_anchor_completions c join sso_code_confirmation_anchors a on a.id=c.anchor_id
+                     where a.intent_id=? and a.erase_at<cast(? as timestamptz) order by a.generation,a.id limit ? for update of c)
+                    """,id,now.toString(),completionBudget);completionBudget-=completions;deleted+=completions;
+                int anchors=sql.execute("""
+                    delete from sso_code_confirmation_anchors where id in
+                    (select a.id from sso_code_confirmation_anchors a where a.intent_id=? and a.erase_at<cast(? as timestamptz)
+                     and not exists(select 1 from sso_code_confirmation_anchor_completions c where c.anchor_id=a.id)
+                     order by a.generation,a.id limit ? for update)
+                    """,id,now.toString(),anchorBudget);anchorBudget-=anchors;deleted+=anchors;
+                int results=sql.execute("""
+                    delete from sso_code_confirmation_results where intent_id in
+                    (select intent_id from sso_code_confirmation_results where intent_id=? and retained_until<cast(? as timestamptz) limit ? for update)
+                    """,id,now.toString(),resultBudget);resultBudget-=results;deleted+=results;
                 deleted+=sql.execute("delete from sso_code_intent_details where intent_id=? and erase_at<cast(? as timestamptz)",id,now.toString());
-                if(time(victim,"retained_until").isBefore(now)){
+                if(time(victim,"retained_until").isBefore(now)
+                    &&sql.fetchOne("select id from sso_code_confirmation_anchors where intent_id=? limit 1",id)==null
+                    &&sql.fetchOne("select intent_id from sso_code_confirmation_results where intent_id=?",id)==null){
                     sql.execute("delete from sso_code_intent_commands where intent_id=?",id);
                     deleted+=sql.execute("delete from sso_code_intents where id=?",id);
                 }
             }
             sql.execute("delete from sso_login_creation_reservations where id in (select id from sso_login_creation_reservations where created_at<clock_timestamp()-interval '65 minutes' order by created_at,id limit 100 for update)");
-            boolean capacityAlert=count(sql,"sso_code_intents")>=80_000||count(sql,"sso_code_intent_commands")>=80_000;
+            boolean capacityAlert=count(sql,"sso_code_intents")>=80_000||count(sql,"sso_code_intent_commands")>=80_000
+                ||count(sql,"sso_code_confirmation_anchors")>=80000||count(sql,"sso_code_confirmation_results")>=80000||count(sql,"sso_code_confirmation_anchor_completions")>=80000;
             boolean healthy=!sql.fetchExists(sql.selectOne().from("sso_code_intents").where(org.jooq.impl.DSL.condition("retained_until<clock_timestamp()-interval '5 minutes'")))
                 &&!sql.fetchExists(sql.selectOne().from("sso_code_intent_details").where(org.jooq.impl.DSL.condition("erase_at<clock_timestamp()-interval '5 minutes'")));
+            healthy=healthy&&!sql.fetchExists(sql.selectOne().from("sso_code_confirmation_anchors").where(org.jooq.impl.DSL.condition("erase_at<clock_timestamp()-interval '5 minutes'")))
+                &&!sql.fetchExists(sql.selectOne().from("sso_code_confirmation_results").where(org.jooq.impl.DSL.condition("retained_until<clock_timestamp()-interval '5 minutes'")));
             if(catalog!=null)catalog.cleanup(sql);
             sql.execute("update sso_code_intent_cleanup set swept_at=clock_timestamp(),healthy=?,capacity_alert=? where id=1",healthy,capacityAlert);
             return deleted;
