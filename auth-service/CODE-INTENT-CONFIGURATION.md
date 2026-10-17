@@ -1,0 +1,118 @@
+# Code confirmation configuration contract
+
+Status: Accepted configuration design; implementation, tests and activation remain pending. This accompanies [ADR 0045](../docs/adr/0045-durable-code-confirmation-anchors.md). Independent QA, security and provider counterpart design review accepted the exact configuration fragment with SHA-256 153a8caa5f2a85f6de450746102774cc5373e9f7d50e7ff2fb5037c996b3a51d on 2026-10-17. Environment names define the shared implementation contract; no values or credentials are provisioned, no handler is registered and no provider flow is enabled by this document.
+
+## One switch and operation ownership
+
+NEW `AUTH_SSO_CODE_INTENT_CONFIRMATION_ENABLED`: strict literal lowercase true/false, absent=false. ONE switch controls the C2 lookup and confirmation resource factory/handlers together. No independent lookup-enabled or observer-enabled Auth switch: reject a partially available confirmation protocol. Provider observation has its existing independent provider-side switch; it must be separately enabled/verified before runtime, not inferred from Auth flag.
+
+False: return no C2 routes/store/observer/cleanup scheduler before DB or HTTP resources are allocated; ignore dormant missing C2 keys. Pair arrays default to [] and, if supplied, must pass strict syntax/bounds/disjointness even while C2 is false, without DB/client allocation; issuer-support/dependency/nonempty-managed checks apply only when enabled. A present invalid flag always rejects. Existing C1 stage/legacy proof configuration retains its own strict flags and behavior. C2 false is not a way to disable mandatory managed-marker banking denial. No C2 flag supplies ACTIVE or banking sessions.
+
+True: require existing `AUTH_SSO_CODE_INTENT_STAGE_ENABLED`, `AUTH_VERIFICATION_AUTHORITY_BRIDGE_ENABLED`, `AUTH_REGISTRATION_AUTHORITY_COMPLETION_ENABLED`, `AUTH_REGISTRATION_ELIGIBILITY_GRANTS_ENABLED`, `AUTH_VERIFICATION_PROJECTION_ENABLED` all literal true and their existing complete valid configurations. Require `AUTH_SSO_LOGIN_PROOF_ENABLED` absent/false; existing positive enforcement rejection remains. `AUTH_LOGIN_PROOF_BRIDGE_ENABLED` remains independent false by default and is NOT auto-enabled or required by C2; historical bridge configuration/credentials must still be valid if explicitly selected separately. Main wiring remains root-owned and no handler is registered merely by this document.
+
+When C2 is selected, a single C2 resource owns lookup, confirmation, the fresh code-session observer and their bounded maintenance; existing C1 stage resources may be composed without duplicate workers/pools. It uses the SAME Auth Database instance/PRIMARY and the existing owned-session/global permit scope; no per-operation second connection, new pool, observer-owned DB or alternate DB URL. Pool5 is local; global16 authorized operations uses the same fixed namespace/slots as PR88. No bypass flag or separate per-process substitute. C2 startup requires V12 and pending V13 migration availability before readiness; migration implementation is separate.
+
+## Explicit pair format and exact bounds
+
+Shared Auth/provider names `ARMONEY_SSO_MANAGED_PAIRS` and `ARMONEY_SSO_LEGACY_PAIRS` are canonical UTF-8 JSON ARRAY strings. Each item is EXACTLY an object with TWO string members named `issuer` and `client_id`; member order is immaterial, but duplicate JSON member names reject. No other fields, null, primitive, nested array, trailing JSON, comment or coercion. Array spelling is exact; no CSV pairs, wildcard, prefix/regex matching or implicit Cartesian product. Each array defaults to [] when absent; enabled C2 requires managed nonempty. Managed array length1..16 when enabled (0..16 dormant), legacy length0..16, each encoded array <=16384 UTF-8 bytes. Across both arrays, distinct issuer count<=16 and distinct client count<=32, preserving current Policy bounds.
+
+Each issuer is1..512 characters, exact valid HTTPS URI with host, no user info/query/fragment, no whitespace/control/unpaired surrogate, no trailing slash. Each client ID is1..128 characters and matches existing public-client validation [A-Za-z0-9_-]+, excluding the migration client and any client outside the existing configured public-client allowlist. No string trimming, case folding or URI normalization changes identity. Reject duplicate pairs within an array and any exact pair overlap between managed/legacy arrays at STARTUP. Unknown pair denies, never falls through to legacy. Managed pair covers ALL subjects in that pair; permanent Auth marker still authorizes classification of the actual identity. No subject allowlist or mutable SSO notes are introduced. Mixed managed/legacy subjects within one pair remains activation NO-GO.
+
+Initial Auth C2 supports ONE exact issuer with MULTIPLE existing allowlisted public verification clients (not a single-client restriction), using the existing authority issuer/status origin: every managed pair issuer MUST equal `SSO_ISSUER` exactly and every managed client MUST belong to `SSO_VERIFICATION_CLIENT_IDS`. Do not infer multi-origin observation support from an array bound. Legacy pairs are routing declarations only, must be accepted by the existing legacy token validator, and cannot broaden issuer/client validation; for current single-issuer Auth they also use the exact configured issuer. The provider independently checks its configured allowlist AND the actual pinned public-client model at operation time; configuration cannot make a confidential client eligible. Auth startup does not query that remote client model or claim to verify it. Future multi-issuer peers require a separate source/config freeze.
+
+### Map actual C1 configuration without contradictory authority
+
+Current C1 CodeIntentConfiguration consumes independent `SSO_CODE_INTENT_ISSUERS` / `SSO_CODE_INTENT_CLIENTS` / `SSO_CODE_INTENT_CODE_KEY_IDS` / `SSO_CODE_INTENT_ACTORS`, plus `SSO_LOGIN_PROOF_WRITER_ID` and its write key. It does NOT implement pair authorization today.
+
+C2 MUST parse exact pairs first and make managed pairs the SOLE authorization relation for its stage/lookup/confirm paths. Derive the issuer/client projections only to build/reuse current Policy/CodeIntentConfiguration validation. Do not use those projections to authorize a crossed pair. A future C2 factory may construct a private effective configuration copy with derived CSV projections for the existing C1 constructor; this is technical adaptation, not another independent operator source of truth.
+
+If old `SSO_CODE_INTENT_ISSUERS` / `SSO_CODE_INTENT_CLIENTS` are present with C2=true, parse with existing strict validation and require exact set equality to the managed projections; mismatch rejects instead of silently overriding. They may be omitted only in the NEW C2 factory that derives its private effective map; current standalone C1 configuration still requires them when stage is enabled and C2 is off. No change to C1 default behavior is claimed. Pair membership must be rechecked by the composed stage transport as well as lookup/confirm; do not expose a second pair-unaware stage handler under C2.
+
+Reuse current `SSO_CODE_INTENT_CODE_KEY_IDS` (1..2 unique allowed IDs for the lookup/confirm ring, [A-Za-z0-9_-]{1,32}) and existing `SSO_CODE_INTENT_ACTORS` (max16). Reuse ONE active `SSO_LOGIN_PROOF_WRITER_ID`, which must belong to that actor allowlist. Keep configured historical logical actors needed by retained stage abuse-state migration; do not silently reset credits or change actor identities to fit a new scope. No new confirmer/lookup actor header or credential-indexed UUID is accepted. Original row actor equality is mandatory even when the pair is managed.
+
+## Exact directional credentials and independence
+
+- Existing stage write material `SSO_LOGIN_PROOF_WRITE_KEY` / `X-ArMoney-Login-Proof-Write-Key`.
+- New confirmation material `SSO_LOGIN_PROOF_CONFIRM_KEY` / `X-ArMoney-Login-Proof-Confirm-Key`.
+- ADR0045 stable lookup material `SSO_CODE_INTENT_LOOKUP_KEY` / `X-ArMoney-Code-Intent-Lookup-Key`.
+- Existing historical resolve material `SSO_LOGIN_PROOF_RESOLVE_KEY` / `X-ArMoney-Login-Proof-Resolve-Key` only when its bridge is separately selected; it never substitutes for confirmation.
+
+All operation credentials map by trusted server configuration to the SAME stable original `SSO_LOGIN_PROOF_WRITER_ID` logical actor but DIFFERENT capabilities. They are printable ASCII32..256 characters with no whitespace/control. Stage cannot confirm/lookup using its key; resolver cannot stage/confirm/lookup. One exact header required, duplicate headers rejected before admission. Credential rotation preserves actor/business identity and original anchor/start; this fragment does not introduce a multi-key credential ring or automatic dual-key window. Coordinated credential replacement can cause bounded unavailability, never new actor fallback.
+
+Reject equality between every configured HTTP/internal credential, retention/code/delivery/encryption key, client secret, send token and password material, comparing raw bytes and all valid canonical-base64 decoded32-byte representations crosswise. Includes stage/confirm/lookup/resolve, `AUTH_TO_SSO_STATUS_KEY`, authority bridge, projection/migration/metrics/internal keys, code HMAC keys if locally configured, retention rings and AEAD rings. Missing dormant keys from unselected operations do not have to be provisioned merely for comparison; compare ALL material actually configured. Never copy the provider code-HMAC secret into Auth only to perform an equality test. Cross-peer provisioning must independently enforce its complete material separation.
+
+Retain existing `SSO_LOGIN_PROOF_RETENTION_HMAC_KEY_ID`, `_KEY`, `_PREVIOUS_KEYS` exactly as current bounded8-key ring; use row ORIGINAL key ID, not current. Retain existing separate `SSO_CODE_INTENT_DETAIL_ENCRYPTION_KEY_ID`, `_KEY`, `_PREVIOUS_KEYS`, `_RETIRED_KEY_IDS` and their8-key/catalog/nonce/generation rules. No new confirmation retention master key or duplicate current-key authority. New ADR0045 confirmation/anchor domains derive from the original intent retention material. Missing original key503, no recreation.
+
+## Reuse observer origin/key, separate semantic adapter
+
+Reuse already required `SSO_ENROLLMENT_STATUS_ORIGIN` and `AUTH_TO_SSO_STATUS_KEY`. Do NOT add a contradictory second origin or status credential. Current source pretoken HttpVerificationObservations uses fixed `/sso/realms/armoney/armoney-status/enrollment`; C2 needs a SEPARATE new adapter using fixed `/sso/realms/armoney/armoney-status/code-session` on that SAME validated private origin. The existing enrollment PATH is source-verified exactly as shown. The provider counterpart now confirms the EXACT source-derived code-session path `/sso/realms/armoney/armoney-status/code-session`: Keycloak relative path `/sso` plus realm plus StatusResourceFactory id `armoney-status` plus `code-session`. Shorthand omitting `armoney-status` is wrong. This is source agreement, NOT remote deployment evidence; new fixed-mount acceptance is required, and earlier fixtures without `/sso` do not prove it. Startup rejects ONLY locally detectable issuer/realm/path inconsistency. No startup HTTP probe, path discovery or fallback across variants. The fixed realm path must agree with locally configured `SSO_ISSUER`; never derive a request endpoint from browser strings. A remotely different prefix or missing code-session path is undetectable at startup without a probe and instead yields runtime UNAVAILABLE/503; pinned counterpart/runtime evidence is required.
+
+Origin validation reuses actual current rules: HTTPS fixed origin (empty/root path, host, no user info/query/fragment, valid nonzero explicit port if present), or the exact existing local-development http sso-service:8080 allowance. Loopback transport injection is isolated-test-only, not an environment setting. Never follow redirects or trust environment proxy destinations. No path, realm, endpoint, retry-count, clock-skew or timeout override knobs are added by C2.
+
+Request is the frozen four-field issuer/subject/client_id/user_session_id tuple. Exact response12 fields includes BOTH session flags, enabled, canonical nullable contacts and observed_at/valid_until; never accept pretoken Flow/old8/11 fields. New observer is owned/closed by C2 resources; fixed2s connect and4s total exchange/body bounds, <=12KiB, strict JSON, cancellation/interruption preserved. Auth immutable DB-start/receive and effective relative deadline checks stay independent from provider aggregate lookup+confirm deadline. Default false allocates no observer client.
+
+Provider currently exposes its independent default-false `ARMONEY_CODE_SESSION_OBSERVATION_ENABLED` source gate. Auth startup can validate only local configuration, not assert that provider route/facts are live. Do not do startup HTTP probes or synthesize success. EVERY observer HTTP response other than200, including403/404/503, is UNAVAILABLE: the confirmation operation returns generic503, with NO authority invalidation, epoch advance, proof/event/result/session or inferred negative. Missing/deleted-session404 cannot be converted to disabled-user/session-negative evidence. Timeout, transport failure, wrong content type, malformed/old/mismatched/stale200 or unsupported deadline is likewise UNAVAILABLE. ONLY an authenticated200 with the EXACT12 fields, exact binding, valid original relative freshness/deadline and trusted current literal negative flags may enter the separately committed SAME-authority-stamp denial path; current/final stamp and freshness checks remain mandatory. A positive flag is not enough without all owned receipts/grant/ACK gates. Runtime enabling requires separate pinned provider/freshness evidence and authorization.
+
+## Fail-closed startup and operation matrix
+
+| Input/state | Required result |
+|---|---|
+| C2 flag absent/false, dormant C2 fields missing | No C2 resources/routes/clients/workers; existing C1/legacy behavior unchanged; supplied pair arrays still strictly syntax-validated |
+| C2 flag TRUE/1/whitespace/null/unknown literal | Startup error, never truthy coercion |
+| C2=true but stage/authority/completion/grants/projection false/incomplete | Startup error before C2 DB/HTTP allocation |
+| Positive-proof enforcement flag true | Existing startup rejection retained |
+| Enabled managed JSON missing/empty, or supplied arrays malformed/oversize/unknown/duplicate keys | Startup error |
+| Pair duplicate/managed-legacy overlap, unsupported issuer/client, excessive bounds | Startup error |
+| Old C1 set projections disagree with managed pairs | Startup error; never widen to Cartesian product |
+| C2-off standalone C1 enabled with missing old C1 fields | Existing C1 startup error, not relaxed by this fragment |
+| Writer ID missing/outside actors; credential missing/bad/equal to configured material | Startup error |
+| Retention/encryption ring invalid/missing enabled config | Startup error; original missing historical key during operation503 |
+| Invalid observer origin URI or locally detectable configured issuer/realm/fixed-path disagreement | Startup error; no HTTP or fallback path/origin |
+| Remote prefix/path differs, missing code-session endpoint, observer403/404/503 or ANY non200 | Not detectable by local startup validation; operation UNAVAILABLE/generic503, no invalidation/epoch change |
+| Provider route not enabled or unavailable despite valid local config | Runtime UNAVAILABLE/generic503; no inferred revocation/authority or startup remote-health claim |
+| Authenticated200 but old/malformed/mismatched/stale/deadline-invalid payload | UNAVAILABLE/generic503; no invalidation or fabricated negative |
+| Authenticated200 exact12/current bound negative at unchanged original authority stamp | Separately committed denial only after final freshness/stamp checks; generic409 outside transaction, no positive side effects |
+| Unknown pair or malformed credential at request | Generic denial before any unauthorized provider fanout; unknown never legacy |
+| Actor differs original intent actor | Deny before any anchor allocation, even if pair is managed |
+| Backend read-only/replica/session-affinity unsupported | Fail closed; no replacement PRIMARY or permit bypass |
+| Healthy global16/shared-rate capacity full |429; backend/uncertain/independent anchor-cap unavailable503 |
+| Required V13 migration absent | C2 not ready/startup unavailable; no temporary legacy confirmation path |
+
+Do not implement a DB URL string-inequality “proof” of PRIMARY identity. Every request verifies actual original backend/database/session identity, recovery/read-only state and exact global slot; transaction/session pooling unsupported. Configuration cannot prove correct network deployment or peer isolation. Existing shared local keys remain a limitation.
+
+## Focused QA-C2-CONFIG01/02 acceptance matrix (required, unexecuted)
+
+| Case | Expected |
+|---|---|
+| Valid single issuer with two different existing allowlisted clients in disjoint exact managed pairs | Configuration accepted; no claim of single-client-only support; each pair independently checked |
+| Crossed issuer/client tuple from independent set projections but absent exact managed pair | Composed C2 stage/key/confirm reject BEFORE any Cartesian Policy acceptance can authorize it |
+| Standalone C1 stage enabled, C2 false, required original C1 fields missing | Original C1 startup error preserved; C2 adaptation cannot relax it |
+| C2 true, old C1 issuer/client fields absent | NEW C2 factory derives private effective projections only after strict pair parsing; not a claimed existing C1 behavior |
+| C2 true, supplied old C1 projections differ from exact managed projection | Startup error; no silent overwrite/widening |
+| Observer403,404,503 and representative other non200, regardless body resembling negative200 | Operation generic503/UNAVAILABLE; no authority mutation/epoch advance/proof/event/result/session |
+| Missing/deleted-session404 | Same UNAVAILABLE result, NOT disabled-user negative and NOT committed revocation |
+|200 old8/11-field/malformed/duplicate/foreign-binding/stale/invalid-relative-deadline | UNAVAILABLE; no invalidation |
+| Authenticated200 exact12 current bound negative, same original stamp | Only frozen denial transaction may commit once; final freshness and same-stamp check; no positive rows |
+| Same200 negative becomes stale behind controls or stamp changes | Unavailable/conflict as frozen; no old-fact invalidation or repeated epoch storm |
+| Locally configured issuer realm conflicts with locally selected fixed code-session realm/path | Startup reject before resource allocation, no network probe |
+| Local URI valid but remote service mounts a different prefix or code-session endpoint is absent | Startup cannot know; no probe. Actual call404 -> generic503/UNAVAILABLE, no fallback or invalidation |
+| Valid local configuration, source-confirmed exact mount but no new pinned fixed-mount runtime evidence | Source/config validation may pass; runtime/activation remains NO-GO; old no-/sso fixture is insufficient |
+| Configured client allowlisted but actual provider model is confidential/not supported | Provider rejects despite configuration membership; Auth treats non200 as UNAVAILABLE, never inferred negative |
+
+## Acceptance and open runtime gates
+
+Parser unit cases must exercise every matrix row, pair crossing, duplicate JSON members/arrays, field/type/size/surrogate/URI bounds and C2-off allocation-free behavior. PG tests require same Database/physical session, original actor after credential/HMAC rotation, global/shared budgets and preserved legacy200 owners. Isolated process tests require default404, wrong directional keys0admission/fanout, exact pair checks, no Main/provider hook activation, actual12-field adapter denial/failure and cleanup. No checks are executed by this proposal.
+
+## Joint provider comparison and exact base compatibility
+
+Provider `ARMONEY_LOGIN_PROOF_ENABLED` stays its separate strict default-false switch; Auth's new C2 switch does not activate provider factories. Both peers use the SAME `ARMONEY_SSO_MANAGED_PAIRS` / `ARMONEY_SSO_LEGACY_PAIRS` names, exact two-field objects, default[]/<=16 pairs/<=16KiB caps, duplicate/unknown/null/surrogate/control/whitespace/overlap rejection, no trimming/casefold/Cartesian product. This revision matches the confirmed counterpart: supplied dormant arrays remain strict for syntax/size/duplicate members/pairs/overlap; missing dormant secrets allocate no resources. Enabled-only checks are dependency completeness, supported pair/client scope and nonempty managed list. No divergent Auth32-pair/32KiB limits or aliases remain.
+
+Provider proposes reusing existing `ARMONEY_AUTH_BRIDGE_URL`; actual Bridge constructor accepts a fixed HTTPS root origin or http with exact auth-service host, no user info/query/fragment/nonroot path. Reusing that BASE is compatible. Actual Bridge.post ALLOWLISTS ONLY /internal/enrollments paths, so it CANNOT directly send stage/key/confirm. Reuse validated base/credential validation through a separate narrow client with exact allowlisted stage/key/confirm paths; do not widen enrollment Bridge.post or change verification authentication semantics. Actual ProofClient separately resolves /internal/sso-login-proofs paths; do not silently repurpose historical resolve or its per-call deadline. No extra destination URL is needed, and no caller supplies one.
+
+Auth cannot compare provider-local binding/code-HMAC secrets it does not possess; provider cannot compare Auth-only retention/AEAD rings. Each side rejects equality among ALL its locally available materials; cross-peer provisioning separation remains an explicit prerequisite, not a proven startup check. Do not export/copy secrets to close that visibility limit.
+
+Provider must match exact names/header/pair schema/logical actor and fixed internal path, key retention/current+previous ring on ALL nodes, and ONE invocation-owned monotonic4s budget before lookup serialization/DNS across lookup+confirm/body/parsing/claims. Current per-call DeadlineHttp cannot satisfy that. Pinned JDK21 slow DNS/cancellation evidence is still runtime NO-GO; cancelling a future is not DNS proof and no abandoned per-request executor is permitted. Mixed subjects on one managed/legacy pair and equivalent-rate clock assumptions remain activation NO-GO. Configuration design acceptance is not runtime enablement or authority.
+
+## Current source and validation boundary
+
+CodeConfirmationConfiguration and CodeIntentPairScopes provide pure configuration/value parsing only. They construct no database, client, route, scheduler or runtime store and are not registered by Main. Independent QA and security reviewed the source and fixes, including raw/canonical-base64 secret separation and exact issuer-port/pair bounds. Compilation and tests remain pending. Runtime adapters, durable confirmation storage, observation and aggregate deadline evidence are separate pending work.
