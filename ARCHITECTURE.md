@@ -1420,3 +1420,12 @@ verified source provenance and test results. The transport tests use fake client
 they do not establish real-network or physical DNS cancellation, full provider
 checks or packaging. Production factory integration, token release and activation
 remain pending.
+
+The unwired `CodeIntentResources` lifecycle owner parses explicit configuration
+and constructs keys before allocating its single owned HTTP transport. Disabled
+configuration returns no resources. It copies caller-supplied local key material,
+cleans up failed construction and closes owned resources idempotently; callers
+remain responsible for a complete local current/retained secret inventory.
+Independent source review approved this boundary; its four new tests have not
+been compiled or executed. It adds no SPI registration, hook or token release.
+Runtime lifecycle, combined Auth confirmation, DNS and clock gates remain open.
