@@ -141,6 +141,11 @@ PostgreSQL scenarios passed. Readiness equivalence reported 17 passes and one
 skip; that positive predicate/deadline case remains open. The local SMTP/STARTTLS
 peer, SMS sandbox and real persisted User projection ACK are scoped evidence, not
 Mailtrap Sandbox delivery or native Keycloak/password/cross-node proof. New local
-abort diagnostics and strict zero-skip report validation have not been executed.
+abort diagnostics exposed a test SQL parameter typing error at `3fbc50c`; the
+failed result remains retained. A test-only explicit timestamp cast at `f274266`
+then passed 972 tests across 41 suites with zero failures, errors or skips: 951
+unit cases, all 18 readiness-helper PostgreSQL cases and three authority
+PostgreSQL scenarios. Independent audit verified source/archive binding, actual
+positive readiness execution and the strict required-test selection gate.
 No production activation, token redemption or banking session follows from these
 checks. Preserve earlier initialization failure and skipped evidence.

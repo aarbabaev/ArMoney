@@ -9,15 +9,15 @@ close share atomic ownership with terminal OFF/FAILED/CLOSED states, immutable
 selection and no hot replacement. Strict local material parsing is bounded to
 16 KiB, 64 entries and canonical Base64; a configured UUID still does not prove
 persisted identity. Provision while disabled, stop, then enable and restart the
-disposable nodes before experiments. Eleven adapter tests remain uncompiled and
-unrun; source reviews do not prove factory environment-read ordering or lifecycle
-races at runtime. No production SPI or default enablement is added.
+disposable nodes before experiments. Eleven adapter unit tests passed at
+`3082f342`; these tests do not prove factory environment-read ordering or lifecycle
+races in the actual Keycloak runtime. No production SPI or default enablement is added.
 
 The later bootstrap source adds explicit `start(configuration, localMaterial,
 settings)` ownership, returning empty without allocation when disabled. It checks
 copied local material before allocation, installs support last and owns one
 fixed-delay maintenance scheduler with bounded shutdown. Its nine additional
-tests remain uncompiled and unrun; fake maintenance does not establish actual
+tests passed at `3082f342`; fake maintenance does not establish actual
 join, interruption or concurrent shutdown behavior. A configured subject UUID is
 not evidence of a persisted identity: disposable provisioning must precede startup.
 Core bootstrap accepts explicit configuration; the guarded fixture-only launch
@@ -31,8 +31,11 @@ acceptance flow. An earlier fixture test compilation failed because the pinned
 realm-resource provider is not AutoCloseable. Corrected checkpoint `067a829`
 passed 134 tests in 26 suites with no failures, errors or skips: 104 provider
 tests, including 12 deadline tests, and 30 fixture tests (24 new, six existing).
-The later bootstrap and adapter additions were excluded and remain uncompiled
-and unrun. This is separate checkpoint evidence, not an integrated runtime result.
+That earlier run excluded the bootstrap and adapter additions. A subsequent
+unfiltered provider/fixture check at `3082f342` passed 154 tests across 28 suites
+with zero failures, errors or skips: 104 provider and 50 fixture tests, including
+nine bootstrap and eleven adapter cases. Independent audit verified source/archive
+binding and actual XML. This is scoped unit evidence, not an integrated runtime result.
 Independent source review is not runtime readiness.
 
 Explicit disposable bootstrap must install the fixture's settings, code-intent

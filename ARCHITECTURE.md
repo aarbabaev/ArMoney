@@ -1468,8 +1468,11 @@ renewal. An earlier fixture test compilation failed against the pinned
 non-AutoCloseable realm-resource API. Corrected checkpoint `067a829` then passed
 134 tests in 26 suites with zero failures, errors or skips: 104 provider tests
 (including 12 deadline tests) and 30 fixture tests (24 new and six existing).
-The later nine bootstrap and eleven launch-adapter tests were not included;
-these results do not verify this integrated revision. Bootstrap, physical
+The later nine bootstrap and eleven launch-adapter tests were not included in
+that run. A subsequent unfiltered provider/fixture check at `3082f342` passed
+154 tests across 28 suites with zero failures, errors or skips: 104 provider and
+50 fixture cases, including all nine bootstrap and eleven adapter tests.
+Independent audit verified archived source and XML. Physical
 body/DNS termination, classloader compatibility, clocks and genuine combined
 acceptance remain open; production eligibility and activation are unchanged.
 See the acceptance-fixture README for the evidence boundary.
@@ -1477,14 +1480,14 @@ See the acceptance-fixture README for the evidence boundary.
 A subsequent acceptance-only bootstrap source owns explicit configuration,
 caller-local secret inventory, install-last lifecycle and one maintenance
 scheduler. Disabled startup allocates nothing. Independent source review passed;
-nine bootstrap tests remain uncompiled and unrun. Actual scheduler shutdown,
+all nine bootstrap unit tests passed at `3082f342`. Actual scheduler shutdown,
 preprovisioned persisted identity, disposable wiring and combined acceptance are
 still required. No production environment scan or automatic registration is added.
 
 The disposable fixture factory has a separately reviewed launch-adapter source
 that reads an exact environment allowlist only after explicit fixture, CI and
 isolation gates. Atomic configuration/start/close prevents hot replacement and
-reopening closed owners. Eleven adapter tests remain uncompiled and unrun; core
+reopening closed owners. All eleven adapter unit tests passed at `3082f342`; core
 bootstrap still accepts explicit inputs only. Persisted synthetic provisioning,
 disposable image wiring and native runtime verification remain separate gates.
 
@@ -1508,4 +1511,10 @@ equivalence case skipped. Therefore its reported 967 cases mean 966 executed
 passes and one unresolved skip, not a complete matrix. Provider observations in
 that experiment were synthetic; local SMTP/STARTTLS, SMS and persisted User ACK
 paths do not establish native Keycloak/password/cross-node or activation evidence.
-Further local test diagnostics and a zero-skip report gate remain unexecuted.
+Later diagnostics exposed a test SQL parameter typing failure at `3fbc50c`;
+that failed result remains retained. After an explicit test-only timestamp cast,
+checkpoint `f274266` passed 972 tests across 41 suites with zero failures, errors
+or skips: 951 unit and 21 PostgreSQL cases (18 readiness-helper and three
+authority scenarios). Independent audit confirmed actual positive readiness
+execution and the strict zero-skip selection gate. These scoped results do not
+establish genuine Keycloak or combined runtime acceptance.
