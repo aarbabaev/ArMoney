@@ -133,3 +133,82 @@ properties. The extension must stay disabled until independent acceptance.
 - [Token generation and policy event ordering](https://github.com/keycloak/keycloak/blob/26.7.4/services/src/main/java/org/keycloak/protocol/oidc/grants/OAuth2GrantTypeBase.java)
 - [TokenResponseContext](https://github.com/keycloak/keycloak/blob/26.7.4/services/src/main/java/org/keycloak/services/clientpolicy/context/TokenResponseContext.java)
 - [Introspection transformation](https://github.com/keycloak/keycloak/blob/26.7.4/services/src/main/java/org/keycloak/protocol/oidc/AccessTokenIntrospectionProvider.java)
+
+## First-login transaction visibility gate (SSO-VIS-001)
+
+Pinned Keycloak 26.7.4 stages newly attached persistent user and authenticated
+client sessions in the login request transaction. The synchronous proof hook
+awaits its callback before returning the redirect; request close commits later.
+Source inspection therefore identifies a circular dependency if that callback
+requires a separate node to observe the new session before returning. LOGIN
+events alone do not establish a commit boundary. A pre-existing cookie session
+does not prove visibility of a fresh client attachment. HTTP 503 does not prove
+that the request transaction rolled back. The dedicated experiment below now
+provides bounded cross-node evidence; it does not validate the production proof flow.
+
+The disposable-only `compose.sso-session-visibility.yaml` and
+`scripts/run-sso-session-visibility.sh` exercise a bounded test login hook. A
+dedicated control key authenticates strict bounded requests; a signed immutable
+tuple binds realm, subject, user session, external/internal client, nonce and
+expiry. The held request shares no Keycloak session/model objects with control
+threads. Before release, visibility is diagnostic only. After a successful
+completed OIDC response, node B must see both the user and authenticated client
+session. Hook failure records persistence outcomes without assuming rollback.
+No code is redeemed and no banking, financial or mail operation runs.
+
+Only `Dockerfile.visibility` registers the test hook/resource inside the fixture
+JAR. Production factories, provider packaging and the existing observer image
+remain unchanged. Run only under the approved disposable CI daemon and exclusive
+heavy-build lease; the wrapper owns its random project and unique image cleanup.
+This experiment grants no proof authority, activation or production deployment.
+
+### Observed disposable result
+
+On 2026-10-17 (Asia/Dubai), exact source
+`05bff8e96182d48c0fb2bd13c5aa2d4004d12c21` passed the isolated experiment
+in 224.625 seconds. Independent QA and security checked the actual case markers,
+42 provider source hashes, 14 unchanged fixture inputs and two generated SPI
+descriptors, segregated JARs
+and archive provenance; inner and outer cleanup were verified. Retained evidence
+uses project `armoney-visibility-0625f2a66f0c401fb428dcdbe308c303`.
+
+| Case | Node B while hook held | After completed node A response |
+| --- | --- | --- |
+| Fresh user | Pair not visible | Both visible after HTTP 302 and callback completion |
+| Existing user, new client | Pair not visible | Both visible after HTTP 302 and callback completion |
+| Aborted callback delivery | Pair not visible | Both visible after HTTP 302 despite callback abort |
+| Hook failure | Pair not visible | Both visible after HTTP 503 with no callback |
+
+The finite log label `POST PREVISIBLE` means `VISIBLE` with both observation
+booleans true; it does not mean visibility before commit. The authenticated node B
+observation runs in its own request and validates the signed, expiring tuple.
+`NOT_VISIBLE` does not distinguish which member of the pair was absent.
+PRE is diagnostic; these observations do not establish a universal commit timing
+guarantee, rollback behavior for other failures, or successful code redemption.
+Authorization codes were not redeemed; no banking session or login notice was issued.
+
+This result demonstrates the circularity of the tested fresh-login ordering:
+the synchronous redirect-hook callback cannot require a separate request to
+observe the newly attached sessions before releasing that same login request.
+Returning HTTP 503 and losing callback delivery also cannot be used as session
+rollback guarantees.
+
+### Ordering contract: frozen for scoped implementation
+
+The exact proposed wire/capability and acceptance matrix is in the
+[scoped Auth contract](../../auth-service/CODE-INTENT-CONFIRMATION-DRAFT.md), with
+[ADR 0043](../../docs/adr/0043-code-intent-confirmation.md).
+
+Independent QA and security GO at `0302cd9` was followed by joint orchestrator
+freeze on 2026-10-17. The scoped contract replaces the contradictory pre-write
+observation ordering for managed INTERACTIVE only; legacy behavior is unchanged.
+The frozen design separates
+separate immutable code-bound precommit recording/admission, granting no banking
+authority or notice eligibility, from postcommit confirmation during validated
+authorization-code redemption. Confirmation must require fresh provider session
+observation and Auth-owned binding, receipts, epoch and eligibility/projection
+checks before any authority is granted. Replay, expiry, uncertain responses and
+concurrent redemption still need implemented independent acceptance. Existing
+dormant resolve/token-policy seams are candidates, not
+validated production wiring. No implementation or registration is authorized by
+contract freeze alone. The clock-rate assumption remains an explicit runtime gate.
