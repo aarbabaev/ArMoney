@@ -77,14 +77,25 @@ scrape authentication. Recovery backlog counts `PENDING` payments with non-null
 `recipient_id`, including delayed retries and actively leased commands. Outbox
 backlog counts all `PENDING` email_outbox records, including delayed and leased
 records. These are unresolved totals, not only currently claimable batches. An
-observation failure removes both gauges, so the collector reports unknown rather
+observation failure removes the count and age gauges, so the collector reports unknown rather
 than retaining a stale zero. No customer fields or financial amounts are exported.
 
-Other unavailable queue measurements, process failure counters and replica lag
-are omitted by sources and remain unknown in the collector until trustworthy
-owner instrumentation exists. Backlog thresholds measure record counts, not
-elapsed queue age; oldest-item age is not implemented. The collector cannot infer
-worker freshness from a present gauge. Private deployment configuration,
-CI and independent failure acceptance remain
-integration gates. No persistent stack, provider or financial fixture is operated
-by these scripts or their tests.
+Payment workers record process-lifetime recovery and email-delivery failure
+counters when those outcomes are actually observed. An absent counter, first
+sample, reset or stale baseline remains unknown; it does not establish recovery.
+Payment also reports the age in seconds of each oldest unresolved pending item,
+including delayed retries and active leases. Empty queues report zero; invalid
+source timestamps produce unknown age. Optional age thresholds are separate from
+backlog-count thresholds; without a configured age threshold its alert is unknown.
+These measurements do not cover Auth verification, code intents or key retention.
+
+Ledger replica observation is separately opt-in and requires explicitly named
+senders. Missing or untrustworthy measurements remain unknown. A present gauge
+does not establish worker freshness or end-to-end banking availability.
+
+Deploy the compatible collector before the updated Payment producer. Roll back
+Payment before rolling back the collector. See the source-specific limits and
+acceptance scope in [the operational metrics runbook](../../docs/operational-metrics.md).
+Private configuration, exact-revision CI and runtime rollout verification remain
+delivery gates. These scripts and their tests do not operate a persistent stack,
+provider or financial fixture.
