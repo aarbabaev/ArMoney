@@ -17,15 +17,15 @@ RUN printf '%s\n' 'com.arman.bank.sso.fixture.VisibilityLoginProtocolFactory' > 
     && printf '%s\n' 'parent=armoney' > sso-service/provider/acceptance-fixture/src/main/resources/theme/armoney-code-intent-fixture/login/theme.properties \
     && printf '%s\n' '{"themes":[{"name":"armoney-code-intent-fixture","types":["login"]}]}' > sso-service/provider/acceptance-fixture/src/main/resources/META-INF/keycloak-themes.json \
     && bash sso-service/provider/package-provider.sh /provider-package \
-    && bash gradlew -p sso-service/provider/acceptance-fixture check jar --no-daemon --max-workers=1 \
+    && bash gradlew -p sso-service/provider/acceptance-fixture check codeIntentJar --no-daemon --max-workers=1 \
     && mkdir -p /fixture-provenance \
-    && sha256sum sso-service/provider/acceptance-fixture/build/libs/armoney-observer-acceptance-fixture-0.1.0.jar > /fixture-provenance/fixture-artifact.sha256 \
+    && sha256sum sso-service/provider/acceptance-fixture/build/libs/armoney-code-intent-acceptance-fixture-0.1.0.jar > /fixture-provenance/fixture-artifact.sha256 \
     && find sso-service/provider/acceptance-fixture/src sso-service/provider/acceptance-fixture/build.gradle sso-service/provider/acceptance-fixture/settings.gradle sso-service/provider/acceptance-fixture/Dockerfile.code-intent -type f -print0 | sort -z | xargs -0 sha256sum > /fixture-provenance/fixture-source.sha256
 
 FROM quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c AS fixture-augmentation
 COPY --from=acceptance-build --chown=keycloak:keycloak /provider-package/providers/ /opt/keycloak/providers/
 COPY --from=acceptance-build --chown=keycloak:keycloak /provider-package/themes/ /opt/keycloak/themes/
-COPY --from=acceptance-build --chown=keycloak:keycloak /workspace/sso-service/provider/acceptance-fixture/build/libs/armoney-observer-acceptance-fixture-0.1.0.jar /opt/keycloak/providers/
+COPY --from=acceptance-build --chown=keycloak:keycloak /workspace/sso-service/provider/acceptance-fixture/build/libs/armoney-code-intent-acceptance-fixture-0.1.0.jar /opt/keycloak/providers/
 RUN touch -m --date=@1743465600 /opt/keycloak/providers/*.jar && /opt/keycloak/bin/kc.sh build --db=postgres
 
 FROM quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c
