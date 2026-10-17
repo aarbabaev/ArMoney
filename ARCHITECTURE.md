@@ -1349,6 +1349,20 @@ readiness or durability. Local affected Ledger checks passed 93 tests across 13
 suites, including real physical standbys, on the recorded source patch. Combined
 current-main CI, Compose acceptance and deployment remain pending. See
 [ADR 0040](docs/adr/0040-replica-observation.md).
+
+### Diagnostic first-login session visibility
+
+The test-only SSO-VIS-001 topology uses two disposable Keycloak nodes to inspect
+user and authenticated client-session visibility before and after a bounded
+login redirect barrier. It is not a production service or proof authority.
+The isolated experiment at `05bff8e96182d48c0fb2bd13c5aa2d4004d12c21`
+passed on 2026-10-17 (Asia/Dubai): the session pair was not visible on node B while
+the login hook was held and visible after the completed response in all four
+cases, including hook HTTP 503. That failure therefore does not guarantee
+rollback. Independent QA and security bound the result to the fixture artifacts
+and verified cleanup. Production positive-proof hooks remain unregistered;
+the precommit recording/postcommit authority contract remains an activation gate.
+See [the proof design](sso-service/provider/LOGIN-PROOF-DESIGN.md#first-login-transaction-visibility-gate-sso-vis-001).
 ### Default-off client-session observer follow-up
 
 The provider source adds private `armoney-status/code-session`, separately gated
