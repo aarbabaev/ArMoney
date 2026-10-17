@@ -13,7 +13,7 @@ import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.*;
 
-/** Explicitly constructed private stage transport only. No Main registration or confirmation. */
+/** Explicitly constructed private stage transport only. Optional default-off composition; no confirmation. */
 public final class CodeIntentRoutes {
     private static final ObjectMapper JSON = new ObjectMapper()
         .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION)

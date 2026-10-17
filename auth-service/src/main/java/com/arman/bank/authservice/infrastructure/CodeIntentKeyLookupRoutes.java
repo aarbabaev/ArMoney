@@ -7,7 +7,7 @@ import io.javalin.config.JavalinConfig;
 import io.javalin.http.Context;
 import java.util.*;
 
-/** Explicitly constructed C2 key-selection transport. No Main registration or authority. */
+/** Explicitly constructed C2 key-selection transport. Optional default-off composition; no authority. */
 public final class CodeIntentKeyLookupRoutes {
     private final CodeIntentKeyLookupStore store;
     private final LoginProof.Policy policy;

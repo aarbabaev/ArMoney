@@ -15,7 +15,7 @@ import java.time.*;
 import java.util.*;
 import java.util.concurrent.*;
 
-/** Exact postcommit code-session transport only. No Main/resource wiring or provider-runtime proof.
+/** Exact postcommit code-session transport only. No provider-runtime proof; resource composition remains default-off.
  * The owning PG core independently checks original DB admission/receive/final relative freshness.
  * Cancellation/HTTP timeout does not prove physical DNS cancellation or equivalent clock rates. */
 public final class HttpCodeSessionObservations implements CodeConfirmationObservations,AutoCloseable {

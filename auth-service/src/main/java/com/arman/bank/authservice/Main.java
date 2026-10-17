@@ -27,14 +27,18 @@ public final class Main {
         var authorityConfig = new com.arman.bank.authservice.infrastructure.VerificationAuthorityConfiguration(System.getenv());
         var bankingEligibilityConfig = new com.arman.bank.authservice.infrastructure.BankingEligibilityConfiguration(System.getenv());
         var loginProofConfig = new com.arman.bank.authservice.infrastructure.LoginProofConfiguration(System.getenv());
+        var confirmationConfig = new com.arman.bank.authservice.infrastructure.CodeConfirmationConfiguration(System.getenv());
         var database = new Database(ServiceRuntime.required("DB_URL"), ServiceRuntime.required("DB_USER"), ServiceRuntime.required("DB_PASSWORD"));
         com.arman.bank.authservice.infrastructure.KeycloakTokens sso = null;
         com.arman.bank.authservice.infrastructure.HttpRegistrationProfiles profiles = null;
         com.arman.bank.authservice.infrastructure.VerificationDeliveryWorker verificationDelivery = null;
         com.arman.bank.authservice.infrastructure.VerificationProjectionWorker verificationProjection = null;
         com.arman.bank.authservice.infrastructure.VerificationAuthorityConfiguration.Resources authorityResources = null;
+        com.arman.bank.authservice.infrastructure.CodeConfirmationResources confirmationResources = null;
         ServiceRuntime startedRuntime = null;
         try {
+            confirmationResources = com.arman.bank.authservice.infrastructure.CodeConfirmationResources.open(database, confirmationConfig).orElse(null);
+            var confirmation = confirmationResources;
             var serviceKey = ServiceRuntime.required("INTERNAL_AUTH_KEY");
             profiles = new com.arman.bank.authservice.infrastructure.HttpRegistrationProfiles(
                     java.net.URI.create(ServiceRuntime.required("USER_BASE_URL")), serviceKey);
@@ -63,31 +67,55 @@ public final class Main {
             var runtime = ServiceRuntime.start("auth-service", Integer.parseInt(System.getenv().getOrDefault("PORT", "8080")),
                     readiness, database, config -> {
                         routes.configure(config);
+                        if (confirmation != null) confirmation.configure(config);
                         if (verificationAuthority != null) verificationAuthority.routes().configure(config);
                         if (loginProofRoutes != null) loginProofRoutes.configure(config);
                         configureMetrics(config, System.getenv(), metrics, readiness);
                     });
             startedRuntime = runtime;
+            if (confirmation != null) confirmation.start();
             if (verificationWorker != null) verificationWorker.start();
             if (projectionWorker != null) projectionWorker.start();
-            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                try { if (verificationWorker != null) verificationWorker.close(); }
-                finally {
-                    try { if (standaloneProjection != null) standaloneProjection.close(); }
-                    finally {
-                        try { if (verificationAuthority != null) verificationAuthority.close(); }
-                        finally { runtime.close(); registrationProfiles.close(); if (provider != null) provider.close(); }
-                    }
-                }
-            }, "auth-shutdown"));
-        } catch (Exception e) {
-            if (authorityResources != null) authorityResources.close();
-            if (verificationProjection != null) verificationProjection.close();
-            if (verificationDelivery != null) verificationDelivery.close();
-            if (profiles != null) profiles.close();
-            if (sso != null) sso.close();
-            if (startedRuntime != null) startedRuntime.close(); else database.close();
-            throw e;
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> closeResources(null,
+                    () -> { if (confirmation != null) confirmation.close(); },
+                    () -> { if (verificationWorker != null) verificationWorker.close(); },
+                    () -> { if (standaloneProjection != null) standaloneProjection.close(); },
+                    () -> { if (verificationAuthority != null) verificationAuthority.close(); },
+                    runtime::close, registrationProfiles::close,
+                    () -> { if (provider != null) provider.close(); }), "auth-shutdown"));
+        } catch (Exception | Error failure) {
+            var confirmation = confirmationResources;
+            var authority = authorityResources;
+            var projection = verificationProjection;
+            var delivery = verificationDelivery;
+            var registrationProfiles = profiles;
+            var provider = sso;
+            var runtime = startedRuntime;
+            closeResources(failure,
+                    () -> { if (confirmation != null) confirmation.close(); },
+                    () -> { if (authority != null) authority.close(); },
+                    () -> { if (projection != null) projection.close(); },
+                    () -> { if (delivery != null) delivery.close(); },
+                    () -> { if (registrationProfiles != null) registrationProfiles.close(); },
+                    () -> { if (provider != null) provider.close(); },
+                    () -> { if (runtime != null) runtime.close(); else database.close(); });
+            throw failure;
+        }
+    }
+
+    /** Attempt every owned close in order; never replace the original startup failure. */
+    private static void closeResources(Throwable primary, Runnable... actions) {
+        Throwable failure = primary;
+        for (var action : actions) {
+            try { action.run(); }
+            catch (RuntimeException | Error cleanup) {
+                if (failure == null) failure = cleanup;
+                else if (failure != cleanup) failure.addSuppressed(cleanup);
+            }
+        }
+        if (primary == null) {
+            if (failure instanceof RuntimeException runtime) throw runtime;
+            if (failure instanceof Error error) throw error;
         }
     }
 }

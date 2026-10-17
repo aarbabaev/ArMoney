@@ -7,7 +7,7 @@ import io.javalin.config.JavalinConfig;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Explicit default-off C2 owner. No Main registration, provider activation or banking/session grant.
+/** Explicit default-off C2 owner. Optional Main ownership; no provider activation or banking/session grant.
  * The supplied Database and HTTP server remain caller-owned. Start maintenance only after HTTP startup. */
 public final class CodeConfirmationResources implements AutoCloseable {
     private final CodeIntentCleanupWorker cleanup;

@@ -6,7 +6,7 @@ import io.javalin.config.JavalinConfig;
 import io.javalin.http.Context;
 import java.util.*;
 
-/** Explicit current confirmation only. No historical resolver, provider transport or Main registration. */
+/** Explicit current confirmation only. No historical resolver or positive banking/session grant. */
 public final class CodeConfirmationRoutes {
     private final CodeConfirmationService service;
     private final LoginProof.Policy policy;
