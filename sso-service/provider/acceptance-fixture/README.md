@@ -190,9 +190,13 @@ artifact profiles and a fresh image build remain required.
 
 The source fix introduces `codeIntentJar`, producing
 `armoney-code-intent-acceptance-fixture-0.1.0.jar` with only the code-intent
-control resources and the retained code-generation protocol/state. The existing
-observer JAR excludes code-intent classes. Both profiles compile all fixture
+control resources and a dedicated `CodeIntentFixtureLoginProtocol`/factory.
+Legacy visibility resources, protocol and state are excluded. The existing
+observer JAR excludes code-intent classes, and its restored visibility protocol
+has no reference to those excluded classes. Both profiles compile all fixture
 sources and retain the full test suite; `check` also verifies actual JAR class,
 SPI-target and scope inventories. Production provider packaging is unchanged.
-The code-intent Dockerfile selects the dedicated artifact. This packaging fix
+The code-intent Dockerfile selects the dedicated artifact and protocol SPI.
+Archive checks also reject retained class references to excluded profile classes.
+Three new protocol fail-closed unit cases remain unexecuted. This packaging fix
 remains unverified until a fresh build passes Keycloak augmentation.
