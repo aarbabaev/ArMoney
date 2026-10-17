@@ -88,7 +88,7 @@ services:
       auth-db: {condition: service_healthy}
       user-service: {condition: service_started}
       sms-sandbox: {condition: service_started}
-  authority-fixture:
+  auth-code-intent-fixture:
     <<: *process
     image: ${CODE_INTENT_AUTH_IMAGE:?Supply verified Auth authority image}
     env_file: ["${CODE_INTENT_AUTHORITY_ENV:?Supply private companion configuration}"]

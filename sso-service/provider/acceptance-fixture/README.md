@@ -263,3 +263,50 @@ tests passed; no actual import or login is implied. A failed import/provision
 requires owned disposable teardown, not an automatic retry against the partial
 realm. Observed 503 fixture responses show unavailability only. Physical DNS
 cancellation, flags, native flow and authority remain independent runtime gates.
+
+## Provider-owned continuation binding
+
+The fixture bind request is now exactly `experiment_handle` and `command_id`;
+the former caller-supplied `stage_handle` is rejected as an extra field. The
+provider retrieves Auth readiness using its existing provider credential and
+immutable preparation association, validates the canonical handle and pins the
+first successful value. A successful bind replay freshly revalidates that same
+handle without replacing it or extending any deadline. Changed commands, busy
+ownership, claimed continuation, malformed/changed evidence, cancellation and
+late responses remain fail-closed. Pure state reads perform no work.
+
+This repairs a fixture-only gap: diagnostic READY exposed no handle through the
+controller interface, yet the previous bind request required one. The controller
+does not gain provider-to-Auth credentials, Flow input or authority. Native form
+validation, genuine code generation, stage13, transaction COMMIT, real node-B
+membership and original lookup/confirm remain unchanged. Eight new regression
+cases are source-reviewed but unexecuted; fresh unfiltered checks, augmentation
+and actual native acceptance remain required. Production and Auth wire contracts
+are unchanged.
+
+## Private fixture configuration
+
+`auth-service/src/test/fixtures/build-code-intent-env.py` creates a fresh private
+POSIX-only directory containing separate Auth Main/authority/User/SMS/database
+and disabled-SSO environment files, a provisioning input and material inventory.
+Actual write entrypoints reject non-POSIX execution. The ON operation requires
+a caller-supplied canonical subject captured from successful provisioning; it
+preserves generated material, enables code-session observation and creates a new
+SSO input without overwrite. It does not prove subject persistence or perform
+provisioning/restart. The lifecycle owner must stop both nodes before selecting it.
+
+The provisioning JSON matches the actual helper parser: literal isolation and
+OFF gates, canonical issuer, synthetic admin credentials and a complete UAE
+user. Thirteen lightweight tests passed, including parser-to-parser agreement;
+Windows tests mock the platform guard and establish no POSIX permission or NTFS
+ACL evidence. Files use exclusive no-follow writes on the intended Linux runner.
+Reads assume a trusted owned private parent. Partial failures may leave files;
+retry requires disposal rather than overwrite. Full generated material plus
+explicit additional provider-owned material is checked for raw/decoded aliases;
+unseen external inventories are not proven. Auth retention/encryption keys are
+not copied into SSO. LOCAL SMTP TEST still uses an injected local peer rather
+than real Mailtrap delivery.
+
+The provider's Auth companion destination is the fixed
+`http://auth-code-intent-fixture:8091`; the dedicated Compose service uses that
+name. Configuration and static Compose parsing do not establish DNS or startup.
