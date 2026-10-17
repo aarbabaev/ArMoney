@@ -32,7 +32,9 @@ public final class CodeIntentRetentionKeys {
     public byte[] hash(String id, String domain, String... values) {
         byte[] key = keys.get(id);
         if (key == null) throw new LoginProof.Failure(LoginProof.Error.UNAVAILABLE);
-        if (!Set.of("armoney-intent-payload-v1", "armoney-intent-binding-v1", "armoney-intent-authority-v1", "armoney-intent-actor-v1").contains(domain))
+        if (!Set.of("armoney-intent-payload-v1", "armoney-intent-binding-v1", "armoney-intent-authority-v1", "armoney-intent-actor-v1",
+                "armoney-code-confirmation-v1", "armoney-confirmation-binding-v1",
+                "armoney-confirmation-anchor-actor-v1", "armoney-confirmation-authority-v1").contains(domain))
             throw new IllegalArgumentException("Invalid intent retention domain");
         try {
             var bytes = new ByteArrayOutputStream(); var out = new DataOutputStream(bytes);

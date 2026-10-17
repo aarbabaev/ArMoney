@@ -152,6 +152,21 @@ public final class PostgresBankingEligibilityStore implements BankingEligibility
         if(!result.completeFor(binding,checked))fail(Verification.Error.UNAVAILABLE);
         return result;
     }
+    /** Caller-owned confirmation preflight/final check. Uses persisted local contacts only;
+     * this validates no provider flags and creates no positive observation or authority. */
+    Instant requireLocalForConfirmation(com.arman.bank.authservice.domain.LoginProof.Binding binding){
+        PostgresVerificationProjectionStore.requireLocked(sql);
+        var enrollment=sql.fetchOne("select id,email,phone from verification_enrollments where issuer=? and subject=?",binding.issuer(),binding.subject());
+        if(enrollment==null)fail(Verification.Error.CONFLICT);
+        Current current=currentLocal(enrollment.get("id",UUID.class),binding.issuer(),binding.subject(),
+            enrollment.get("email",String.class),enrollment.get("phone",String.class));
+        var grant=sql.fetchOne("select * from banking_eligibility_grants where identity_id=? and verification_epoch=?",current.identity(),current.projection().verificationEpoch());
+        if(grant==null||!matches(grant,current))fail(Verification.Error.CONFLICT);
+        Instant checked=now();
+        Instant deadline=Collections.min(List.of(current.deadline(),time(grant,"expires_at")));
+        if(!checked.isBefore(deadline))fail(Verification.Error.UNAVAILABLE);
+        return deadline;
+    }
     private Current currentLocal(UUID enrollment,String issuer,String subject,String emailValue,String phoneValue) {
         var e=sql.fetchOne("select * from verification_enrollments where id=? for update",enrollment);
         var a=sql.fetchOne("select * from verification_authorities where enrollment_id=? for update",enrollment);

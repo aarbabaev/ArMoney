@@ -35,6 +35,8 @@ final class PostgresLoginRequestScope {
             if (closed || Thread.currentThread() != owner || Thread.currentThread().isInterrupted())
                 throw new LoginProof.Failure(LoginProof.Error.UNAVAILABLE);
         }
+        /** Post-COMMIT verification on this same exclusive backend before external work. */
+        void verify() { check(); permit.verify(); check(); }
         String actor() { check(); return actor; }
         <T> T transaction(Function<DSLContext,T> action) {
             check();

@@ -1128,7 +1128,16 @@ implement post-commit confirmation or positive token release. The approved
 future steps from implemented staging. The accepted [durable confirmation
 amendment](docs/adr/0045-durable-code-confirmation-anchors.md) specifies original-actor
 anchors, replay completion, original-key lookup and one producer deadline.
-Confirmation, lookup, explicit pair configuration and activation remain unimplemented.
+Pure default-off confirmation configuration and exact pair parsers now exist in source,
+without resource construction or Main registration. Internal durable confirmation
+application/storage core and an unpublished V13 migration exist in source, with
+independent source review. At 72564fd, 798 unit tests and 70 selected PostgreSQL
+tests passed, including confirmation, original-key lookup and seven upgrade cases;
+independent QA and security verified source binding and retained results. Full required
+checks and Compose acceptance remain pending. Lookup and
+confirmation HTTP adapters, observer transport, configuration wiring and activation
+remain unimplemented. See the
+[configuration contract](auth-service/CODE-INTENT-CONFIGURATION.md).
 
 ## Disabled verification projection plumbing
 
