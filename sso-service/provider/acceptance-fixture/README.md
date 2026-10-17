@@ -2,6 +2,17 @@
 
 ## Code-intent source candidate
 
+The disposable launch adapter source now reads only named environment values in
+the fixture factory, after literal fixture/CI/isolation gates. Disabled mode reads
+no secret material. Core bootstrap remains environment-free. Configure, start and
+close share atomic ownership with terminal OFF/FAILED/CLOSED states, immutable
+selection and no hot replacement. Strict local material parsing is bounded to
+16 KiB, 64 entries and canonical Base64; a configured UUID still does not prove
+persisted identity. Provision while disabled, stop, then enable and restart the
+disposable nodes before experiments. Eleven adapter tests remain uncompiled and
+unrun; source reviews do not prove factory environment-read ordering or lifecycle
+races at runtime. No production SPI or default enablement is added.
+
 The later bootstrap source adds explicit `start(configuration, localMaterial,
 settings)` ownership, returning empty without allocation when disabled. It checks
 copied local material before allocation, installs support last and owns one

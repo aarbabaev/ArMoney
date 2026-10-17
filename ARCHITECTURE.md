@@ -1453,3 +1453,10 @@ scheduler. Disabled startup allocates nothing. Independent source review passed;
 nine bootstrap tests remain uncompiled and unrun. Actual scheduler shutdown,
 preprovisioned persisted identity, disposable wiring and combined acceptance are
 still required. No production environment scan or automatic registration is added.
+
+The disposable fixture factory has a separately reviewed launch-adapter source
+that reads an exact environment allowlist only after explicit fixture, CI and
+isolation gates. Atomic configuration/start/close prevents hot replacement and
+reopening closed owners. Eleven adapter tests remain uncompiled and unrun; core
+bootstrap still accepts explicit inputs only. Persisted synthetic provisioning,
+disposable image wiring and native runtime verification remain separate gates.

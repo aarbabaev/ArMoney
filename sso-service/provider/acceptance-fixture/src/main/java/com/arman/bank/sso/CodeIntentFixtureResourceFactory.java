@@ -7,6 +7,7 @@ import org.jboss.resteasy.reactive.server.core.CurrentRequestManager;
 
 /** Bootstrap installation and SPI packaging belong only to the separately reviewed disposable image. */
 public final class CodeIntentFixtureResourceFactory implements RealmResourceProviderFactory {
+    private final CodeIntentFixtureLaunchConfiguration launch=new CodeIntentFixtureLaunchConfiguration();
     @Override public String getId(){return "armoney-code-intent-fixture";}
     @Override public RealmResourceProvider create(KeycloakSession session){return new RealmResourceProvider(){public Object getResource(){
         try{
@@ -20,7 +21,18 @@ public final class CodeIntentFixtureResourceFactory implements RealmResourceProv
     }public void close(){}};}
     static void authenticate(java.util.List<String> values,boolean peer){if(values==null||values.size()!=1||!CodeIntentFixtureSupport.current().authenticate(values.getFirst(),peer))throw new CodeIntentFixtureSupport.Rejected(401);}
     private static jakarta.ws.rs.WebApplicationException denied(int status){return new jakarta.ws.rs.WebApplicationException(jakarta.ws.rs.core.Response.status(status).type("application/json").header("Cache-Control","no-store").build());}
-    @Override public void init(Config.Scope scope){}
-    @Override public void postInit(KeycloakSessionFactory factory){CodeIntentFixtureBootstrap.postInit();}
-    @Override public void close(){CodeIntentFixtureBootstrap.closeInstalled();}
+    @Override public void init(Config.Scope scope){
+        try{
+            var values=new java.util.HashMap<String,String>();String enabled=System.getenv(CodeIntentFixtureLaunchConfiguration.ENABLED);
+            if(launch.selectOffGate(enabled))return;
+            if(enabled!=null)values.put(CodeIntentFixtureLaunchConfiguration.ENABLED,enabled);
+            if(enabled==null||"false".equals(enabled)){launch.configure(values);return;}
+            if(!"true".equals(enabled))throw CodeIntentFixtureLaunchConfiguration.invalid();
+            for(String name:CodeIntentFixtureLaunchConfiguration.GATES){if(name.equals(CodeIntentFixtureLaunchConfiguration.ENABLED))continue;String value=System.getenv(name);if(!"true".equals(value))throw CodeIntentFixtureLaunchConfiguration.invalid();values.put(name,value);}
+            for(String name:CodeIntentFixtureLaunchConfiguration.INPUTS){String value=System.getenv(name);if(value!=null)values.put(name,value);}
+            launch.configure(values);
+        }catch(Throwable failure){try{launch.close();}catch(Throwable ignored){}throw CodeIntentFixtureLaunchConfiguration.invalid();}
+    }
+    @Override public void postInit(KeycloakSessionFactory factory){launch.startConfigured();}
+    @Override public void close(){launch.close();}
 }
