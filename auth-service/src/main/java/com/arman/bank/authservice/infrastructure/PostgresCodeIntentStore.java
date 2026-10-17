@@ -287,7 +287,14 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
     private byte[] stamp(String key,Record a,UUID identity){return keys.hash(key,"armoney-intent-authority-v1",identity.toString(),a.get("enrollment_id").toString(),a.get("state").toString(),a.get("verification_epoch").toString(),a.get("revision").toString(),Objects.toString(a.get("email_candidate_id"),""),Objects.toString(a.get("phone_candidate_id"),""),Objects.toString(a.get("projection_operation_id"),""),a.get("projection_revision").toString(),Objects.toString(a.get("projection_command_id"),""),time(a,"expires_at").toString(),time(a,"enrollment_deadline").toString());}
     private static void same(byte[] a,byte[] b){if(!MessageDigest.isEqual(a,b))fail(Error.CONFLICT);}
     private static CodeIntent.Snapshot snapshot(Record row){return new CodeIntent.Snapshot(row.get("id",UUID.class),row.get("code_key_id",String.class),time(row,"issued_at"),time(row,"expires_at"));}
-    private static long count(DSLContext sql,String table){return switch(table){case "sso_code_intents"->sql.fetchOne("select count(*) as n from sso_code_intents").get("n",Long.class);case "sso_code_intent_commands"->sql.fetchOne("select count(*) as n from sso_code_intent_commands").get("n",Long.class);default->throw new IllegalArgumentException();};}
+    private static long count(DSLContext sql,String table){return switch(table){
+        case "sso_code_intents"->sql.fetchOne("select count(*) as n from sso_code_intents").get("n",Long.class);
+        case "sso_code_intent_commands"->sql.fetchOne("select count(*) as n from sso_code_intent_commands").get("n",Long.class);
+        case "sso_code_confirmation_anchors"->sql.fetchOne("select count(*) as n from sso_code_confirmation_anchors").get("n",Long.class);
+        case "sso_code_confirmation_results"->sql.fetchOne("select count(*) as n from sso_code_confirmation_results").get("n",Long.class);
+        case "sso_code_confirmation_anchor_completions"->sql.fetchOne("select count(*) as n from sso_code_confirmation_anchor_completions").get("n",Long.class);
+        default->throw new IllegalArgumentException();
+    };}
     private static Instant now(DSLContext sql){return time(sql.fetchOne("select clock_timestamp() as now"),"now");}
     private static Instant time(Record r,String field){return r.get(field,OffsetDateTime.class).toInstant();}
     private static void fail(Error error){throw new LoginProof.Failure(error);}

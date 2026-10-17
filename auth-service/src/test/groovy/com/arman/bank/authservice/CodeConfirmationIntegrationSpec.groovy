@@ -108,6 +108,18 @@ class CodeConfirmationIntegrationSpec extends Specification {
     }
     def confirmationRows(){database.transaction{sql->['sso_code_confirmation_anchors','sso_code_confirmation_results','sso_code_confirmation_anchor_completions'].collectEntries{table->
         [(table):sql.fetch('select to_jsonb(t)::text from '+table+' t order by 1').getValues(0,String)]}}}
+    def 'cleanup evaluates empty and populated V13 capacity tables without deleting fresh confirmation records'(){
+        given:def staging=stageStore()
+        when:staging.cleanup()
+        then:row('sso_code_intent_cleanup').healthy;!row('sso_code_intent_cleanup').capacity_alert
+        count('sso_code_confirmation_anchors')==0;count('sso_code_confirmation_results')==0;count('sso_code_confirmation_anchor_completions')==0
+        when:
+        eligible();def input=command();staging.stage(WRITER,input);def core=confirmations(staging)
+        confirmer(core).confirm(WRITER,lookup(input));awaitReplayWindow();confirmer(core).confirm(WRITER,lookup(input))
+        def frozen=confirmationRows();staging.cleanup()
+        then:confirmationRows()==frozen;row('sso_code_intent_cleanup').healthy;!row('sso_code_intent_cleanup').capacity_alert
+        count('sso_code_confirmation_anchors')==2;count('sso_code_confirmation_results')==1;count('sso_code_confirmation_anchor_completions')==1
+    }
     def 'actual current receipts grant and projection confirm one original proof then fresh replay without new hourly debit'(){
         given:
         eligible();def input=command();def staging=staged(input);def core=confirmations(staging)
