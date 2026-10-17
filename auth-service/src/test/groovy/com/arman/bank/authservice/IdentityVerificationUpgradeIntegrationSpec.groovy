@@ -73,8 +73,8 @@ class IdentityVerificationUpgradeIntegrationSpec extends Specification {
         def database = new Database(postgres.jdbcUrl, postgres.username, postgres.password)
         then:
         database.transaction { current ->
-            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '11'
-            assert current.fetch('select * from flyway_schema_history where version not in (?,?,?) order by installed_rank', '9', '10', '11').intoMaps() == history
+            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '12'
+            assert current.fetch('select * from flyway_schema_history where version not in (?,?,?,?) order by installed_rank', '9', '10', '11', '12').intoMaps() == history
             assert snapshots(current) == before
             ['verification_authorities','verification_candidates','verification_authority_phone_claims','verification_flows','verification_flow_barriers',
              'verification_authority_admission','verification_authority_commands'].each { table ->

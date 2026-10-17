@@ -26,6 +26,7 @@ public final class Main {
         var projectionConfig = new com.arman.bank.authservice.infrastructure.VerificationProjectionConfiguration(System.getenv());
         var authorityConfig = new com.arman.bank.authservice.infrastructure.VerificationAuthorityConfiguration(System.getenv());
         var bankingEligibilityConfig = new com.arman.bank.authservice.infrastructure.BankingEligibilityConfiguration(System.getenv());
+        var loginProofConfig = new com.arman.bank.authservice.infrastructure.LoginProofConfiguration(System.getenv());
         var database = new Database(ServiceRuntime.required("DB_URL"), ServiceRuntime.required("DB_USER"), ServiceRuntime.required("DB_PASSWORD"));
         com.arman.bank.authservice.infrastructure.KeycloakTokens sso = null;
         com.arman.bank.authservice.infrastructure.HttpRegistrationProfiles profiles = null;
@@ -52,6 +53,7 @@ public final class Main {
             verificationProjection = authorityConfig.completionEnabled ? null : projectionConfig.worker(database);
             var standaloneProjection = verificationProjection;
             var projectionWorker = authorityConfig.completionEnabled ? authorityResources.projectionWorker() : standaloneProjection;
+            var loginProofRoutes = loginProofConfig.routes(database);
             var routes = new AuthRoutes(new AuthService(bankingEligibilityConfig.store(database), new Argon2Passwords(), Clock.systemUTC(), registrationProfiles),
                     serviceKey, provider == null ? token -> {
                         throw new com.arman.bank.authservice.application.AuthFailure(com.arman.bank.authservice.application.AuthFailure.Kind.UNAVAILABLE);
@@ -62,6 +64,7 @@ public final class Main {
                     readiness, database, config -> {
                         routes.configure(config);
                         if (verificationAuthority != null) verificationAuthority.routes().configure(config);
+                        if (loginProofRoutes != null) loginProofRoutes.configure(config);
                         configureMetrics(config, System.getenv(), metrics, readiness);
                     });
             startedRuntime = runtime;

@@ -1104,14 +1104,26 @@ and [operations](docs/local-baseline.md).
 ## Disabled auth login proof storage
 
 Auth contains V7 login proof/event storage, immutable payload replay, shared
-writer admission and strict private route classes. Main does not register the
-routes (404); the optional configuration factory always uses unavailable
-production eligibility (503 in explicitly constructed route fixtures). Existing
-identity/session and verification authority remain unchanged. Synthetic positive
-fixtures establish storage behavior only, not ACTIVE eligibility or session and
-notification completion. Bounded cleanup needs scheduling and monitoring before
-activation. See [ADR 0033](docs/adr/0033-disabled-login-proof-storage.md) and the
-[planned proof contract](auth-service/LOGIN-PROOF-CONTRACT.md).
+writer admission and strict private route classes. Main now conditionally
+registers the private proof bridge only through strict default-off
+`AUTH_LOGIN_PROOF_BRIDGE_ENABLED` configuration. Defaults retain 404. The
+configured production eligibility adapter remains unavailable; this bridge
+cannot grant ACTIVE eligibility or complete banking sessions and notices.
+Positive enforcement remains rejected. No provider hook or deployment is
+activated by this source change. See [ADR 0033](docs/adr/0033-disabled-login-proof-storage.md),
+the [proof contract](auth-service/LOGIN-PROOF-CONTRACT.md) and the current
+[staging/runtime boundary](auth-service/CODE-INTENT-STAGING.md).
+
+Internal V12 code-intent staging adds immutable replay, separately encrypted
+short-lived original-session details and durable nonce/key lifecycle fencing.
+Staging has no HTTP route or Main worker registration. Auth's global sixteen
+authorized-operation gate uses one physical PRIMARY connection across admission,
+provider observation outside transactions and final writes. HTTP/1.1 inbound
+bodies have a four-second absolute deadline with physical transport closure;
+this is not a deadline for database or provider operations. These controls do not
+implement post-commit confirmation or positive token release. The approved
+[joint contract](docs/adr/0043-code-intent-confirmation.md) distinguishes those
+future steps from implemented staging.
 
 ## Disabled verification projection plumbing
 
