@@ -237,8 +237,10 @@ The Compose file itself does not prove that isolation or reserve build capacity.
 
 The canonical issuer is `https://sso-edge:8443/sso/realms/armoney`; only node B has
 the private `sso-service` alias. Both nodes share the disposable SSO database and
-JDBC discovery. The edge uses newly generated private fixture certificates and
-HTTP/1.1 upstream. The test browser must explicitly trust the ephemeral fixture
+JDBC discovery. The edge uses newly generated private fixture certificates (server certificate
+and key only, never the CA private key) and HTTP/1.1 upstream. It restores only
+NET_BIND_SERVICE to match the official Caddy executable file capability; this
+is not host publication or a claim of tested startup. The test browser must explicitly trust the ephemeral fixture
 CA in its own disposable trust store; global host trust and TLS verification
 must not be weakened. No realm import, secrets or enablement are baked into
 images. Phase-specific private SSO inputs select disabled provisioning, then the
