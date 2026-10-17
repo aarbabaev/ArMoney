@@ -1134,9 +1134,11 @@ application/storage core and an unpublished V13 migration exist in source, with
 independent source review. At 72564fd, 798 unit tests and 70 selected PostgreSQL
 tests passed, including confirmation, original-key lookup and seven upgrade cases;
 independent QA and security verified source binding and retained results. Full required
-checks and Compose acceptance remain pending. Lookup and
-confirmation HTTP adapters, observer transport, configuration wiring and activation
-remain unimplemented. See the
+checks and Compose acceptance remain pending. Lookup and confirmation HTTP adapters
+now exist through explicit construction, with strict directional authentication and
+one owning admission scope; their new route, PostgreSQL HTTP and test-only process
+tests are uncompiled/unrun. Main registration, production observer transport,
+configuration wiring, provider integration and activation remain unimplemented. See the
 [configuration contract](auth-service/CODE-INTENT-CONFIGURATION.md).
 
 ## Disabled verification projection plumbing
