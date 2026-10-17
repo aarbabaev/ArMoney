@@ -180,3 +180,19 @@ one unresolved positive readiness-equivalence skip. Three authority PostgreSQL
 scenarios exercised local SMTP/STARTTLS, SMS and persisted User ACK paths with a
 synthetic provider peer. They do not establish native Keycloak or two-node
 acceptance. Local abort diagnostics and a zero-skip report gate remain unexecuted.
+
+The first disposable image build at `84a7db5` failed during Keycloak
+augmentation: legacy visibility and code-intent control resources exposed
+duplicate root POST endpoints. Replacing SPI descriptors alone did not isolate
+annotated resources. The SSO final image was not verified, and the sequential
+Auth image stage did not run. Retain this failed result; separate fixture
+artifact profiles and a fresh image build remain required.
+
+The source fix introduces `codeIntentJar`, producing
+`armoney-code-intent-acceptance-fixture-0.1.0.jar` with only the code-intent
+control resources and the retained code-generation protocol/state. The existing
+observer JAR excludes code-intent classes. Both profiles compile all fixture
+sources and retain the full test suite; `check` also verifies actual JAR class,
+SPI-target and scope inventories. Production provider packaging is unchanged.
+The code-intent Dockerfile selects the dedicated artifact. This packaging fix
+remains unverified until a fresh build passes Keycloak augmentation.
