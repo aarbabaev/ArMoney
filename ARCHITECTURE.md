@@ -1116,14 +1116,19 @@ the [proof contract](auth-service/LOGIN-PROOF-CONTRACT.md) and the current
 
 Internal V12 code-intent staging adds immutable replay, separately encrypted
 short-lived original-session details and durable nonce/key lifecycle fencing.
-Staging has no HTTP route or Main worker registration. Auth's global sixteen
+A private staging HTTP adapter exists in source with strict thirteen-field requests,
+five-field acknowledgements and the existing directional stage credential.
+It is constructed by configuration but has no Main route or worker registration. Auth's global sixteen
 authorized-operation gate uses one physical PRIMARY connection across admission,
 provider observation outside transactions and final writes. HTTP/1.1 inbound
 bodies have a four-second absolute deadline with physical transport closure;
 this is not a deadline for database or provider operations. These controls do not
 implement post-commit confirmation or positive token release. The approved
 [joint contract](docs/adr/0043-code-intent-confirmation.md) distinguishes those
-future steps from implemented staging.
+future steps from implemented staging. The accepted [durable confirmation
+amendment](docs/adr/0045-durable-code-confirmation-anchors.md) specifies original-actor
+anchors, replay completion, original-key lookup and one producer deadline.
+Confirmation, lookup, explicit pair configuration and activation remain unimplemented.
 
 ## Disabled verification projection plumbing
 
