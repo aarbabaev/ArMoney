@@ -11,11 +11,18 @@ public final class CodeIntentConfiguration {
     private final LoginProof.Policy policy;
     private final CodeIntentRetentionKeys keys;
     private final CodeIntentDetailCrypto crypto;
+    private final String actor,writeKey;
     public CodeIntentConfiguration(Map<String,String> environment) {
         String flag=environment.getOrDefault("AUTH_SSO_CODE_INTENT_STAGE_ENABLED","false");
         if(!"true".equals(flag)&&!"false".equals(flag))throw new IllegalArgumentException("Invalid code intent flag");
         enabled=flag.equals("true");
-        if(!enabled){policy=null;keys=null;crypto=null;return;}
+        if(!enabled){policy=null;keys=null;crypto=null;actor=null;writeKey=null;return;}
+        actor=required(environment,"SSO_LOGIN_PROOF_WRITER_ID");
+        writeKey=required(environment,"SSO_LOGIN_PROOF_WRITE_KEY");
+        LoginProofRoutes.credential(writeKey);
+        for(var entry:environment.entrySet())if(!entry.getKey().equals("SSO_LOGIN_PROOF_WRITE_KEY")
+            &&(entry.getKey().contains("KEY")||entry.getKey().contains("SECRET")||entry.getKey().contains("TOKEN")||entry.getKey().contains("PASSWORD"))
+            &&sameMaterial(writeKey,entry.getValue()))throw new IllegalArgumentException("Stage credential must be independent");
         var authority=new VerificationAuthorityConfiguration(environment);
         if(!authority.completionEnabled||!authority.eligibilityGrantsEnabled)throw new IllegalArgumentException("Code intent authority configuration required");
         String current=required(environment,"SSO_LOGIN_PROOF_RETENTION_HMAC_KEY_ID");
@@ -49,14 +56,23 @@ public final class CodeIntentConfiguration {
             throw new IllegalArgumentException("Intent encryption key must be separate");
         policy=LoginProof.Policy.defaults(values(environment,"SSO_CODE_INTENT_ISSUERS"),values(environment,"SSO_CODE_INTENT_CLIENTS"),
             values(environment,"SSO_CODE_INTENT_CODE_KEY_IDS"),values(environment,"SSO_CODE_INTENT_ACTORS"));
+        if(!policy.writers().contains(actor))throw new IllegalArgumentException("Stage actor outside configured scope");
     }
     public Optional<Resources> open(Database database){
         if(!enabled)return Optional.empty();
         var store=new PostgresCodeIntentStore(Objects.requireNonNull(database),policy,keys,crypto);
-        return Optional.of(new Resources(store,new CodeIntentCleanupWorker(store)));
+        return Optional.of(new Resources(store,new CodeIntentCleanupWorker(store),new CodeIntentRoutes(store,policy,actor,writeKey)));
     }
-    public record Resources(PostgresCodeIntentStore store,CodeIntentCleanupWorker cleanupWorker) implements AutoCloseable {
+    public record Resources(PostgresCodeIntentStore store,CodeIntentCleanupWorker cleanupWorker,CodeIntentRoutes routes) implements AutoCloseable {
         @Override public void close(){cleanupWorker.close();}
+    }
+    private static boolean sameMaterial(String first,String second){
+        if(second==null)return false;
+        byte[] a=first.getBytes(java.nio.charset.StandardCharsets.UTF_8),b=second.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        if(java.security.MessageDigest.isEqual(a,b))return true;
+        try{if(java.security.MessageDigest.isEqual(Base64.getDecoder().decode(first),b))return true;}catch(IllegalArgumentException ignored){}
+        try{if(java.security.MessageDigest.isEqual(a,Base64.getDecoder().decode(second)))return true;}catch(IllegalArgumentException ignored){}
+        try{return java.security.MessageDigest.isEqual(Base64.getDecoder().decode(first),Base64.getDecoder().decode(second));}catch(IllegalArgumentException ignored){return false;}
     }
     private static boolean sameKey(String canonical,String other){
         if(other==null)return false;
