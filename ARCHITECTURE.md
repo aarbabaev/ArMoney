@@ -1131,7 +1131,9 @@ anchors, replay completion, original-key lookup and one producer deadline.
 Pure default-off confirmation configuration and exact pair parsers now exist in source,
 without resource construction or Main registration. Internal durable confirmation
 application/storage core and an unpublished V13 migration exist in source, with
-independent source review but compilation and tests still pending. Lookup and
+independent source review. At abc809c3, 778 unit tests and seven upgrade tests passed;
+38 confirmation PostgreSQL cases passed and seven failed. Reviewed fixes await
+runtime retesting. Original-key lookup exists as uncompiled source. Lookup and
 confirmation HTTP adapters, observer transport, configuration wiring and activation
 remain unimplemented. See the
 [configuration contract](auth-service/CODE-INTENT-CONFIGURATION.md).

@@ -38,7 +38,7 @@ public final class PostgresCodeConfirmationStore implements CodeConfirmationStor
         private Scoped(PostgresLoginRequestScope.Request owned){this.owned=owned;}
         @Override public Admission admit(LoginProof.Resolve code){
             owned.check();if(admitted)throw CodeConfirmation.unavailable();admitted=true;LoginProof.validate(code,policy);
-            return owned.transaction(sql->{
+            var anchored=owned.transaction(sql->{
                 var context=intents.confirmationContext(sql,owned.actor(),code);
                 var intent=context.intent();UUID id=intent.get("id",UUID.class);String key=intent.get("retention_key_id",String.class);
                 var anchors=sql.fetch("select * from sso_code_confirmation_anchors where intent_id=? order by generation for update",id);
@@ -64,9 +64,11 @@ public final class PostgresCodeConfirmationStore implements CodeConfirmationStor
                     values(?,?,?,?,?,?,?,?,cast(? as timestamptz),?,?,?,cast(? as timestamptz),cast(? as timestamptz))
                     """,anchor,id,key,actor(key,owned.actor()),binding(key,code),business,replay?"REPLAY":"FIRST",generation,start.toString(),stamp,
                     context.authority().get("verification_epoch",Long.class),context.authority().get("revision",Integer.class),context.write().expiresAt().toString(),context.write().expiresAt().plusSeconds(300).toString());
-                checkStamp(sql,context,stamp);LoginProof.unexpired(context.localDeadline(),now(sql));LoginProof.unexpired(context.write().expiresAt(),now(sql));
+                checkStamp(sql,context,stamp);localLive(context.localDeadline(),now(sql));LoginProof.unexpired(context.write().expiresAt(),now(sql));
                 return new Anchored(this,anchor,id,key,code,context.write(),start,stamp,business,replay);
             });
+            owned.verify();
+            return anchored;
         }
         @Override public CodeConfirmation.Outcome complete(Admission supplied,CodeConfirmation.Facts facts){
             owned.check();if(completed)throw CodeConfirmation.unavailable();completed=true;
@@ -87,7 +89,7 @@ public final class PostgresCodeConfirmationStore implements CodeConfirmationStor
                     new PostgresBankingEligibilityStore(sql).invalidateAfterMutation(context.authority().get("enrollment_id",UUID.class));
                     checkDenial(sql,context);
                     Instant finalNow=now(sql);
-                    LoginProof.unexpired(context.localDeadline(),finalNow);
+                    localLive(context.localDeadline(),finalNow);
                     CodeConfirmation.fresh(anchor.startedAt(),deadline,finalNow);
                     LoginProof.unexpired(anchor.write().expiresAt(),finalNow);
                     return CodeConfirmation.Outcome.denied();
@@ -157,6 +159,7 @@ public final class PostgresCodeConfirmationStore implements CodeConfirmationStor
     private byte[] binding(String key,LoginProof.Resolve c){return intents.confirmationHash(key,"armoney-confirmation-binding-v1",c.codeDigest(),c.codeKeyId(),c.issuer(),c.subject(),c.clientId(),c.userSessionId());}
     private byte[] business(String key,UUID intent,String actor,LoginProof.Resolve c){return intents.confirmationHash(key,"armoney-code-confirmation-v1",actor,intent.toString(),c.codeDigest(),c.codeKeyId(),c.issuer(),c.subject(),c.clientId(),c.userSessionId());}
     private static void same(byte[] a,byte[] b){if(a==null||b==null||!MessageDigest.isEqual(a,b))throw new LoginProof.Failure(Error.CONFLICT);}
+    private static void localLive(Instant deadline,Instant checked){if(deadline==null||!checked.isBefore(deadline))throw CodeConfirmation.unavailable();}
     private static Instant now(DSLContext sql){return sql.fetchOne("select clock_timestamp()").get(0,OffsetDateTime.class).toInstant();}
     private static Instant time(Record row,String field){return row.get(field,OffsetDateTime.class).toInstant();}
     private static long count(DSLContext sql,String table){return sql.fetchOne("select count(*) from "+table).get(0,Long.class);}

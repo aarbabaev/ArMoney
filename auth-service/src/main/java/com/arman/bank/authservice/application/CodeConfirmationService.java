@@ -12,6 +12,8 @@ public final class CodeConfirmationService {
     public CodeConfirmation.Outcome confirm(String actor,LoginProof.Resolve code){
         return store.inRequest(actor,request->{
             var admission=request.admit(code);
+            // A cancellation arriving after acknowledged admission COMMIT must never start remote work.
+            if(Thread.currentThread().isInterrupted())throw CodeConfirmation.unavailable();
             var facts=observations.observe(admission.binding(),admission.startedAt());
             // A committed denial is a VALUE; a future HTTP adapter converts it only after this returns.
             return request.complete(admission,facts);

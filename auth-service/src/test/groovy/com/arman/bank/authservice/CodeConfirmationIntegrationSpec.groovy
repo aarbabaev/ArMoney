@@ -137,10 +137,20 @@ class CodeConfirmationIntegrationSpec extends Specification {
         then:thrown(AuthFailure)
         where:flag << [false,true]
     }
+    static String replaceReceiptChallenge(){
+        // Replacement preserves all candidate/enrollment/purpose/version composite FKs.
+        // The original receipt now references an EXPIRED challenge, so consumed evidence is genuinely absent.
+        '''with replacement as (
+            insert into verification_challenges(id,enrollment_id,purpose,contact_version,state,digest_key_id,created_at,expires_at,resend_at,candidate_id)
+            select gen_random_uuid(),c.enrollment_id,c.purpose,c.contact_version,'EXPIRED',c.digest_key_id,c.created_at,c.expires_at,c.resend_at,c.candidate_id
+            from verification_challenges c where c.id in(select challenge_id from verification_receipts)
+            returning id,candidate_id)
+        update verification_receipts r set challenge_id=replacement.id from replacement where r.candidate_id=replacement.candidate_id'''
+    }
     void breakLocal(String kind){
         database.transaction{sql->
             switch(kind){
-                case 'receipt':sql.execute('update verification_receipts set contact_version=contact_version+1');break
+                case 'receipt':assert sql.execute(replaceReceiptChallenge())==2;break
                 case 'challenge':sql.execute("update verification_challenges set state='EXPIRED' where state='CONSUMED'");break
                 case 'recovery':sql.execute('update auth_verification_projection_tombstones set recovery_barrier=true');break
                 case 'ack':sql.execute("update auth_verification_projection_tombstones set payload_hash=repeat('f',64)");break
@@ -177,7 +187,7 @@ class CodeConfirmationIntegrationSpec extends Specification {
         when:
         confirmer(core,{binding,start->
             def statement=blocker.createStatement()
-            try{assert statement.executeUpdate('update verification_receipts set contact_version=contact_version+1')==2}finally{statement.close()}
+            try{assert statement.executeUpdate(replaceReceiptChallenge())==2}finally{statement.close()}
             released=executor.submit({
                 long limit=System.nanoTime()+TimeUnit.SECONDS.toNanos(3)
                 try{
