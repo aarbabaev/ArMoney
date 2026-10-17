@@ -1144,8 +1144,8 @@ no-proxy routing and owned-client closure. These runs use synthetic provider pee
 An explicit default-off resource factory now composes the three handlers, shared
 stores/materials, owned observer and one cleanup worker; the focused 36650b8 run
 passed 926 tests, including configuration and resource lifecycle cases. Optional
-default-off Main registration now exists in source; its new actual-Main process
-tests are unrun. Provider integration and activation remain unimplemented. See the
+default-off Main registration passed the focused 30bd727 run: 924 tests, including
+five actual-Main process cases. Provider integration and activation remain unimplemented. See the
 [configuration contract](auth-service/CODE-INTENT-CONFIGURATION.md).
 
 ## Disabled verification projection plumbing
