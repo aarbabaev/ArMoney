@@ -11,7 +11,7 @@ COPY sso-service/provider/src/ ./sso-service/provider/src/
 COPY sso-service/themes/armoney/login/ ./sso-service/themes/armoney/login/
 COPY sso-service/provider/acceptance-fixture/build.gradle sso-service/provider/acceptance-fixture/settings.gradle sso-service/provider/acceptance-fixture/Dockerfile.code-intent ./sso-service/provider/acceptance-fixture/
 COPY sso-service/provider/acceptance-fixture/src/ ./sso-service/provider/acceptance-fixture/src/
-RUN printf '%s\n' 'com.arman.bank.sso.fixture.VisibilityLoginProtocolFactory' > sso-service/provider/acceptance-fixture/src/main/resources/META-INF/services/org.keycloak.protocol.LoginProtocolFactory \
+RUN printf '%s\n' 'com.arman.bank.sso.CodeIntentFixtureLoginProtocolFactory' > sso-service/provider/acceptance-fixture/src/main/resources/META-INF/services/org.keycloak.protocol.LoginProtocolFactory \
     && printf '%s\n' 'com.arman.bank.sso.CodeIntentFixtureResourceFactory' > sso-service/provider/acceptance-fixture/src/main/resources/META-INF/services/org.keycloak.services.resource.RealmResourceProviderFactory \
     && printf '%s\n' 'com.arman.bank.sso.CodeIntentFixtureActionFactory' > sso-service/provider/acceptance-fixture/src/main/resources/META-INF/services/org.keycloak.authentication.RequiredActionFactory \
     && printf '%s\n' 'parent=armoney' > sso-service/provider/acceptance-fixture/src/main/resources/theme/armoney-code-intent-fixture/login/theme.properties \
