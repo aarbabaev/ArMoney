@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * receivers fed by real delivery worker/transport and real OTP consume. User ACK comes from
  * actual isolated UserMain/PG over HTTP. No seeded authority/receipt/grant, fabricated ACK,
  * Keycloak/password/SMTP/TLS/carrier acceptance or session authorization is claimed. */
+@com.arman.bank.authservice.RequireAcceptanceExecution
 class CodeIntentRegistrationReadinessIntegrationSpec extends Specification {
     static final String ISSUER='https://issuer.example/sso/realms/armoney'
     static final String WRITER='readiness-fixture'
