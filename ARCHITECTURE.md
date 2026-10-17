@@ -1137,8 +1137,10 @@ independent QA and security verified source binding and retained results. Full r
 checks and Compose acceptance remain pending. Lookup and confirmation HTTP adapters
 now exist through explicit construction, with strict directional authentication and
 one owning admission scope; their new route, PostgreSQL HTTP and test-only process
-tests are uncompiled/unrun. Main registration, production observer transport,
-configuration wiring, provider integration and activation remain unimplemented. See the
+tests are uncompiled/unrun. A separate fixed-path twelve-field observer transport
+also exists as uncompiled source, with explicit no-proxy routing and owned-client
+closure. Main registration, configuration wiring, provider integration and activation
+remain unimplemented. See the
 [configuration contract](auth-service/CODE-INTENT-CONFIGURATION.md).
 
 ## Disabled verification projection plumbing
