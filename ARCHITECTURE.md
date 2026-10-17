@@ -1388,3 +1388,22 @@ establish Auth confirmation, code redemption, clock-rate assumptions or
 production deployment. See the provider README and scoped frozen contract in
 [PR #85](https://github.com/aarbabaev/ArMoney/pull/85); clock-rate assumptions and
 all activation gates remain explicit.
+
+### Unwired code-intent configuration validation
+
+The provider contains a pure configuration parser for the scoped managed code-intent
+flow. It validates explicit issuer/client pairs, disabled-by-default settings and
+locally supplied credential/key material without allocating network or database
+resources. It is not wired into production factories; existing SPI registrations,
+transports and token hooks remain unchanged. Auth-only dependencies, remote public
+client models and deployment state are outside this parser's validation boundary.
+At `89a7404`, isolated Java 21 compilation and eight focused configuration tests
+passed with zero failures, errors or skips; confirmation and activation remain
+gated. See the provider README for the exact source scope and limitations.
+
+The provider also contains an unwired invocation-owned deadline utility. At
+34a1537855f551ed269d49f1c3bf8177bcc15796, eight deterministic deadline tests and
+eight configuration tests passed with zero failures, errors or skips; independent
+review verified retained results and source provenance. Existing transports and
+hooks do not consume this utility. Aggregate transport integration and physical
+DNS/HTTP termination remain unproven; these tests do not authorize activation.

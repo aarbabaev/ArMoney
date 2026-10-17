@@ -58,6 +58,58 @@ These results apply to that source revision. After integration of main's dormant
 proof-wire corrections, fresh combined-head CI remains required before approval.
 ## Private auth wire
 
+### Unwired code-intent configuration
+
+`CodeIntentConfiguration` is a pure explicit-Map parser; no factory calls it and
+it allocates no HTTP/DB resources. `ARMONEY_LOGIN_PROOF_ENABLED` defaults false
+and accepts only lowercase `true`/`false`. Shared managed/legacy pair variables
+use exact `{issuer, client_id}` JSON objects, at most16 pairs/16KiB per array;
+supplied dormant arrays still receive strict validation. Enabled scope is the
+single configured issuer and existing public verification-client subset.
+Unknown/overlapping pairs deny; mixed-subject routing remains unsupported.
+Actual public-client models must still be checked by future runtime consumers.
+
+Enabled parsing requires separate write/confirm/lookup credentials, the existing
+private bridge base, writer/actor and code-key-ID configuration. Constructor-held
+code material is supplied separately under its configured key ID (32 bytes),
+along with all other locally held current/retained secrets for inequality checks;
+no new code-key environment aliases are introduced. Callers must supply their
+complete locally known material inventory. Raw and canonical-base64-decoded
+aliases reject. Auth-only dependency flags, databases, migrations, retention/AEAD
+keys and remote model/deployment state are not inspected by this provider parser.
+No secrets are imported merely to compare them. Configuration is not wired,
+stage/lookup/confirmation transport remains unimplemented, and no SPI registration
+or production enablement changes.
+
+At source revision 89a74046a1168d14ce0140447553c0264d4c256e, the isolated Java 21
+run compiled all provider production/test sources and passed eight filtered
+CodeIntentConfigurationTest cases with zero failures, errors or skips. Independent
+review verified retained XML, source/archive hashes and recorded cleanup; the
+original orchestrator separately verified no owned containers, volumes or networks
+remained. This focused run does not establish full provider check, packaging,
+required PR CI, runtime wiring or activation. The URI error-redaction and Unicode
+space findings are verified only within this unwired parser scope.
+
+### Unwired invocation deadline
+
+`InvocationDeadline` provides one fixed four-second monotonic budget, started
+before serialization/DNS by a future consumer. It owns only explicitly registered
+exchange futures/body cancellation hooks; completed registrations detach without
+renewing the budget. Expiry, backward elapsed time or close terminally cancels
+owned resources, including late registrations. Cancellation callbacks run outside
+the ownership monitor. The utility creates no executor, thread, scheduler, HTTP
+client or database resource. Existing `DeadlineHttp`, `ProofClient`, token hooks
+and SPI registrations are unchanged.
+
+At source `34a153`, the isolated focused check actually passed eight deadline
+tests and eight configuration tests: 16 tests across two suites, zero failures,
+errors or skips. Independent review verified retained XML and source/archive
+matching. Evidence prefix:
+`D:/ArMoneyDockerRecovery/2026-10-17/auth-code-confirmation/armoney-sso-deadline-8cf71eb6f45b40578c40c7513349a3f0`.
+These deterministic tests do not establish physical DNS/HTTP termination or a
+runtime aggregate lookup/confirmation deadline. Consumer integration and
+exact-head required CI remain unproven; no production activation follows.
+
 ### Default-off code-session observation
 
 `POST /realms/{realm}/armoney-status/code-session` is a separate source-level
