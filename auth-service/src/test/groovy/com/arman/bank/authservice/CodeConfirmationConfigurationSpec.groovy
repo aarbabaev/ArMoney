@@ -10,6 +10,7 @@ class CodeConfirmationConfigurationSpec extends Specification {
     static Map environment(){
         def env=CodeIntentConfigurationSpec.environment()+[
             AUTH_SSO_CODE_INTENT_CONFIRMATION_ENABLED:'true',
+            SSO_LOGIN_PROOF_RETENTION_KEY:CodeIntentConfigurationSpec.encoded(17),
             SSO_LOGIN_PROOF_CONFIRM_KEY:'synthetic-distinct-confirmation-key-material',
             SSO_CODE_INTENT_LOOKUP_KEY:'synthetic-distinct-lookup-key-material',
             SSO_VERIFICATION_CLIENT_IDS:'armoney-web,armoney-ios',
@@ -179,4 +180,61 @@ class CodeConfirmationConfigurationSpec extends Specification {
         def trace=new StringWriter();rejected.printStackTrace(new PrintWriter(trace))
         !trace.toString().contains(secret);!trace.toString().contains('https://user:')
     }
+    static byte[] proofRetention(CodeConfirmationConfiguration configuration){
+        def getter=CodeConfirmationConfiguration.getDeclaredMethod('proofRetentionKey');getter.accessible=true
+        (byte[])getter.invoke(configuration)
+    }
+    def 'enabled C2 requires independent original V7 recipient key even when historical bridge is off'(){
+        given:def env=environment();env.remove('SSO_LOGIN_PROOF_RETENTION_KEY')
+        when:new CodeConfirmationConfiguration(env)
+        then:def rejected=thrown(IllegalArgumentException);rejected.message=='Invalid code confirmation configuration';rejected.cause==null
+        when:def selected=new CodeConfirmationConfiguration(environment())
+        then:selected.enabled;Arrays.equals(proofRetention(selected),([17]*32) as byte[])
+    }
+    def 'proof recipient key rejects malformed noncanonical and wrong decoded lengths without leaking input'(){
+        when:new CodeConfirmationConfiguration(environment()+[SSO_LOGIN_PROOF_RETENTION_KEY:value])
+        then:def rejected=thrown(IllegalArgumentException);rejected.message=='Invalid code confirmation configuration';rejected.cause==null
+        where:value << [null,'','secret-marker-not-base64',Base64.encoder.encodeToString(new byte[31]),Base64.encoder.encodeToString(new byte[33]),
+            Base64.encoder.withoutPadding().encodeToString(new byte[32]),('A'*42)+'B=',CodeIntentConfigurationSpec.encoded(17)+'\n']
+    }
+    def 'proof recipient key must differ from every local secret role #name including retained aliases'(){
+        given:
+        def env=environment();String key=env.SSO_LOGIN_PROOF_RETENTION_KEY
+        env[name]=name.endsWith('_PREVIOUS_KEYS')?'retained:'+key:key
+        when:new CodeConfirmationConfiguration(env)
+        then:def rejected=thrown(IllegalArgumentException);rejected.message=='Invalid code confirmation configuration';rejected.cause==null
+        where:name << ['SSO_LOGIN_PROOF_CONFIRM_KEY','SSO_CODE_INTENT_LOOKUP_KEY','SSO_LOGIN_PROOF_WRITE_KEY','SSO_LOGIN_PROOF_RESOLVE_KEY',
+            'AUTH_TO_SSO_STATUS_KEY','SSO_VERIFICATION_BRIDGE_KEY','SSO_CLIENT_SECRET','INTERNAL_AUTH_KEY','INTERNAL_METRICS_KEY',
+            'ARMONEY_PROVIDER_BINDING_KEY','SSO_LOGIN_CODE_HMAC_KEY','SSO_MIGRATION_PROOF_WRITE_KEY','MAILTRAP_SMTP_PASSWORD',
+            'AUTH_VERIFICATION_AUTHORITY_RETENTION_KEY','VERIFICATION_OTP_HMAC_KEY','VERIFICATION_DELIVERY_ENCRYPTION_KEY',
+            'AUTH_TO_USER_VERIFICATION_PROJECTION_KEY','AUTH_VERIFICATION_PROJECTION_RETENTION_KEY',
+            'SSO_LOGIN_PROOF_RETENTION_HMAC_KEY','SSO_CODE_INTENT_DETAIL_ENCRYPTION_KEY',
+            'SSO_LOGIN_PROOF_RETENTION_HMAC_PREVIOUS_KEYS','SSO_CODE_INTENT_DETAIL_ENCRYPTION_PREVIOUS_KEYS']
+    }
+    def 'proof recipient key compares raw and encoded injected aliases without modifying caller material'(){
+        given:
+        byte[] material=encoded?Base64.encoder.encode(('q'*32).bytes):('q'*32).bytes
+        byte[] frozen=material.clone()
+        def env=environment()+[SSO_LOGIN_PROOF_RETENTION_KEY:Base64.encoder.encodeToString(('q'*32).bytes)]
+        when:new CodeConfirmationConfiguration(env,['local-owner-material':material])
+        then:def rejected=thrown(IllegalArgumentException);rejected.message=='Invalid code confirmation configuration';rejected.cause==null
+        Arrays.equals(material,frozen)
+        where:encoded << [false,true]
+    }
+    def 'proof recipient key also rejects raw alias in an independent configured secret role'(){
+        given:def env=environment()+[SSO_LOGIN_PROOF_RETENTION_KEY:Base64.encoder.encodeToString(('q'*32).bytes),SSO_CLIENT_SECRET:'q'*32]
+        when:new CodeConfirmationConfiguration(env)
+        then:def rejected=thrown(IllegalArgumentException);rejected.message=='Invalid code confirmation configuration';rejected.cause==null
+    }
+    def 'proof recipient getter returns original parsed bytes through fresh independent clones'(){
+        given:def config=new CodeConfirmationConfiguration(environment());byte[] first=proofRetention(config);byte[] second=proofRetention(config)
+        expect:!first.is(second);Arrays.equals(first,second)
+        when:first[0]=0;second[1]=0
+        then:Arrays.equals(proofRetention(config),([17]*32) as byte[]);config.toString()=='CodeConfirmationConfiguration[redacted]'
+    }
+    def 'unselected C2 with legacy off needs no recipient key and allocates no observer'(){
+        given:def config=new CodeConfirmationConfiguration([AUTH_SSO_CODE_INTENT_CONFIRMATION_ENABLED:'false',SSO_LOGIN_PROOF_RETENTION_KEY:'dormant-unselected-value'])
+        expect:!config.enabled;com.arman.bank.authservice.infrastructure.HttpCodeSessionObservations.open(config).isEmpty()
+    }
+
 }

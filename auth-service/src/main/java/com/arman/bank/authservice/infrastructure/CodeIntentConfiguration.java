@@ -58,6 +58,12 @@ public final class CodeIntentConfiguration {
             values(environment,"SSO_CODE_INTENT_CODE_KEY_IDS"),values(environment,"SSO_CODE_INTENT_ACTORS"));
         if(!policy.writers().contains(actor))throw new IllegalArgumentException("Stage actor outside configured scope");
     }
+    // Validated immutable components for the C2 owner; does not open a second standalone resource bundle.
+    LoginProof.Policy policy(){requireEnabled();return policy;}
+    CodeIntentRetentionKeys retentionKeys(){requireEnabled();return keys;}
+    CodeIntentDetailCrypto detailCrypto(){requireEnabled();return crypto;}
+    String stageCredential(){requireEnabled();return writeKey;}
+    private void requireEnabled(){if(!enabled)throw new IllegalArgumentException("Code intent configuration unavailable");}
     public Optional<Resources> open(Database database){
         if(!enabled)return Optional.empty();
         var store=new PostgresCodeIntentStore(Objects.requireNonNull(database),policy,keys,crypto);

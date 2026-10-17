@@ -1134,9 +1134,18 @@ application/storage core and an unpublished V13 migration exist in source, with
 independent source review. At 72564fd, 798 unit tests and 70 selected PostgreSQL
 tests passed, including confirmation, original-key lookup and seven upgrade cases;
 independent QA and security verified source binding and retained results. Full required
-checks and Compose acceptance remain pending. Lookup and
-confirmation HTTP adapters, observer transport, configuration wiring and activation
-remain unimplemented. See the
+checks and Compose acceptance remain pending. Lookup and confirmation HTTP adapters
+now exist through explicit construction, with strict directional authentication and
+one owning admission scope; their new route, PostgreSQL HTTP and test-only process
+tests passed in the focused c5d9392 run (857 tests including nine HTTP/PG and ten
+test-only process cases). A separate fixed-path twelve-field observer transport
+passed its bb3797c focused run (894 tests including 16 HTTP/PG cases), with explicit
+no-proxy routing and owned-client closure. These runs use synthetic provider peers;
+An explicit default-off resource factory now composes the three handlers, shared
+stores/materials, owned observer and one cleanup worker; the focused 36650b8 run
+passed 926 tests, including configuration and resource lifecycle cases. Optional
+default-off Main registration passed the focused 30bd727 run: 924 tests, including
+five actual-Main process cases. Provider integration and activation remain unimplemented. See the
 [configuration contract](auth-service/CODE-INTENT-CONFIGURATION.md).
 
 ## Disabled verification projection plumbing

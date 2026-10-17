@@ -88,6 +88,40 @@ class Classifications(unittest.TestCase):
         self.assertEqual(set(modules(result)), MODULES)
         self.assertEqual(result['bank_smoke'], 'true')
 
+    def test_user_production_build_and_resources_include_auth_process_consumer(self):
+        for path in ('user-service/src/main/java/User.java', 'user-service/build.gradle',
+                     'user-service/src/main/resources/application.properties',
+                     'user-service/src/main/resources/db/migration/V99__synthetic.sql'):
+            with self.subTest(path=path):
+                result = self.checked([path])
+                self.assertEqual(modules(result), ['auth-service', 'user-service'])
+                self.assertEqual({flag for flag in FLAGS if result[flag] == 'true'},
+                                 {'build', 'bank_smoke', 'sharding', 'sso'})
+
+    def test_user_tests_do_not_expand_to_auth_or_runtime_acceptance(self):
+        for path in ('user-service/src/test/groovy/UserIntegrationSpec.groovy',
+                     'user-service/src/test/resources/synthetic.json'):
+            with self.subTest(path=path):
+                result = self.checked([path])
+                self.assertEqual(modules(result), ['user-service'])
+                self.assertEqual({flag for flag in FLAGS if result[flag] == 'true'}, {'build'})
+
+    def test_sms_production_build_and_resources_include_auth_process_consumer(self):
+        for path in ('sms-sandbox/src/main/java/Sms.java', 'sms-sandbox/build.gradle',
+                     'sms-sandbox/src/main/resources/application.properties'):
+            with self.subTest(path=path):
+                result = self.checked([path])
+                self.assertEqual(modules(result), ['auth-service', 'sms-sandbox'])
+                self.assertEqual({flag for flag in FLAGS if result[flag] == 'true'}, {'build', 'sms'})
+
+    def test_sms_tests_do_not_expand_to_auth_or_runtime_acceptance(self):
+        for path in ('sms-sandbox/src/test/groovy/SmsSpec.groovy',
+                     'sms-sandbox/src/test/resources/synthetic.json'):
+            with self.subTest(path=path):
+                result = self.checked([path])
+                self.assertEqual(modules(result), ['sms-sandbox'])
+                self.assertEqual({flag for flag in FLAGS if result[flag] == 'true'}, {'build'})
+
     def test_payment_local_build_runs_only_payment_checks_and_linked_acceptance(self):
         result = self.checked(['payment-service/build.gradle'])
         self.assertEqual(modules(result), ['payment-service'])

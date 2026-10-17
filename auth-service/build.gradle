@@ -6,4 +6,6 @@ dependencies {
 dependencies { testImplementation 'org.apache.groovy:groovy-json:4.0.29' }
 dependencies { testImplementation 'org.flywaydb:flyway-core:11.13.2' }
 // Process acceptance launches the actual AuthMain distribution, never a substitute server.
-tasks.named('integrationTest') { dependsOn tasks.named('installDist') }
+// Registration-readiness acceptance uses real isolated UserMain and SMS sandbox processes.
+// Task-only fixture dependencies add no service classes to Auth's runtime or test classpath.
+tasks.named('integrationTest') { dependsOn tasks.named('installDist'), ':user-service:installDist', ':sms-sandbox:installDist' }
