@@ -1363,6 +1363,7 @@ rollback. Independent QA and security bound the result to the fixture artifacts
 and verified cleanup. Production positive-proof hooks remain unregistered;
 the precommit recording/postcommit authority contract remains an activation gate.
 See [the proof design](sso-service/provider/LOGIN-PROOF-DESIGN.md#first-login-transaction-visibility-gate-sso-vis-001).
+
 ### Default-off client-session observer follow-up
 
 The provider source adds private `armoney-status/code-session`, separately gated
@@ -1376,12 +1377,19 @@ not Auth receipts/projection/ACTIVE authority.
 Null adapter-local persistence state requires an independent exact durable online
 realm/session/subject LOGGED_IN tuple from Keycloak's session persister; explicit
 TRANSIENT and unavailable/mismatched provenance deny. That follow-up passed
-65 local provider tests across 13 suites; real two-node verification remains
-pending. No failure cause or successful activation is
-inferred from the earlier BASELINE failure.
+65 local provider tests across 13 suites. The isolated two-node acceptance at
+`c8a8ddab6d9e91efca1c1e4823b4b86fe025557c` passed in 270.469 seconds on
+2026-10-17 (Dubai), with independently matched source/archive/JAR evidence and
+verified owned-resource cleanup. It covered the strict twelve-field baseline,
+HTTP boundaries, foreign binding, confidential client, disabled user, explicit
+null-contact readback/restoration, session deletion and policy expiry. The
+disposable fixture uses `compose.sso-code-session.yaml` and
+`scripts/run-sso-code-session.sh`; production activation remains default-off.
+No cause is inferred for the earlier BASELINE or NULL_CONTACT failures.
 Earlier local provider checks passed
 64 tests across 13 suites, independently bound to unchanged source and packaged
-SPI evidence. Two-node runtime acceptance and exact-head required CI remain
-pending. See the provider README and scoped frozen contract in
+SPI evidence. Exact-head required CI remains pending. This acceptance does not
+establish Auth confirmation, code redemption, clock-rate assumptions or
+production deployment. See the provider README and scoped frozen contract in
 [PR #85](https://github.com/aarbabaev/ArMoney/pull/85); clock-rate assumptions and
 all activation gates remain explicit.

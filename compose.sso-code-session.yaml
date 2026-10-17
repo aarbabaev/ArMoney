@@ -1,0 +1,108 @@
+# Disposable test topology only. No host ports, external networks or persistent volumes.
+# The orchestrator supplies independent synthetic credentials and owns lifecycle/cleanup.
+x-provider: &provider
+  image: ${OBSERVER_ACCEPTANCE_IMAGE:?Lifecycle runner must assign a unique acceptance image}
+  build:
+    context: .
+    dockerfile: sso-service/provider/acceptance-fixture/Dockerfile.visibility
+  command: ["start", "--optimized", "--cache-stack=jdbc-ping"]
+  environment: &provider-env
+    KC_DB: postgres
+    KC_DB_URL: jdbc:postgresql://observer-db:5432/keycloak
+    KC_DB_USERNAME: keycloak
+    KC_DB_PASSWORD: ${OBSERVER_DB_PASSWORD:?Supply disposable database password}
+    KC_HTTP_ENABLED: "true"
+    KC_HOSTNAME: http://sso-a:8080
+    KC_BOOTSTRAP_ADMIN_USERNAME: admin
+    KC_BOOTSTRAP_ADMIN_PASSWORD: ${SSO_ADMIN_PASSWORD:?Supply disposable admin password}
+    ARMONEY_VERIFICATION_ENABLED: "true"
+    ARMONEY_AUTH_BRIDGE_URL: http://auth-service:8090
+    SSO_VERIFICATION_BRIDGE_KEY: ${SSO_VERIFICATION_BRIDGE_KEY:?Supply independent synthetic bridge key}
+    ARMONEY_PROVIDER_BINDING_KEY: ${ARMONEY_PROVIDER_BINDING_KEY:?Supply independent synthetic binding key}
+    AUTH_TO_SSO_STATUS_KEY: ${AUTH_TO_SSO_STATUS_KEY:?Supply independent synthetic observer key}
+    ARMONEY_VISIBILITY_CONTROL_KEY: ${ARMONEY_VISIBILITY_CONTROL_KEY:?Supply independent visibility control key}
+    OBSERVER_FIXTURE_ENABLED: "true"
+    OBSERVER_FIXTURE_CONTROL_KEY: ${OBSERVER_FIXTURE_CONTROL_KEY:?Supply independent synthetic fixture key}
+  depends_on:
+    observer-db:
+      condition: service_healthy
+    auth-service:
+      condition: service_started
+  networks: [observer]
+
+x-test-env: &test-env
+  CI: "true"
+  OBSERVER_ACCEPTANCE_ISOLATED: "true"
+  VISIBILITY_ACCEPTANCE_ISOLATED: "true"
+  CODE_SESSION_ACCEPTANCE_ISOLATED: "true"
+  VISIBILITY_NODE_A_URL: http://sso-a:8080
+  VISIBILITY_NODE_B_URL: http://sso-b:8080
+  VISIBILITY_ADMIN_URL: http://sso-a:8080
+  ARMONEY_VISIBILITY_CONTROL_KEY: ${ARMONEY_VISIBILITY_CONTROL_KEY:?Supply independent visibility control key}
+  OBSERVER_NODE_A_URL: http://sso-a:8080
+  OBSERVER_NODE_B_URL: http://sso-b:8080
+  OBSERVER_ISSUER: http://sso-a:8080/realms/armoney
+  OBSERVER_ADMIN_URL: http://sso-a:8080
+  SSO_ADMIN_PASSWORD: ${SSO_ADMIN_PASSWORD:?Supply disposable admin password}
+  OBSERVER_BRIDGE_URL: http://auth-service:8090
+  OBSERVER_BRIDGE_BIND: 0.0.0.0
+  OBSERVER_BRIDGE_PORT: "8090"
+  SSO_VERIFICATION_BRIDGE_KEY: ${SSO_VERIFICATION_BRIDGE_KEY:?Supply independent synthetic bridge key}
+  AUTH_TO_SSO_STATUS_KEY: ${AUTH_TO_SSO_STATUS_KEY:?Supply independent synthetic observer key}
+  ARMONEY_PROVIDER_BINDING_KEY: ${ARMONEY_PROVIDER_BINDING_KEY:?Supply independent synthetic binding key}
+  OBSERVER_FIXTURE_CONTROL_KEY: ${OBSERVER_FIXTURE_CONTROL_KEY:?Supply independent synthetic fixture key}
+
+services:
+  observer-db:
+    image: postgres:17.6-alpine
+    tmpfs:
+      - /var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${OBSERVER_DB_PASSWORD:?Supply disposable database password}
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "keycloak", "-d", "keycloak"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    networks: [observer]
+  sso-a:
+    <<: *provider
+    environment:
+      <<: *provider-env
+      KC_NODE_NAME: observer-a
+      ARMONEY_CODE_SESSION_OBSERVATION_ENABLED: "false"
+  sso-b:
+    <<: *provider
+    environment:
+      <<: *provider-env
+      KC_NODE_NAME: observer-b
+      ARMONEY_CODE_SESSION_OBSERVATION_ENABLED: "true"
+    depends_on:
+      observer-db:
+        condition: service_healthy
+      sso-a:
+        condition: service_started
+      auth-service:
+        condition: service_started
+  auth-service:
+    image: python:3.13-slim
+    command: ["python", "/acceptance/sso-provider-acceptance.py", "bridge"]
+    environment: *test-env
+    volumes:
+      - ./scripts/sso-provider-acceptance.py:/acceptance/sso-provider-acceptance.py:ro
+    networks: [observer]
+  acceptance:
+    image: mcr.microsoft.com/playwright/python:v1.55.0-noble
+    profiles: [acceptance]
+    command: ["bash", "-euc", "pip install --disable-pip-version-check playwright==1.55.0 && python /acceptance/sso-code-session-acceptance.py"]
+    environment: *test-env
+    volumes:
+      - ./scripts/sso-provider-acceptance.py:/acceptance/sso-provider-acceptance.py:ro
+      - ./scripts/sso-session-visibility-acceptance.py:/acceptance/sso-session-visibility-acceptance.py:ro
+      - ./scripts/sso-code-session-acceptance.py:/acceptance/sso-code-session-acceptance.py:ro
+    networks: [observer]
+
+networks:
+  observer: {}
