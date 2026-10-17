@@ -180,18 +180,40 @@ class CodeConfirmationIntegrationSpec extends Specification {
     def 'receipt mutation committed while completion waits on its row lock cannot commit stale negative'(){
         given:
         eligible();def input=command();def core=confirmations(staged(input));def original=row('verification_authorities')
+        // Commit replacement challenge FK checks before the blocker phase. Original receipts remain valid here.
+        def replacements=database.transaction{sql->sql.fetch("""insert into verification_challenges
+            (id,enrollment_id,purpose,contact_version,state,digest_key_id,created_at,expires_at,resend_at,candidate_id)
+            select gen_random_uuid(),c.enrollment_id,c.purpose,c.contact_version,'EXPIRED',c.digest_key_id,c.created_at,c.expires_at,c.resend_at,c.candidate_id
+            from verification_challenges c where c.id in(select challenge_id from verification_receipts)
+            returning id,candidate_id""").intoMaps()}
+        assert replacements.size()==2
         def blocker=java.sql.DriverManager.getConnection(postgres.jdbcUrl,postgres.username,postgres.password)
         blocker.autoCommit=false
         def executor=Executors.newSingleThreadExecutor();def waited=new java.util.concurrent.atomic.AtomicBoolean()
         Future released=null
+        Throwable coreFailure=null
+        Throwable blockerFailure=null
+        def outcome=null
+        def lastWait=new java.util.concurrent.atomic.AtomicReference<String>('NONE')
         when:
-        confirmer(core,{binding,start->
-            def statement=blocker.createStatement()
-            try{assert statement.executeUpdate(replaceReceiptChallenge())==2}finally{statement.close()}
+        try{outcome=confirmer(core,{binding,start->
+            // Only receipt association UPDATE locks remain; no enrollment/candidate INSERT FK locks hide the intended wait.
+            def statement=blocker.prepareStatement('update verification_receipts set challenge_id=? where candidate_id=?')
+            try{replacements.each{replacement->
+                statement.setObject(1,replacement.id);statement.setObject(2,replacement.candidate_id)
+                assert statement.executeUpdate()==1
+            }}finally{statement.close()}
             released=executor.submit({
                 long limit=System.nanoTime()+TimeUnit.SECONDS.toNanos(3)
                 try{
-                    while(!database.transaction{sql->sql.fetchOne("select exists(select 1 from pg_stat_activity where datname=current_database() and wait_event='transactionid' and query like '%verification_receipts%')").get(0,Boolean)}){
+                    while(!database.transaction{sql->
+                        def waits=sql.fetch("""select case when query like '%verification_receipts%' then 'RECEIPT'
+                            when query like '%verification_authorities%' then 'AUTHORITY'
+                            when query like '%verification_candidates%' then 'CANDIDATE' else 'OTHER' end as phase
+                            from pg_stat_activity where datname=current_database() and wait_event='transactionid'""").getValues('phase',String)
+                        if(!waits.isEmpty())lastWait.set(waits.join(','))
+                        waits.contains('RECEIPT')
+                    }){
                         assert System.nanoTime()<limit:'completion never waited for actual receipt transaction lock'
                         Thread.sleep(10)
                     }
@@ -199,10 +221,23 @@ class CodeConfirmationIntegrationSpec extends Specification {
                 }finally{blocker.rollback()}
             } as Callable)
             committedFacts(binding,false)
-        }).confirm(WRITER,lookup(input))
-        then:def invalid=thrown(L.Failure);invalid.error()==L.Error.CONFLICT
-        when:released.get(5,TimeUnit.SECONDS)
-        then:waited.get();row('verification_authorities')==original;count('sso_code_confirmation_anchors')==1
+        }).confirm(WRITER,lookup(input))}catch(Throwable failed){coreFailure=failed}
+        // Always observe synchronization and committed receipt state BEFORE any expected-denial assertion.
+        try{assert released!=null;released.get(5,TimeUnit.SECONDS)}catch(Throwable failed){blockerFailure=failed}
+        def receiptState=database.transaction{sql->sql.fetchOne("""select count(*) as receipts,
+            count(*) filter(where c.state='CONSUMED') as consumed,count(*) filter(where c.state='EXPIRED') as expired
+            from verification_receipts r join verification_challenges c on c.id=r.challenge_id""").intoMap()}
+        def diagnostic=[coreFailure:coreFailure?.getClass()?.simpleName,blockerFailure:blockerFailure?.getClass()?.simpleName,
+            blockerCause:blockerFailure?.cause?.getClass()?.simpleName,waited:waited.get(),lastWait:lastWait.get(),
+            outcomeDenied:outcome?.deniedCommitted(),receipts:receiptState]
+        println('receipt-lock-fixture '+diagnostic)
+        then:
+        assert blockerFailure==null:diagnostic
+        assert waited.get():diagnostic
+        assert receiptState.receipts==2&&receiptState.expired==2&&receiptState.consumed==0:diagnostic
+        assert coreFailure instanceof L.Failure:diagnostic
+        coreFailure.error()==L.Error.CONFLICT
+        row('verification_authorities')==original;count('sso_code_confirmation_anchors')==1
         count('sso_login_proofs')==0;count('sso_code_confirmation_results')==0;count('sso_login_events')==0
         cleanup:executor.shutdownNow();blocker?.close()
     }
