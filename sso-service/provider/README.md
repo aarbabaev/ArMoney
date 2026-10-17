@@ -33,7 +33,78 @@ Its standalone settings avoid changing the root service dependency graph.
   These are observations, never OTP receipts or eligibility proof. Auth must
   compare them to its own verified candidate versions/epoch on all entry paths.
 
+## Live enrollment observation and disabled accounts
+
+The separate enrollment observer keeps its exact twelve-field response. An
+existing disabled account may return `enabled: false` and `authentication_session_active: true`
+only after the current server flow, issuer, subject, client, HMAC binding,
+canonical contacts and original deadline all validate. Missing/deleted users or
+flows, expiry and binding failures remain unavailable; no negative session fact
+is inferred from absence. Responses remain `no-store`.
+
+Auth's status-only consumer can use this negative observation to invalidate
+eligibility. Positive enrollment/proof consumers still require both flags true.
+This does not establish ACTIVE enrollment, create a banking session or activate
+registration. On 2026-10-16, nine focused provider tests and the full provider check/package
+run (54 tests, zero failures/errors/skips; counts are not additive) passed.
+Sixteen offline diagnostic tests passed after the committed-baseline fixture fix.
+Actual pinned two-node acceptance at `85d7cbd` passed: node B returned the exact
+12-field negative observation after node A disabled the existing user, retaining
+the same live flow, bindings and future deadline; subsequent deletion returned503.
+Independent QA, security and reviewer audits verified the retained standalone
+receipt and the hosted build job117102507642 in CI38932950571.
+See [the runtime checkpoint](https://github.com/aarbabaev/ArMoney/pull/81#issuecomment-6220625685).
+These results apply to that source revision. After integration of main's dormant
+proof-wire corrections, fresh combined-head CI remains required before approval.
 ## Private auth wire
+
+### Default-off code-session observation
+
+`POST /realms/{realm}/armoney-status/code-session` is a separate source-level
+observer gated by `ARMONEY_CODE_SESSION_OBSERVATION_ENABLED` (only literal `true`
+enables it; absent/default remains false). It authenticates the independent
+`AUTH_TO_SSO_STATUS_KEY` / `X-ArMoney-Auth-Status-Key` before parsing. The existing
+eight-field status and enrollment endpoints retain their contracts.
+
+The request has exactly `issuer`, `subject`, `client_id`, `user_session_id`.
+Only enabled public clients `armoney-ios`, `armoney-android`, `armoney-web` are
+supported. Require the exact persistent online LOGGED_IN user session and its
+authenticated client membership, plus both pinned manager validity checks.
+Pinned reload adapters may have null adapter-local persistence state. Only that
+null case requires an independent exact online realm/session/subject LOGGED_IN
+row through Keycloak's own persister SPI; missing/mismatched/unavailable durable
+provenance denies. Explicit TRANSIENT always denies without that lookup. No
+durable client lazy-loading or timestamp/lifetime substitution is permitted.
+The exact response has the four bindings, `username`, `email`, `phone_number`,
+`enabled`, `user_session_active`, `client_session_active`, `observed_at` and
+`valid_until`. Contacts are canonical or explicit null; malformed/noncanonical
+email fails closed without normalization. Disabled-user negative observations
+require the same valid live binding. Positive consumers require all three flags.
+
+The deadline is the floored minimum of capture+five seconds and all finite
+user/client idle/max deadlines, with pinned remember-me/client overrides. Only
+maximum-lifespan `-1` is unbounded; idle grace is excluded. Missing, foreign,
+expired, offline, transient, unsupported or uncertain state fails closed.
+Timestamps are observations, not verification receipts, a provider lease or
+banking authority. The frozen relative Auth conversion and its equivalent-clock-
+rate assumption are described in [PR #85](https://github.com/aarbabaev/ArMoney/pull/85).
+Source review does not prove that runtime clock assumption or production safety.
+
+On 2026-10-17 (Asia/Dubai), the earlier observer source at `8af2fc9` passed provider
+`check jar --rerun-tasks`: 64 tests in
+13 suites with zero failures, errors or skips; the 11 new observer tests are
+included. Independent QA bound reports, unchanged source manifests and the JAR
+with three production SPI descriptors and no fixture classes. Two earlier failed
+runs (64/7 and 64/5) remain retained; fixes corrected strict test-model policy
+inputs and pinned Profile lifecycle without changing production checks.
+The later null-reload durable-provenance correction passed a fresh provider
+`check jar --rerun-tasks` on 2026-10-17: 65 tests across 13 suites, zero failures,
+errors or skips. Its actual two-node acceptance remains pending.
+The first isolated harness run at `fa5049f` failed at BASELINE after completed
+callback; the saved log lacked endpoint status, so that failure's cause is not
+established by source inspection. Exact-head required CI remains pending.
+No production flag, realm, route consumer, proof
+hook registration or banking eligibility is activated by this implementation.
 
 The destination is fixed by `ARMONEY_AUTH_BRIDGE_URL`: HTTPS, or the exact
 private HTTP hostname `auth-service`. No redirects; two-second connect and

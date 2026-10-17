@@ -121,21 +121,26 @@ class EmailOutboxIntegrationSpec extends Specification {
             recipient(_) >> new EmailDelivery.Recipient('owner@example.test',false)
             send(_,_) >> { c, address -> seen << address; EmailDelivery.Result.TRANSIENT_FAILURE }
         }
-        def worker=new EmailWorker(outbox,delivery,'sandbox')
+        int failures=0
+        def worker=new EmailWorker(outbox,delivery,'sandbox', { failures++; throw new IllegalStateException('synthetic observation failure') })
         when:
         worker.tick(); worker.tick()
         then:
+        failures==2
         rows().every { it.get('status')=='PENDING' && it.get('attempts')==1 && it.get('error_code')=='provider_unavailable' }
         payments.visible(alice,p.id()).get().status()=='COMPLETED'
         payments.notifications(alice).size()==1
         payments.notifications(bob).size()==1
         when:
         worker.close(); due()
-        def restarted=new EmailWorker(new PostgresEmailOutbox(db),restartDelivery,'sandbox')
+        int restartedFailures=0
+        def restarted=new EmailWorker(new PostgresEmailOutbox(db),restartDelivery,'sandbox', { restartedFailures++ })
         restarted.tick()
         then:
         0 * restartDelivery.recipient(_)
         1 * restartDelivery.send(_, 'owner@example.test') >> EmailDelivery.Result.ACCEPTED
+        restartedFailures==0
+        failures==2
         rows().count { it.get('status')=='SENT' }==1
         cleanup:
         worker?.close(); restarted?.close()

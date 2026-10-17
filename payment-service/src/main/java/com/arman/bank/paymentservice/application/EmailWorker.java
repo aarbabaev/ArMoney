@@ -7,14 +7,21 @@ public final class EmailWorker implements AutoCloseable {
     private final EmailOutbox store;
     private final EmailDelivery delivery;
     private final String mode;
+    private final Runnable failureObservation;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> new Thread(r,"email-delivery"));
     public EmailWorker(EmailOutbox store, EmailDelivery delivery, String mode) {
+        this(store, delivery, mode, () -> {});
+    }
+    public EmailWorker(EmailOutbox store, EmailDelivery delivery, String mode, Runnable failureObservation) {
         this.store=store; this.delivery=delivery; this.mode=mode;
+        this.failureObservation=java.util.Objects.requireNonNull(failureObservation);
     }
     public void start() { executor.scheduleWithFixedDelay(this::tick,0,1000,TimeUnit.MILLISECONDS); }
     public void tick() {
         if (closed.get()) return;
+        boolean failed = false;
+        boolean interrupted = false;
         try {
             var candidate=store.claim(mode);
             if (candidate.isEmpty()) return;
@@ -32,13 +39,18 @@ public final class EmailWorker implements AutoCloseable {
                 if (mode.equals("sending") && !verified) { store.finish(c,"SKIPPED","unverified_email"); return; }
                 switch (delivery.send(c,address)) {
                     case ACCEPTED -> store.finish(c,"SENT",null);
-                    case PERMANENT_FAILURE -> store.finish(c,"DEAD","provider_rejected");
-                    case RATE_LIMITED -> store.retry(c,"provider_rate_limited");
-                    case TRANSIENT_FAILURE -> store.retry(c,"provider_unavailable");
+                    case PERMANENT_FAILURE -> { failed = true; store.finish(c,"DEAD","provider_rejected"); }
+                    case RATE_LIMITED -> { failed = true; store.retry(c,"provider_rate_limited"); }
+                    case TRANSIENT_FAILURE -> { failed = true; store.retry(c,"provider_unavailable"); }
                 }
-            } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-              catch (Exception e) { store.retry(c,"dependency_unavailable"); }
-        } catch (Exception e) { System.err.println("Email delivery deferred: dependency unavailable"); }
+            } catch (InterruptedException e) { interrupted = true; Thread.currentThread().interrupt(); }
+              catch (Exception e) { failed = true; store.retry(c,"dependency_unavailable"); }
+        } catch (Exception e) { failed = true; System.err.println("Email delivery deferred: dependency unavailable"); }
+        finally {
+            if (failed && !interrupted) {
+                try { failureObservation.run(); } catch (RuntimeException ignored) { /* Observation must not affect retries. */ }
+            }
+        }
     }
     @Override public void close() {
         closed.set(true); executor.shutdownNow();

@@ -152,7 +152,7 @@ class Acceptance:
                                 text=True, timeout=40, check=False)
         require(result.returncode == 0)
 
-    def probe(self, collector, failure=False, auth=False):
+    def probe(self, collector, failure=False, auth=False, recovery_failure=False):
         # No endpoint, key or raw response enters argv/stdout. The trusted collector
         # validates/parses samples; this child emits only a finite success marker.
         source = '''import sys,os,json,datetime as dt
@@ -190,23 +190,30 @@ for target in result['targets']:
  else:
   assert target['availability']==1 and values['armoney_ready']==1
  if target['service']=='payment-service':
-  assert all((values[name] is None if FAILED else values[name]==0) for name in ('armoney_recovery_backlog','armoney_outbox_backlog'))
+  assert all((values[name] is None if FAILED else values[name]==0) for name in ('armoney_recovery_backlog','armoney_outbox_backlog','armoney_recovery_oldest_pending_age_seconds','armoney_outbox_oldest_pending_age_seconds'))
  assert values['armoney_replica_lag_seconds'] is None
- assert values['armoney_recovery_failures_total'] is None
- assert values['armoney_outbox_failures_total'] is None
+ for name in ('armoney_recovery_failures_total','armoney_outbox_failures_total'):
+  value=values[name]
+  if target['service']=='payment-service':
+   assert value is None or (type(value) is int and value>=1)
+  else:
+   assert value is None
+ if RECOVERY_FAILURE and target['service']=='payment-service':
+  value=values['armoney_recovery_failures_total']
+  assert type(value) is int and value>=1
 assert not c.fresh(result,dt.datetime.fromisoformat(result['valid_until']))
 snapshot=json.load(open('/status/metrics-status.json'))
 assert c.fresh(snapshot,dt.datetime.now(dt.timezone.utc))
 assert not c.fresh(snapshot,dt.datetime.fromisoformat(snapshot['valid_until']))
 print('PASS')
-'''.replace('FAILED', repr(failure))
+'''.replace('FAILED', repr(failure)).replace('RECOVERY_FAILURE', repr(recovery_failure))
         require(self.run('exec', '-i', collector, 'python', '-B', '-', source=source, timeout=100).strip() == 'PASS')
 
-    def wait_ready(self, collector):
+    def wait_ready(self, collector, recovery_failure=False):
         until = min(self.deadline, time.monotonic() + 180)
         while time.monotonic() < until:
             try:
-                self.probe(collector)
+                self.probe(collector, recovery_failure=True) if recovery_failure else self.probe(collector)
                 return
             except ValueError:
                 time.sleep(2)
@@ -266,7 +273,7 @@ def main():
                 cleanup = 'failed'
                 raise
         phase = 'recovery'
-        acceptance.wait_ready(collector)
+        acceptance.wait_ready(collector, recovery_failure=True)
     except (OSError, ValueError, KeyError, TypeError, AssertionError, subprocess.SubprocessError) as error:
         if failure is None:
             failure, failure_phase = error, phase

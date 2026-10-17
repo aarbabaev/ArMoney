@@ -7,3 +7,5 @@ sso-service/Dockerfile text eol=lf
 
 # Linux runner image entrypoint must also work from Windows checkouts.
 infra/local-ci/entrypoint.sh text eol=lf
+infra/ledger-replication/*.sh text eol=lf
+scripts/run-application-recovery-ci.sh text eol=lf

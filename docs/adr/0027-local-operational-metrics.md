@@ -3,7 +3,30 @@
 Status: Accepted; six-service readiness, payment backlog observations and local
 collector/alerts implemented in source. The main-based local full Gradle check
 passed; isolated Compose acceptance, exact-head CI, independent verification and
-deployment remain pending. Worker counters and replication lag remain unobserved.
+deployment remain pending for the worker-observation integration. Payment worker
+failure callbacks now provide process-local counters; replica lag is a separate
+integration. Pending-age source is implemented below; its affected local checks
+passed, while exact-head CI, actual Compose acceptance and rollout remain pending.
+
+Worker callbacks observe at most one failure per tick, preserve interruption and
+cannot alter financial or retry outcomes. A ledger business rejection is not an
+operational failure; email provider rejection and throttling are. Counts reset
+on restart and remain unknown until first observed failure; persisted attempts
+are not historical failure totals. The affected Payment check passed 231 tests
+on 2026-10-16 with zero failures, errors or skips. Exact-head combined validation
+and deployment are separate gates.
+
+Pending-age source extends the same payment-owned read-only observation with
+one database statement timestamp and oldest durable creation time. Empty means
+known zero; any future/nonfinite timestamp makes that population's age unknown,
+while valid counts remain known. Observation failure clears counts and ages.
+Collector age thresholds are optional positive integers; absent thresholds are
+UNKNOWN. Deploy the new collector before emitting new metric names because its
+strict allowlist intentionally rejects unknown measurements. On 2026-10-16,
+affected Java/PG checks passed 272 tests across 20 suites with zero failures,
+errors or skips; the collector's separate 19 tests passed. Independent review
+verified the executed-source binding. Exact-head CI, actual Compose acceptance
+and rollout remain pending for this follow-up.
 
 ## Context
 

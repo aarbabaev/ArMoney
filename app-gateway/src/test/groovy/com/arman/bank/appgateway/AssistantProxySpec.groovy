@@ -16,6 +16,7 @@ class AssistantProxySpec extends Specification {
     String owner = UUID.randomUUID().toString(), wallet = UUID.randomUUID().toString()
     AtomicInteger authStatus = new AtomicInteger(200), authCalls = new AtomicInteger(), backendCalls = new AtomicInteger(), assistantCalls = new AtomicInteger()
     AtomicReference<String> authBody = new AtomicReference<>(), backendBody = new AtomicReference<>()
+    AtomicReference<java.time.Instant> quotaNow = new AtomicReference<>(java.time.Instant.parse('2026-10-13T10:00:00Z'))
     Map seen = [:]
     Closure assistantAction
     HttpServer auth, backend, assistant
@@ -51,7 +52,7 @@ class AssistantProxySpec extends Specification {
             try { assistantAction(ex) }
             catch (Throwable failure) { seen.assistantFailure = failure; respond(ex, 500, '{"error":"synthetic_failure"}') }
         }
-        proxy = new AssistantProxy(uri(auth), uri(backend), uri(backend), BANK, uri(assistant), OUT, IN)
+        proxy = new AssistantProxy(uri(auth), uri(backend), uri(backend), BANK, uri(assistant), OUT, IN, new FixtureClock(quotaNow))
         runtime = ServiceRuntime.start('app-gateway', 0, null, { proxy.configure(it) })
         client = HttpClient.newHttpClient()
         assistantAction = { ex -> respond(ex, 200, reply()) }
@@ -219,6 +220,12 @@ class AssistantProxySpec extends Specification {
         limited.statusCode() == 429
         limited.headers().firstValue('Retry-After').orElse('') == '60'
         assistantCalls.get() == 10
+        proxy.activeDelegations() == 0
+        when:
+        quotaNow.set(quotaNow.get().plusSeconds(60))
+        then:
+        message().statusCode() == 200
+        assistantCalls.get() == 11
         proxy.activeDelegations() == 0
     }
     def 'history projection derives direction and discards private identifiers'() {

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Disposable PostgreSQL replication checks; never reads .env or uses the live stack."""
-import os
+import importlib.util
 import pathlib
 import secrets
 import subprocess
@@ -10,9 +10,21 @@ import uuid
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location('replication_backup_guard', ROOT / 'scripts/backup-local-baseline.py')
+guard = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(guard)
+
+
+def local_target():
+    """Resolve a local daemon once; pin every fixture and cleanup subprocess."""
+    guard.local_daemon()
+    environment = {key: value for key, value in guard.DOCKER_ENV.items()
+                   if not key.upper().startswith('COMPOSE_')}
+    return ['docker', '--host', guard.DOCKER_ENDPOINT], environment
 
 
 def main():
+    docker_command, environment = local_target()
     project = "ledger-repl-test-" + uuid.uuid4().hex[:12]
     with tempfile.TemporaryDirectory(prefix=project) as temporary:
         directory = pathlib.Path(temporary)
@@ -43,14 +55,9 @@ networks:
 volumes:
   ledger-db:
 """, encoding="utf-8")
-        environment = os.environ.copy()
-        # Prevent caller-provided Compose controls from changing fixture scope.
-        for key in list(environment):
-            if key.startswith("COMPOSE_"):
-                del environment[key]
         environment.update(LOCAL_DB_PASSWORD=secrets.token_urlsafe(32),
                            LEDGER_REPLICATION_PASSWORD=secrets.token_urlsafe(32))
-        command = ["docker", "compose", "--project-directory", str(ROOT),
+        command = docker_command + ["compose", "--project-directory", str(ROOT),
                    "--env-file", str(empty_env), "-p", project, "-f", str(base),
                    "-f", str(ROOT / "compose.ledger-replication.yaml")]
 

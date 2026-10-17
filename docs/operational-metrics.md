@@ -3,7 +3,16 @@
 Tracking: issue #22. Source includes the technical registry, private HTTP adapter,
 opt-in readiness for six Java services, two payment backlog measurements, and a
 local collector with finite alerts and runbooks. The main-based local full
-Gradle/PostgreSQL check passed. Baseline exact-head CI and Compose failure acceptance passed for PR #73 on 2026-10-16; persistent deployment remains pending. The replica-observation follow-up has its separate 93-test local evidence, while combined-revision CI and runtime acceptance remain pending.
+Gradle/PostgreSQL check passed. Baseline exact-head CI and Compose failure
+acceptance passed for PR #73 on 2026-10-16. The baseline was deployed from
+`a0fab1b0afa3ea98f6cb0d437550aedf3cf04c82` that day: six ready services,
+missing/wrong-key rejection, two advancing fresh collector snapshots and trusted
+HTTPS internal-path exclusion were independently verified. Existing environments
+were preserved except for the dedicated metrics key; no financial, delivery or
+outage probe was run on persistent data. This verifies the baseline only.
+The replica follow-up passed its separate exact-head CI in PR #78; replica and
+worker-observation deployment remain pending. This worker integration still
+requires its own exact-head CI and applicable acceptance.
 
 ## Service readiness opt-in
 
@@ -54,6 +63,8 @@ scrapes return Prometheus text format
 | `Gauge.OUTBOX_BACKLOG` | `armoney_outbox_backlog` | Records awaiting outbox delivery |
 | `Counter.RECOVERY_FAILURES` | `armoney_recovery_failures_total` | Failed recovery attempts in this process |
 | `Counter.OUTBOX_FAILURES` | `armoney_outbox_failures_total` | Failed delivery attempts in this process |
+| `Gauge.RECOVERY_OLDEST_PENDING_AGE_SECONDS` | `armoney_recovery_oldest_pending_age_seconds` | Elapsed age of the oldest mapped pending payment |
+| `Gauge.OUTBOX_OLDEST_PENDING_AGE_SECONDS` | `armoney_outbox_oldest_pending_age_seconds` | Elapsed age of the oldest pending email outbox row |
 
 Use `set(Gauge, long)` for a valid nonnegative observation,
 `increment(Counter)` for an observed failed attempt, and `unavailable(Gauge)` when
@@ -71,10 +82,60 @@ non-null recipient; legacy unmapped commands are excluded. Email outbox backlog
 counts all `PENDING` rows, excluding `SENT`, `SKIPPED` and `DEAD`. Both counts
 include delayed and leased work; neither measures age or due-only batches.
 Collection failure removes both gauges. Disabled email delivery does not hide
-existing pending rows. Worker failure counters remain unknown until their owners
-provide actual observations. The optional ledger replica observer described below
-passed the affected local ledger checks described below. Earlier integration
-evidence in this document does not establish current-main verification of this delta.
+existing pending rows. Payment workers now observe process-local recovery and
+email delivery failures. Each tick increments its counter at most once, even
+when a provider failure is followed by a persistence failure. Recovery counts
+uncertain/null peer results and dependency/store failures; confirmed ledger
+business rejection is not an operational failure. Email counts permanent
+rejection, throttling, transient delivery and dependency/store failures. Missing
+or unverified email and stale leases retain their existing ordinary outcomes.
+Shutdown interruption is preserved without counting a failure. Callback runtime
+exceptions cannot change payment, retry or outbox outcomes.
+
+Counters reset on process restart and remain omitted/UNKNOWN until the first
+observed failure. Persisted attempt counts are not historical failure totals.
+Optional replica observation is described below; its deployment remains separate.
+Pending-age observation is implemented in source as described below. On
+2026-10-16, affected Payment/runtime checks passed 272 tests across 20 suites
+(Payment 242, runtime 30), with zero failures, errors or skips in 62.2 seconds.
+An independent reviewer matched the tested source manifest and recounted the
+XML results. The collector's 19 tests passed separately. Exact-head CI, actual
+Compose acceptance and deployment remain pending.
+
+### Oldest unresolved age
+
+Payment reads both counts and ages in one read-only PostgreSQL statement, using
+one `statement_timestamp()` anchor. The populations match the existing counts:
+mapped `PENDING` payments and all `PENDING` outbox rows, including active leases,
+delayed retries and exhausted attempts awaiting terminalization. Age starts at
+the durable row's `created_at`, not its last claim or retry, and is floored to
+integer seconds. No rows, leases, attempts or financial state are changed.
+
+An empty population has known age zero. Any future or nonfinite creation time
+in a population makes only that age unknown; valid counts and the other age
+remain available. A database observation failure removes all four count/age
+gauges. A present age does not prove worker progress or freshness beyond the
+collector snapshot's expiry.
+
+The collector accepts both new names. Optional positive integer configuration
+keys `recovery_oldest_pending_age_seconds_limit` and
+`outbox_oldest_pending_age_seconds_limit` control `RECOVERY_AGE_LIMIT` and
+`OUTBOX_AGE_LIMIT`; equality fires. Missing thresholds or measurements yield
+UNKNOWN, not CLEAR. Existing private collector configurations remain valid.
+The example's 300-second values are local tuning examples, not delivery SLAs.
+
+Roll out the updated collector before a Payment producer emits these names:
+older strict collectors reject unfamiliar measurements and would mark the
+whole scrape unavailable. Verify bounded parsing, empty zeroes, invalid-time
+omission, database-failure clearing and recovery in isolated acceptance. Never
+run the deliberate-outage smoke test on persistent data.
+
+On 2026-10-16, the affected Payment check passed 231 tests with zero failures,
+errors or skips, including 26 worker-observation cases and PostgreSQL payment
+and email-outbox recovery assertions. Independent source review found no
+blocking issue. Combined exact-head CI, Compose acceptance and deployment of
+these worker observations remain pending; these local results do not establish
+live delivery or historical failure counts.
 
 ### Optional ledger replica observation
 

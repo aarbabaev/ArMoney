@@ -48,7 +48,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | AI assistant | Implemented read-only C# service, local policy RAG, constrained bank reads and Android screen; local rollout verified on 2026-10-13 | Finite demonstration topics, English extracts, at most six wallets and first-page history of 50; physical-device/live-owner acceptance not run |
 | Gateway | Auth, profile/phone, wallets/balances, P2P and notifications | Further hardening |
 | Local SMS sandbox | Optional authenticated capture API and web inbox, bounded persistent file storage; no carrier delivery | Identity OTP and transaction producers are separate integration tasks |
-| Operational metrics (#22) | Source: six-service private readiness, payment recovery/email backlog counts, bounded local collector and finite stdout alerts | Baseline exact-head CI and failure acceptance passed in PR #73; deployment/key provisioning remain pending. Worker counters and queue age remain unknown; explicit-name replica observation is source-only in the current follow-up |
+| Operational metrics (#22) | Source: six-service private readiness, payment backlog counts/oldest unresolved ages, process-local worker failure counters, optional named-replica observations and local collector | Baseline and replica observations deployed with bounded independent audits on 2026-10-16; age local checks passed 272 tests; worker/age exact-head CI and rollout remain pending; counters reset and are unknown until first failure |
 | Kafka infrastructure | Optional source-defined three-controller/three-broker KRaft cluster, mutual TLS, exact service ACLs and cold snapshot helper | Real-cluster acceptance and deployment pending; service adapters and financial Saga recovery remain planned |
 
 A payment email presentation candidate adds HTML/plain text and a frozen optional
@@ -459,14 +459,23 @@ leased work; failed collection removes those observations.
 The local collector authenticates fixed private targets, refuses redirects and
 environment proxies, bounds I/O and emits expiring atomic status snapshots plus
 finite stdout state-transition alerts. Missing/stale data stays unknown; no
-external notification provider is used. Worker counters, queue age and replica
-lag remain unobserved. An explicit `compose.metrics.yaml` override provides a
-nonroot collector without published ports; private deployment and key provisioning
-are pending. CI source includes an isolated UUID-project fixture with owned-resource
+external notification provider is used. Payment worker failure counters are
+process-local observations and remain unknown until the first failure; they
+reset on restart. Oldest unresolved age is source-implemented with a database
+anchor and unknown-on-invalid-time behavior. On 2026-10-16 its affected Java/PG
+checks passed 272 tests with zero failures, errors or skips; exact-head CI,
+actual Compose acceptance and rollout remain pending. Replica lag is a
+separately verified operational observation.
+An explicit `compose.metrics.yaml` override provides a
+nonroot collector without published ports. The baseline from `a0fab1b` was
+deployed and independently verified on 2026-10-16 with a dedicated private key,
+six ready targets, two fresh snapshots and public internal-path 404. This does
+not establish deployment of worker counters or replica observations, which remain
+pending. CI source includes an isolated UUID-project fixture with owned-resource
 cleanup, real edge exclusion and a reversible payment-database outage.
-Combined business middleware, actual database failure, full integrated
-CI, independent verification and runtime acceptance still require evidence;
-source wiring does not establish deployment. See [operational metrics](docs/operational-metrics.md)
+Baseline exact-head CI and isolated failure acceptance passed in PR #73;
+each later integration still requires its own checks and rollout evidence.
+Source wiring does not establish deployment. See [operational metrics](docs/operational-metrics.md)
 and [ADR 0027](docs/adr/0027-local-operational-metrics.md).
 
 ```mermaid
@@ -541,6 +550,29 @@ migrations are append-only. The current DB owner has administrative capabilities
 triggers do not protect against an administrator. A restricted runtime DB role is future work.
 
 ### Optional ledger replicas
+
+The isolated nine-store recovery drill passed again on 2026-10-17 at
+`a3fd9cec8d1eb8a77dd0ddbd02c0a059153f498a`: 82.102 seconds capture,
+231.073 seconds outage through acceptance, and 718.438 seconds total staging and
+cleanup. Independent retained-evidence review and financial QA cover one completed
+pre-capture synthetic payment, balanced AED replay and standby restart/rebuild.
+They do not establish in-flight/concurrent recovery or production RTO/RPO.
+Independent security review is also clear. Exact-head CI remains a separate gate; the workflow does not
+invoke this full drill. See the dated evidence and retention limits in
+[database recovery](docs/backup-recovery.md).
+
+Saved logical backup preflight, persistent-store coverage and disposable recovery
+tooling are documented in [database recovery](docs/backup-recovery.md). Disposable
+application recovery passed on 2026-10-16 at `960087d863fbd4e57d0c1b78109ae91fe277b64d`:
+nine restored stores, legacy/native PKCE sessions, owner isolation, original
+payment replay, reconciled immutable AED journal, and read-only physical standby
+restart/fresh-volume rebuild, with zero missing acknowledged fixture payments and
+ownership-checked cleanup. Capture took 78.216 seconds and outage through all
+acceptance took 225.969 seconds before cleanup. Independent QA matched the private
+stage/runner receipts and three versioned source hashes. This same-host fixture
+does not establish production RTO/RPO, PITR, HA, promotion, synchronous-quorum
+recovery, the 200-owner baseline, assistant-model or production TLS recovery.
+Subsequent integrated-revision CI/review and deployment remain separate gates.
 
 `compose.ledger-replication.yaml` preserves `ledger-db` and adds two direct
 PostgreSQL physical hot standbys. Application commits require WAL flush on at
@@ -1312,3 +1344,39 @@ readiness or durability. Local affected Ledger checks passed 93 tests across 13
 suites, including real physical standbys, on the recorded source patch. Combined
 current-main CI, Compose acceptance and deployment remain pending. See
 [ADR 0040](docs/adr/0040-replica-observation.md).
+
+### Diagnostic first-login session visibility
+
+The test-only SSO-VIS-001 topology uses two disposable Keycloak nodes to inspect
+user and authenticated client-session visibility before and after a bounded
+login redirect barrier. It is not a production service or proof authority.
+The isolated experiment at `05bff8e96182d48c0fb2bd13c5aa2d4004d12c21`
+passed on 2026-10-17 (Asia/Dubai): the session pair was not visible on node B while
+the login hook was held and visible after the completed response in all four
+cases, including hook HTTP 503. That failure therefore does not guarantee
+rollback. Independent QA and security bound the result to the fixture artifacts
+and verified cleanup. Production positive-proof hooks remain unregistered;
+the precommit recording/postcommit authority contract remains an activation gate.
+See [the proof design](sso-service/provider/LOGIN-PROOF-DESIGN.md#first-login-transaction-visibility-gate-sso-vis-001).
+### Default-off client-session observer follow-up
+
+The provider source adds private `armoney-status/code-session`, separately gated
+by default-false `ARMONEY_CODE_SESSION_OBSERVATION_ENABLED`. Its strict four-field
+request binds the exact user/session/public client; the exact twelve-field
+response includes both session flags and observed/deadline timestamps. Existing
+status/enrollment contracts and production factory registrations are unchanged.
+Canonical contacts, LOGGED_IN online persistence, exact client membership and
+pinned user/client idle/max validity are required. This is observation only,
+not Auth receipts/projection/ACTIVE authority.
+Null adapter-local persistence state requires an independent exact durable online
+realm/session/subject LOGGED_IN tuple from Keycloak's session persister; explicit
+TRANSIENT and unavailable/mismatched provenance deny. That follow-up passed
+65 local provider tests across 13 suites; real two-node verification remains
+pending. No failure cause or successful activation is
+inferred from the earlier BASELINE failure.
+Earlier local provider checks passed
+64 tests across 13 suites, independently bound to unchanged source and packaged
+SPI evidence. Two-node runtime acceptance and exact-head required CI remain
+pending. See the provider README and scoped frozen contract in
+[PR #85](https://github.com/aarbabaev/ArMoney/pull/85); clock-rate assumptions and
+all activation gates remain explicit.
