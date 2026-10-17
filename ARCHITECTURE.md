@@ -1464,11 +1464,12 @@ transaction outcome tracking and authenticated node-B membership before lookup
 and confirmation. Its local body timer retains only a transport connection and
 serializes completion against expiry. The invocation deadline retains its original
 sample and caps both the outer bound and four-second producer window without
-renewal. An isolated checkpoint passed 104 provider unit tests in 18 suites,
-including 12 deadline tests, with no failures, errors or skips. Fixture production
-Java and its JAR compiled; fixture test compilation failed against the pinned
-non-AutoCloseable realm-resource API. A reviewed test-only cleanup correction is
-prepared, while all 24 fixture tests remain unexecuted. Bootstrap, physical
+renewal. An earlier fixture test compilation failed against the pinned
+non-AutoCloseable realm-resource API. Corrected checkpoint `067a829` then passed
+134 tests in 26 suites with zero failures, errors or skips: 104 provider tests
+(including 12 deadline tests) and 30 fixture tests (24 new and six existing).
+The later nine bootstrap and eleven launch-adapter tests were not included;
+these results do not verify this integrated revision. Bootstrap, physical
 body/DNS termination, classloader compatibility, clocks and genuine combined
 acceptance remain open; production eligibility and activation are unchanged.
 See the acceptance-fixture README for the evidence boundary.
@@ -1493,3 +1494,18 @@ protocol hook, with fixture-theme discovery and separate provenance. It sets no
 default enable flags or credentials and does not change production SPI packaging.
 This profile has not been built; actual image inventory, classloading, theme
 inheritance and two-stage disposable startup remain verification gates.
+
+The Auth-side disposable companion has separate image assembly source at
+`auth-service/Dockerfile.code-intent-fixture`. It compiles test classes and service
+distributions, then runs only the test-Java companion with Auth libraries as a
+non-root user; the JDK remains available for its ephemeral local SMTP certificate.
+No default isolation flag, credential, database or host publication is configured.
+This image has not been built, and compilation is not acceptance execution.
+
+Separate Auth checkpoint `7aa71f8` recorded 946 unit passes, three authority
+PostgreSQL passes and 17 readiness-helper passes, with one positive readiness
+equivalence case skipped. Therefore its reported 967 cases mean 966 executed
+passes and one unresolved skip, not a complete matrix. Provider observations in
+that experiment were synthetic; local SMTP/STARTTLS, SMS and persisted User ACK
+paths do not establish native Keycloak/password/cross-node or activation evidence.
+Further local test diagnostics and a zero-skip report gate remain unexecuted.

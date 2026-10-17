@@ -27,12 +27,12 @@ has not been built. Actual orchestration, disabled provisioning followed by rest
 classloader compatibility and bootstrap invocation remain unverified.
 
 The code-intent fixture is acceptance-only source, not a completed combined
-acceptance flow. An isolated earlier checkpoint passed 104 provider unit tests in
-18 suites with no failures, errors or skips, including the 12 deadline tests.
-Fixture production Java and its JAR compiled, but fixture test compilation failed:
-the pinned realm-resource provider is not AutoCloseable. A separately reviewed
-test-only explicit-cleanup correction is prepared; the 24 fixture tests remain
-unexecuted. Bootstrap and adapter additions remain uncompiled and unrun.
+acceptance flow. An earlier fixture test compilation failed because the pinned
+realm-resource provider is not AutoCloseable. Corrected checkpoint `067a829`
+passed 134 tests in 26 suites with no failures, errors or skips: 104 provider
+tests, including 12 deadline tests, and 30 fixture tests (24 new, six existing).
+The later bootstrap and adapter additions were excluded and remain uncompiled
+and unrun. This is separate checkpoint evidence, not an integrated runtime result.
 Independent source review is not runtime readiness.
 
 Explicit disposable bootstrap must install the fixture's settings, code-intent
@@ -166,3 +166,14 @@ Source inspection is not an image build, JAR inventory inspection or native
 Keycloak acceptance. Production password proof and eligibility stay unchanged;
 this assembly source establishes no token redemption, session authority or
 activation.
+
+## Auth companion assembly and separate evidence
+
+The integrated source includes `auth-service/Dockerfile.code-intent-fixture` for
+the guarded test-Java companion. It supplies no isolation flags or credentials
+and has not been built. It is independent of production Auth packaging.
+Separate Auth checkpoint `7aa71f8` reported 967 cases: 966 executed passes and
+one unresolved positive readiness-equivalence skip. Three authority PostgreSQL
+scenarios exercised local SMTP/STARTTLS, SMS and persisted User ACK paths with a
+synthetic provider peer. They do not establish native Keycloak or two-node
+acceptance. Local abort diagnostics and a zero-skip report gate remain unexecuted.
