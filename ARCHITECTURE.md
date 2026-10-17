@@ -48,7 +48,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | AI assistant | Implemented read-only C# service, local policy RAG, constrained bank reads and Android screen; local rollout verified on 2026-10-13 | Finite demonstration topics, English extracts, at most six wallets and first-page history of 50; physical-device/live-owner acceptance not run |
 | Gateway | Auth, profile/phone, wallets/balances, P2P and notifications | Further hardening |
 | Local SMS sandbox | Optional authenticated capture API and web inbox, bounded persistent file storage; no carrier delivery | Identity OTP and transaction producers are separate integration tasks |
-| Operational metrics (#22) | Source: six-service private readiness, payment recovery/email backlog counts, bounded local collector and finite stdout alerts | Baseline exact-head CI and failure acceptance passed in PR #73; deployment/key provisioning remain pending. Worker counters and queue age remain unknown; explicit-name replica observation is source-only in the current follow-up |
+| Operational metrics (#22) | Source: six-service private readiness, payment backlog counts, process-local worker failure counters, optional named-replica observations and local collector | Baseline deployed and independently verified on 2026-10-16; worker counters reset/are unknown until first failure; worker and replica deployment pending; queue age absent |
 | Kafka infrastructure | Optional source-defined three-controller/three-broker KRaft cluster, mutual TLS, exact service ACLs and cold snapshot helper | Real-cluster acceptance and deployment pending; service adapters and financial Saga recovery remain planned |
 
 A payment email presentation candidate adds HTML/plain text and a frozen optional
@@ -459,14 +459,19 @@ leased work; failed collection removes those observations.
 The local collector authenticates fixed private targets, refuses redirects and
 environment proxies, bounds I/O and emits expiring atomic status snapshots plus
 finite stdout state-transition alerts. Missing/stale data stays unknown; no
-external notification provider is used. Worker counters, queue age and replica
-lag remain unobserved. An explicit `compose.metrics.yaml` override provides a
-nonroot collector without published ports; private deployment and key provisioning
-are pending. CI source includes an isolated UUID-project fixture with owned-resource
+external notification provider is used. Payment worker failure counters are
+process-local observations and remain unknown until the first failure; they
+reset on restart. Queue age is absent and replica lag is a separate integration.
+An explicit `compose.metrics.yaml` override provides a
+nonroot collector without published ports. The baseline from `a0fab1b` was
+deployed and independently verified on 2026-10-16 with a dedicated private key,
+six ready targets, two fresh snapshots and public internal-path 404. This does
+not establish deployment of worker counters or replica observations, which remain
+pending. CI source includes an isolated UUID-project fixture with owned-resource
 cleanup, real edge exclusion and a reversible payment-database outage.
-Combined business middleware, actual database failure, full integrated
-CI, independent verification and runtime acceptance still require evidence;
-source wiring does not establish deployment. See [operational metrics](docs/operational-metrics.md)
+Baseline exact-head CI and isolated failure acceptance passed in PR #73;
+each later integration still requires its own checks and rollout evidence.
+Source wiring does not establish deployment. See [operational metrics](docs/operational-metrics.md)
 and [ADR 0027](docs/adr/0027-local-operational-metrics.md).
 
 ```mermaid

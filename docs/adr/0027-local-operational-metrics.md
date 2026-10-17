@@ -3,7 +3,17 @@
 Status: Accepted; six-service readiness, payment backlog observations and local
 collector/alerts implemented in source. The main-based local full Gradle check
 passed; isolated Compose acceptance, exact-head CI, independent verification and
-deployment remain pending. Worker counters and replication lag remain unobserved.
+deployment remain pending for the worker-observation integration. Payment worker
+failure callbacks now provide process-local counters; replica lag is a separate
+integration and queue age remains unimplemented.
+
+Worker callbacks observe at most one failure per tick, preserve interruption and
+cannot alter financial or retry outcomes. A ledger business rejection is not an
+operational failure; email provider rejection and throttling are. Counts reset
+on restart and remain unknown until first observed failure; persisted attempts
+are not historical failure totals. The affected Payment check passed 231 tests
+on 2026-10-16 with zero failures, errors or skips. Exact-head combined validation
+and deployment are separate gates.
 
 ## Context
 

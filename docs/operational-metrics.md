@@ -3,7 +3,16 @@
 Tracking: issue #22. Source includes the technical registry, private HTTP adapter,
 opt-in readiness for six Java services, two payment backlog measurements, and a
 local collector with finite alerts and runbooks. The main-based local full
-Gradle/PostgreSQL check passed. Baseline exact-head CI and Compose failure acceptance passed for PR #73 on 2026-10-16; persistent deployment remains pending. The replica-observation follow-up has its separate 93-test local evidence, while combined-revision CI and runtime acceptance remain pending.
+Gradle/PostgreSQL check passed. Baseline exact-head CI and Compose failure
+acceptance passed for PR #73 on 2026-10-16. The baseline was deployed from
+`a0fab1b0afa3ea98f6cb0d437550aedf3cf04c82` that day: six ready services,
+missing/wrong-key rejection, two advancing fresh collector snapshots and trusted
+HTTPS internal-path exclusion were independently verified. Existing environments
+were preserved except for the dedicated metrics key; no financial, delivery or
+outage probe was run on persistent data. This verifies the baseline only.
+The replica follow-up passed its separate exact-head CI in PR #78; replica and
+worker-observation deployment remain pending. This worker integration still
+requires its own exact-head CI and applicable acceptance.
 
 ## Service readiness opt-in
 
@@ -71,10 +80,27 @@ non-null recipient; legacy unmapped commands are excluded. Email outbox backlog
 counts all `PENDING` rows, excluding `SENT`, `SKIPPED` and `DEAD`. Both counts
 include delayed and leased work; neither measures age or due-only batches.
 Collection failure removes both gauges. Disabled email delivery does not hide
-existing pending rows. Worker failure counters remain unknown until their owners
-provide actual observations. The optional ledger replica observer described below
-passed the affected local ledger checks described below. Earlier integration
-evidence in this document does not establish current-main verification of this delta.
+existing pending rows. Payment workers now observe process-local recovery and
+email delivery failures. Each tick increments its counter at most once, even
+when a provider failure is followed by a persistence failure. Recovery counts
+uncertain/null peer results and dependency/store failures; confirmed ledger
+business rejection is not an operational failure. Email counts permanent
+rejection, throttling, transient delivery and dependency/store failures. Missing
+or unverified email and stale leases retain their existing ordinary outcomes.
+Shutdown interruption is preserved without counting a failure. Callback runtime
+exceptions cannot change payment, retry or outbox outcomes.
+
+Counters reset on process restart and remain omitted/UNKNOWN until the first
+observed failure. Persisted attempt counts are not historical failure totals.
+Optional replica observation is described below; its deployment remains separate.
+Queue age is not measured.
+
+On 2026-10-16, the affected Payment check passed 231 tests with zero failures,
+errors or skips, including 26 worker-observation cases and PostgreSQL payment
+and email-outbox recovery assertions. Independent source review found no
+blocking issue. Combined exact-head CI, Compose acceptance and deployment of
+these worker observations remain pending; these local results do not establish
+live delivery or historical failure counts.
 
 ### Optional ledger replica observation
 

@@ -19,6 +19,10 @@ https://{$ARMONEY_HOST}:443 {
     handle @blockedSso {
         respond 404
     }
+    @internal path /internal /internal/*
+    handle @internal {
+        respond 404
+    }
     @api path /v1/* /health/live /health/ready /openapi.yaml
     handle @api {
         reverse_proxy app-gateway:8080
