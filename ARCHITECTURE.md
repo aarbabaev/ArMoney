@@ -1377,5 +1377,6 @@ locally supplied credential/key material without allocating network or database
 resources. It is not wired into production factories; existing SPI registrations,
 transports and token hooks remain unchanged. Auth-only dependencies, remote public
 client models and deployment state are outside this parser's validation boundary.
-Compilation and focused tests remain pending; confirmation and activation remain
+At `89a7404`, isolated Java 21 compilation and eight focused configuration tests
+passed with zero failures, errors or skips; confirmation and activation remain
 gated. See the provider README for the exact source scope and limitations.

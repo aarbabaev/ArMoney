@@ -79,7 +79,16 @@ aliases reject. Auth-only dependency flags, databases, migrations, retention/AEA
 keys and remote model/deployment state are not inspected by this provider parser.
 No secrets are imported merely to compare them. Configuration is not wired,
 stage/lookup/confirmation transport remains unimplemented, and no SPI registration
-or production enablement changes. New parser tests are source-only and UNRUN.
+or production enablement changes.
+
+At source revision 89a74046a1168d14ce0140447553c0264d4c256e, the isolated Java 21
+run compiled all provider production/test sources and passed eight filtered
+CodeIntentConfigurationTest cases with zero failures, errors or skips. Independent
+review verified retained XML, source/archive hashes and recorded cleanup; the
+original orchestrator separately verified no owned containers, volumes or networks
+remained. This focused run does not establish full provider check, packaging,
+required PR CI, runtime wiring or activation. The URI error-redaction and Unicode
+space findings are verified only within this unwired parser scope.
 
 ### Default-off code-session observation
 
