@@ -58,6 +58,58 @@ These results apply to that source revision. After integration of main's dormant
 proof-wire corrections, fresh combined-head CI remains required before approval.
 ## Private auth wire
 
+### Unwired code-intent configuration
+
+`CodeIntentConfiguration` is a pure explicit-Map parser; no factory calls it and
+it allocates no HTTP/DB resources. `ARMONEY_LOGIN_PROOF_ENABLED` defaults false
+and accepts only lowercase `true`/`false`. Shared managed/legacy pair variables
+use exact `{issuer, client_id}` JSON objects, at most16 pairs/16KiB per array;
+supplied dormant arrays still receive strict validation. Enabled scope is the
+single configured issuer and existing public verification-client subset.
+Unknown/overlapping pairs deny; mixed-subject routing remains unsupported.
+Actual public-client models must still be checked by future runtime consumers.
+
+Enabled parsing requires separate write/confirm/lookup credentials, the existing
+private bridge base, writer/actor and code-key-ID configuration. Constructor-held
+code material is supplied separately under its configured key ID (32 bytes),
+along with all other locally held current/retained secrets for inequality checks;
+no new code-key environment aliases are introduced. Callers must supply their
+complete locally known material inventory. Raw and canonical-base64-decoded
+aliases reject. Auth-only dependency flags, databases, migrations, retention/AEAD
+keys and remote model/deployment state are not inspected by this provider parser.
+No secrets are imported merely to compare them. Configuration is not wired,
+stage/lookup/confirmation transport remains unimplemented, and no SPI registration
+or production enablement changes.
+
+At source revision 89a74046a1168d14ce0140447553c0264d4c256e, the isolated Java 21
+run compiled all provider production/test sources and passed eight filtered
+CodeIntentConfigurationTest cases with zero failures, errors or skips. Independent
+review verified retained XML, source/archive hashes and recorded cleanup; the
+original orchestrator separately verified no owned containers, volumes or networks
+remained. This focused run does not establish full provider check, packaging,
+required PR CI, runtime wiring or activation. The URI error-redaction and Unicode
+space findings are verified only within this unwired parser scope.
+
+### Unwired invocation deadline
+
+`InvocationDeadline` provides one fixed four-second monotonic budget, started
+before serialization/DNS by a future consumer. It owns only explicitly registered
+exchange futures/body cancellation hooks; completed registrations detach without
+renewing the budget. Expiry, backward elapsed time or close terminally cancels
+owned resources, including late registrations. Cancellation callbacks run outside
+the ownership monitor. The utility creates no executor, thread, scheduler, HTTP
+client or database resource. Existing `DeadlineHttp`, `ProofClient`, token hooks
+and SPI registrations are unchanged.
+
+At source `34a153`, the isolated focused check actually passed eight deadline
+tests and eight configuration tests: 16 tests across two suites, zero failures,
+errors or skips. Independent review verified retained XML and source/archive
+matching. Evidence prefix:
+`D:/ArMoneyDockerRecovery/2026-10-17/auth-code-confirmation/armoney-sso-deadline-8cf71eb6f45b40578c40c7513349a3f0`.
+These deterministic tests do not establish physical DNS/HTTP termination or a
+runtime aggregate lookup/confirmation deadline. Consumer integration and
+exact-head required CI remain unproven; no production activation follows.
+
 ### Default-off code-session observation
 
 `POST /realms/{realm}/armoney-status/code-session` is a separate source-level
@@ -99,10 +151,31 @@ runs (64/7 and 64/5) remain retained; fixes corrected strict test-model policy
 inputs and pinned Profile lifecycle without changing production checks.
 The later null-reload durable-provenance correction passed a fresh provider
 `check jar --rerun-tasks` on 2026-10-17: 65 tests across 13 suites, zero failures,
-errors or skips. Its actual two-node acceptance remains pending.
+errors or skips.
+
+The separate disposable two-node code-session acceptance passed on 2026-10-17
+(Asia/Dubai), tested source `c8a8dda`, with an outer elapsed time of 270.469 seconds.
+The harness consists of `compose.sso-code-session.yaml`,
+`scripts/run-sso-code-session.sh`, `scripts/sso-code-session-acceptance.py` and
+`scripts/test-sso-code-session-diagnostics.py`. It reuses the dedicated visibility
+fixture image and provenance; it does not enable the production configuration.
+The CI-guarded runner creates a unique owned project/image, enables this observer
+only on node B, and leaves node A off. Actual cases covered the cross-node
+12-field baseline, HTTP/authentication/strict-body boundaries, foreign binding,
+the same allowlisted client changed to confidential and restored, disabled-user
+negative observation, explicit null contacts after admin clear/readback and
+restore, session deletion, and short-policy expiry. Per-exchange HTTP/body bounds
+are four seconds and 12 KiB. The runner's 540-second acceptance-phase limit does
+not bound image build or node startup. Inner and outer cleanup were verified;
+the root independently verified no owned containers, volumes or networks remain.
+The retained evidence prefix is
+`D:/ArMoneyDockerRecovery/2026-10-16/code-session-verification/armoney-code-session-manual-5b43c1e505174c569469fcb30067e9d7`.
+This result does not establish Auth confirmation, code redemption, clock
+continuity/equal rates, or production activation.
 The first isolated harness run at `fa5049f` failed at BASELINE after completed
 callback; the saved log lacked endpoint status, so that failure's cause is not
-established by source inspection. Exact-head required CI remains pending.
+established by source inspection. Later diagnostic failures also do not establish
+their earlier causes retroactively. Exact-head required CI remains pending.
 No production flag, realm, route consumer, proof
 hook registration or banking eligibility is activated by this implementation.
 

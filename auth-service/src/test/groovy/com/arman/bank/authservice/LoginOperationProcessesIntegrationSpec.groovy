@@ -262,7 +262,9 @@ class LoginOperationProcessesIntegrationSpec extends Specification {
         def saturated=fixtureSlots(16)
         try{assert post(first).statusCode()==429;assert post(second).statusCode()==429}finally{saturated.each{it.close()}}
         then:
-        locks()==0;allReusable()
+        // Observe backend teardown after closing fixture-owned sessions; persistent locks still fail.
+        awaitCondition{locks()==0}
+        allReusable()
         cleanup:
         blocker?.rollback();blocker?.close();held?.each{it.close()};executor?.shutdownNow()
     }
