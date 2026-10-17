@@ -155,10 +155,15 @@ public final class PostgresBankingEligibilityStore implements BankingEligibility
     /** Caller-owned confirmation preflight/final check. Uses persisted local contacts only;
      * this validates no provider flags and creates no positive observation or authority. */
     Instant requireLocalForConfirmation(com.arman.bank.authservice.domain.LoginProof.Binding binding){
+        return requireCurrentLocalRegistration(binding.issuer(),binding.subject());
+    }
+    /** Same local predicate before a native user-session binding exists. No provider facts,
+     * grant creation, transaction ownership or public readiness authority is introduced. */
+    Instant requireCurrentLocalRegistration(String issuer,String subject){
         PostgresVerificationProjectionStore.requireLocked(sql);
-        var enrollment=sql.fetchOne("select id,email,phone from verification_enrollments where issuer=? and subject=?",binding.issuer(),binding.subject());
+        var enrollment=sql.fetchOne("select id,email,phone from verification_enrollments where issuer=? and subject=?",issuer,subject);
         if(enrollment==null)fail(Verification.Error.CONFLICT);
-        Current current=currentLocal(enrollment.get("id",UUID.class),binding.issuer(),binding.subject(),
+        Current current=currentLocal(enrollment.get("id",UUID.class),issuer,subject,
             enrollment.get("email",String.class),enrollment.get("phone",String.class));
         var grant=sql.fetchOne("select * from banking_eligibility_grants where identity_id=? and verification_epoch=?",current.identity(),current.projection().verificationEpoch());
         if(grant==null||!matches(grant,current))fail(Verification.Error.CONFLICT);
