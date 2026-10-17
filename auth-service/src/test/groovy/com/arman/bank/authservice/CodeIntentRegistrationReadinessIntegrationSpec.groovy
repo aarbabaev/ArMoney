@@ -179,7 +179,7 @@ class CodeIntentRegistrationReadinessIntegrationSpec extends Specification {
                 Instant bound=confirmation?
                     validator.requireLocalForConfirmation(new L.Binding(ISSUER,flow.subject(),flow.clientId(),'synthetic-provider-session')):
                     validator.requireCurrentLocalRegistration(ISSUER,flow.subject())
-                boolean deadlineCurrent=sql.fetchOne('select clock_timestamp() < ?',[java.time.OffsetDateTime.ofInstant(bound,ZoneOffset.UTC)] as Object[]).get(0,Boolean)
+                boolean deadlineCurrent=sql.fetchOne('select clock_timestamp() < cast(? as timestamptz)',[java.time.OffsetDateTime.ofInstant(bound,ZoneOffset.UTC)] as Object[]).get(0,Boolean)
                 assert deadlineCurrent
                 bound
             }
