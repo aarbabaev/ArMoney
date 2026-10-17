@@ -64,7 +64,7 @@ class CodeIntentConfirmationProcessesIntegrationSpec extends Specification {
         def executor=Executors.newSingleThreadExecutor();Future dripping=null;long started=System.nanoTime()
         when:
         send(peer,port,operation,1000,key(operation),'{')
-        if(mode=='drip')dripping=executor.submit({try{for(int i=0;i<30;i++){Thread.sleep(200);peer.outputStream.write(32);peer.outputStream.flush()}}catch(IOException closed){};true} as Callable)
+        if(mode=='drip')dripping=executor.submit({try{for(int i=0;i<30;i++){Thread.sleep(200);peer.outputStream.write(32);peer.outputStream.flush()}}catch(IOException transportClosed){};true} as Callable)
         boolean closed=false
         try{closed=peer.inputStream.read()==-1}catch(SocketTimeoutException timeout){throw timeout}catch(SocketException physicalClose){closed=true}
         long elapsed=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started)

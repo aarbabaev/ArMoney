@@ -13,6 +13,7 @@ public final class CodeConfirmationConfiguration {
     private final CodeIntentConfiguration stage;
     private final String actor,confirmKey,lookupKey,statusKey;
     private final URI observerOrigin;
+    private final byte[] proofRetentionKey;
     public CodeConfirmationConfiguration(Map<String,String> environment){this(environment,Map.of());}
     /** Material owned by an explicitly injected local component may not have environment names.
      * This checks provided bytes, never invents provider key aliases or proves remote ring completeness. */
@@ -21,7 +22,7 @@ public final class CodeConfirmationConfiguration {
         Objects.requireNonNull(localMaterials);
         enabled=flag(environment,"AUTH_SSO_CODE_INTENT_CONFIRMATION_ENABLED");
         scopes=new CodeIntentPairScopes(value(environment,"ARMONEY_SSO_MANAGED_PAIRS"),value(environment,"ARMONEY_SSO_LEGACY_PAIRS"));
-        if(!enabled){stage=null;actor=confirmKey=lookupKey=statusKey=null;observerOrigin=null;return;}
+        if(!enabled){stage=null;actor=confirmKey=lookupKey=statusKey=null;observerOrigin=null;proofRetentionKey=null;return;}
         for(String name:List.of("AUTH_SSO_CODE_INTENT_STAGE_ENABLED","AUTH_VERIFICATION_AUTHORITY_BRIDGE_ENABLED",
             "AUTH_REGISTRATION_AUTHORITY_COMPLETION_ENABLED","AUTH_REGISTRATION_ELIGIBILITY_GRANTS_ENABLED","AUTH_VERIFICATION_PROJECTION_ENABLED"))if(!flag(environment,name))throw invalid();
         if(flag(environment,"AUTH_SSO_LOGIN_PROOF_ENABLED"))throw invalid();
@@ -43,10 +44,14 @@ public final class CodeConfirmationConfiguration {
         confirmKey=required(environment,"SSO_LOGIN_PROOF_CONFIRM_KEY");lookupKey=required(environment,"SSO_CODE_INTENT_LOOKUP_KEY");
         LoginProofRoutes.credential(confirmKey);LoginProofRoutes.credential(lookupKey);
         statusKey=required(environment,"AUTH_TO_SSO_STATUS_KEY");
-        separate(environment,localMaterials);
-        stage=new CodeIntentConfiguration(effective);
-        // Validates independently selected legacy bridge/enforcement without opening any resources.
-        new LoginProofConfiguration(environment);
+        byte[] parsedProofKey=proofKey(required(environment,"SSO_LOGIN_PROOF_RETENTION_KEY"));
+        try{
+            separate(environment,localMaterials);
+            stage=new CodeIntentConfiguration(effective);
+            // Validates independently selected legacy bridge/enforcement without opening any resources.
+            new LoginProofConfiguration(environment);
+            proofRetentionKey=parsedProofKey;
+        }catch(RuntimeException invalid){Arrays.fill(parsedProofKey,(byte)0);throw invalid;}
     }
     public CodeIntentPairScopes scopes(){return scopes;}
     public URI observerEndpoint(){if(!enabled)throw invalid();return observerOrigin.resolve(OBSERVER_PATH);}
@@ -55,6 +60,15 @@ public final class CodeConfirmationConfiguration {
     String lookupKey(){return lookupKey;}
     String statusKey(){return statusKey;}
     CodeIntentConfiguration stageConfiguration(){return stage;}
+    /** Original V7 recipient digest key; no derived replacement or silent historical rehash. */
+    byte[] proofRetentionKey(){if(!enabled)throw invalid();return proofRetentionKey.clone();}
+    private static byte[] proofKey(String value){
+        if(value.length()!=44)throw invalid();
+        byte[] decoded;
+        try{decoded=Base64.getDecoder().decode(value);}catch(IllegalArgumentException bad){throw invalid();}
+        if(decoded.length!=32||!Base64.getEncoder().encodeToString(decoded).equals(value)){Arrays.fill(decoded,(byte)0);throw invalid();}
+        return decoded;
+    }
     private static void adapt(Map<String,String> values,String name,Set<String> projection){
         if(values.containsKey(name)&&!csv(required(values,name)).equals(projection))throw invalid();
         values.put(name,String.join(",",new TreeSet<>(projection)));

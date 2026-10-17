@@ -23,7 +23,13 @@ public final class CodeIntentRoutes {
     private final Policy policy;
     private final String actor;
     private final byte[] credential;
+    private final CodeIntentPairScopes composedScopes;
     public CodeIntentRoutes(CodeIntentStore store, Policy policy, String actor, String credential) {
+        this(store,policy,actor,credential,null);
+    }
+    /** Composed C2 only; standalone constructor preserves its existing independent scope contract. */
+    CodeIntentRoutes(CodeIntentStore store,Policy policy,String actor,String credential,CodeIntentPairScopes composedScopes){
+        this.composedScopes=composedScopes;
         this.store=Objects.requireNonNull(store);this.policy=Objects.requireNonNull(policy);
         LoginProof.writer(actor,policy);this.actor=actor;
         this.credential=LoginProofRoutes.credential(credential);
@@ -47,6 +53,7 @@ public final class CodeIntentRoutes {
                         time(body,"issued_at"),time(body,"expires_at"),kind,body.get("event_id").isNull()?null:uuid(body,"event_id"),
                         body.get("password_authenticated_at").isNull()?null:time(body,"password_authenticated_at"));
                     CodeIntent.validate(input,actor,policy);
+                    if(composedScopes!=null&&composedScopes.classify(input.issuer(),input.clientId())!=CodeIntentPairScopes.Classification.MANAGED)throw new Failure(Error.CONFLICT);
                     var snapshot=request.stage(input);
                     if(snapshot==null||snapshot.intentId()==null||!input.codeKeyId().equals(snapshot.codeKeyId())
                         ||!input.issuedAt().equals(snapshot.issuedAt())||!input.expiresAt().equals(snapshot.expiresAt()))throw new Failure(Error.UNAVAILABLE);
