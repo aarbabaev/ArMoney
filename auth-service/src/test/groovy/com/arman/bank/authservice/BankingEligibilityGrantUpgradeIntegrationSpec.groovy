@@ -31,7 +31,7 @@ class BankingEligibilityGrantUpgradeIntegrationSpec extends Specification {
         database.transaction{current->
             assert current.fetch('select * from identities order by id').intoMaps()==identities
             assert current.fetch('select * from sessions order by token_hash').intoMaps()==sessions
-            assert current.fetch('select * from flyway_schema_history where version not in (?,?) order by installed_rank','11','12').intoMaps()==history
+            assert current.fetch('select * from flyway_schema_history where version not in (?,?,?) order by installed_rank','11','12','13').intoMaps()==history
             assert current.fetchOne('select count(*) from banking_eligibility_grants').get(0,Integer)==0
             assert current.fetchOne('select count(*) from managed_registration_principals').get(0,Integer)==0
             assert current.fetchOne('select count(*) from registration_completion_intents').get(0,Integer)==0

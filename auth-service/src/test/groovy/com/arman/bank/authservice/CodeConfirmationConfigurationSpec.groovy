@@ -1,0 +1,182 @@
+package com.arman.bank.authservice
+
+import com.arman.bank.authservice.infrastructure.CodeConfirmationConfiguration
+import com.arman.bank.authservice.infrastructure.CodeIntentConfiguration
+import groovy.json.JsonOutput
+import spock.lang.Specification
+
+/** Pure configuration only. No Database/HTTP/scheduler fixture or remote-health assertion. */
+class CodeConfirmationConfigurationSpec extends Specification {
+    static Map environment(){
+        def env=CodeIntentConfigurationSpec.environment()+[
+            AUTH_SSO_CODE_INTENT_CONFIRMATION_ENABLED:'true',
+            SSO_LOGIN_PROOF_CONFIRM_KEY:'synthetic-distinct-confirmation-key-material',
+            SSO_CODE_INTENT_LOOKUP_KEY:'synthetic-distinct-lookup-key-material',
+            SSO_VERIFICATION_CLIENT_IDS:'armoney-web,armoney-ios',
+            ARMONEY_SSO_MANAGED_PAIRS:JsonOutput.toJson([[issuer:CodeIntentConfigurationSpec.environment().SSO_ISSUER,client_id:'armoney-web'],
+                [issuer:CodeIntentConfigurationSpec.environment().SSO_ISSUER,client_id:'armoney-ios']]),ARMONEY_SSO_LEGACY_PAIRS:'[]']
+        env.remove('SSO_CODE_INTENT_ISSUERS');env.remove('SSO_CODE_INTENT_CLIENTS');env
+    }
+    def 'default false allocates no resources and needs no dormant secrets or dependency configuration'(){
+        given:def config=new CodeConfirmationConfiguration([:])
+        expect:!config.enabled;config.scopes().managed().isEmpty();config.toString()=='CodeConfirmationConfiguration[redacted]'
+        when:config.observerEndpoint()
+        then:thrown(IllegalArgumentException)
+    }
+    def 'flag literal is strict #value'(){
+        when:new CodeConfirmationConfiguration([AUTH_SSO_CODE_INTENT_CONFIRMATION_ENABLED:value])
+        then:thrown(IllegalArgumentException)
+        where:value << ['TRUE','1',' false','',null,'False']
+    }
+    def 'supplied dormant arrays validate syntax bounds duplicates overlap but not enabled dependencies'(){
+        expect:!new CodeConfirmationConfiguration([ARMONEY_SSO_MANAGED_PAIRS:JsonOutput.toJson([[issuer:'https://other.example/realm',client_id:'future-client']])]).enabled
+        when:new CodeConfirmationConfiguration([ARMONEY_SSO_MANAGED_PAIRS:'[null]'])
+        then:thrown(IllegalArgumentException)
+        when:new CodeConfirmationConfiguration([ARMONEY_SSO_MANAGED_PAIRS:' '*16385+'[]'])
+        then:thrown(IllegalArgumentException)
+        when:new CodeConfirmationConfiguration([ARMONEY_SSO_MANAGED_PAIRS:JsonOutput.toJson([CodeIntentPairScopesSpec.pair()]),ARMONEY_SSO_LEGACY_PAIRS:JsonOutput.toJson([CodeIntentPairScopesSpec.pair()])])
+        then:thrown(IllegalArgumentException)
+    }
+    def 'enabled supports one issuer and multiple existing clients deriving only private C1 projections'(){
+        given:def env=environment();def before=new LinkedHashMap(env)
+        when:def config=new CodeConfirmationConfiguration(env)
+        then:
+        config.enabled;env==before
+        config.scopes().managedClients()==['armoney-web','armoney-ios'] as Set
+        config.observerEndpoint().toString()=='http://sso-service:8080/sso/realms/armoney/armoney-status/code-session'
+        !env.containsKey('SSO_CODE_INTENT_CLIENTS');!env.containsKey('SSO_CODE_INTENT_ISSUERS')
+        !config.toString().contains(env.SSO_LOGIN_PROOF_CONFIRM_KEY)
+    }
+    def 'every enabled dependency must be explicitly true #name'(){
+        given:def env=environment();env[name]='false'
+        when:new CodeConfirmationConfiguration(env)
+        then:thrown(IllegalArgumentException)
+        where:name << ['AUTH_SSO_CODE_INTENT_STAGE_ENABLED','AUTH_VERIFICATION_AUTHORITY_BRIDGE_ENABLED','AUTH_REGISTRATION_AUTHORITY_COMPLETION_ENABLED',
+            'AUTH_REGISTRATION_ELIGIBILITY_GRANTS_ENABLED','AUTH_VERIFICATION_PROJECTION_ENABLED']
+    }
+    def 'missing enabled configuration never allocates partial protocol #name'(){
+        given:def env=environment();env.remove(name)
+        when:new CodeConfirmationConfiguration(env)
+        then:thrown(IllegalArgumentException)
+        where:name << ['SSO_LOGIN_PROOF_WRITER_ID','SSO_LOGIN_PROOF_WRITE_KEY','SSO_LOGIN_PROOF_CONFIRM_KEY','SSO_CODE_INTENT_LOOKUP_KEY',
+            'AUTH_TO_SSO_STATUS_KEY','SSO_ENROLLMENT_STATUS_ORIGIN','SSO_CODE_INTENT_CODE_KEY_IDS','SSO_CODE_INTENT_ACTORS',
+            'SSO_LOGIN_PROOF_RETENTION_HMAC_KEY','SSO_CODE_INTENT_DETAIL_ENCRYPTION_KEY']
+    }
+    def 'old C1 projection disagreement or positive enforcement is rejected'(){
+        when:new CodeConfirmationConfiguration(environment()+change)
+        then:thrown(IllegalArgumentException)
+        where:change << [[SSO_CODE_INTENT_CLIENTS:'armoney-web'],[SSO_CODE_INTENT_ISSUERS:'https://foreign.example/realm'],
+            [AUTH_SSO_LOGIN_PROOF_ENABLED:'true'],[SSO_CODE_INTENT_CODE_KEY_IDS:'one,two,three'],[SSO_LOGIN_PROOF_WRITER_ID:'foreign']]
+    }
+    def 'matching old projections remain valid and independently selected incomplete bridge rejects'(){
+        given:def env=environment()+[SSO_CODE_INTENT_ISSUERS:environment().SSO_ISSUER,SSO_CODE_INTENT_CLIENTS:'armoney-ios,armoney-web']
+        expect:new CodeConfirmationConfiguration(env).enabled
+        when:new CodeConfirmationConfiguration(env+[AUTH_LOGIN_PROOF_BRIDGE_ENABLED:'true'])
+        then:thrown(IllegalArgumentException)
+    }
+    def 'malformed enabled dependency literals never coerce truthy values'(){
+        when:new CodeConfirmationConfiguration(environment()+[AUTH_SSO_CODE_INTENT_STAGE_ENABLED:value])
+        then:thrown(IllegalArgumentException)
+        where:value << ['TRUE','1',' true','',null]
+    }
+    def 'new directional credentials enforce exact printable ASCII bounds #name #size'(){
+        when:new CodeConfirmationConfiguration(environment()+[(name):value])
+        then:thrown(IllegalArgumentException)
+        where:
+        name | value | size
+        'SSO_LOGIN_PROOF_CONFIRM_KEY' | 'x'*31 | 31
+        'SSO_LOGIN_PROOF_CONFIRM_KEY' | 'x'*257 | 257
+        'SSO_LOGIN_PROOF_CONFIRM_KEY' | 'x'*31+' ' | 32
+        'SSO_CODE_INTENT_LOOKUP_KEY' | 'x'*31+'\n' | 32
+        'SSO_CODE_INTENT_LOOKUP_KEY' | 'x'*31+'\u00e9' | 32
+        'SSO_CODE_INTENT_LOOKUP_KEY' | null | 0
+    }
+    def 'standalone C1 requirements remain unchanged when C2 is off'(){
+        given:def env=CodeIntentConfigurationSpec.environment();env.remove('SSO_CODE_INTENT_CLIENTS')
+        expect:!new CodeConfirmationConfiguration(env).enabled
+        when:new CodeIntentConfiguration(env)
+        then:thrown(IllegalArgumentException)
+    }
+    def 'unknown unsupported foreign or empty enabled managed scope fails locally'(){
+        when:new CodeConfirmationConfiguration(environment()+[ARMONEY_SSO_MANAGED_PAIRS:pairs])
+        then:thrown(IllegalArgumentException)
+        where:pairs << ['[]',JsonOutput.toJson([[issuer:'https://foreign.example/sso/realms/armoney',client_id:'armoney-web']]),
+            JsonOutput.toJson([[issuer:CodeIntentConfigurationSpec.environment().SSO_ISSUER,client_id:'not-a-public-client']])]
+    }
+    def 'only locally detectable path or origin disagreement rejects without remote probes'(){
+        when:new CodeConfirmationConfiguration(environment()+change)
+        then:thrown(IllegalArgumentException)
+        where:change << [[SSO_ENROLLMENT_STATUS_ORIGIN:'http://127.0.0.1:1'],[SSO_ENROLLMENT_STATUS_ORIGIN:'https://provider.example/not-origin'],
+            [SSO_ENROLLMENT_STATUS_ORIGIN:'https://user@provider.example'],[SSO_ENROLLMENT_STATUS_ORIGIN:'https://provider.example/?q=1']]
+    }
+    def 'syntactically valid unreachable fixed private origin needs no startup HTTP or remote endpoint proof'(){
+        given:def config=new CodeConfirmationConfiguration(environment()+[SSO_ENROLLMENT_STATUS_ORIGIN:'https://unavailable.invalid'])
+        expect:config.enabled;config.observerEndpoint().path=='/sso/realms/armoney/armoney-status/code-session'
+    }
+    def 'same locally configured issuer and pair still reject incompatible fixed observer realm path'(){
+        given:
+        String issuer='https://issuer.example/sso/realms/other'
+        def env=environment()+[SSO_ISSUER:issuer,ARMONEY_SSO_MANAGED_PAIRS:JsonOutput.toJson([[issuer:issuer,client_id:'armoney-web']])]
+        when:new CodeConfirmationConfiguration(env)
+        then:thrown(IllegalArgumentException)
+    }
+    def 'retained ring members and constructor supplied duplicate bytes cannot escape local separation'(){
+        given:def env=environment()+[SSO_LOGIN_PROOF_RETENTION_HMAC_PREVIOUS_KEYS:'old:'+environment().SSO_CODE_INTENT_DETAIL_ENCRYPTION_KEY]
+        when:new CodeConfirmationConfiguration(env)
+        then:thrown(IllegalArgumentException)
+        when:new CodeConfirmationConfiguration(environment(),['one':([78]*32) as byte[],'two':([78]*32) as byte[]])
+        then:thrown(IllegalArgumentException)
+    }
+    def 'locally available material equality is rejected across roles and retained rings'(){
+        given:def env=environment();env[name]=env.SSO_LOGIN_PROOF_CONFIRM_KEY
+        when:new CodeConfirmationConfiguration(env)
+        then:thrown(IllegalArgumentException)
+        where:name << ['SSO_CODE_INTENT_LOOKUP_KEY','SSO_LOGIN_PROOF_WRITE_KEY','SSO_LOGIN_PROOF_RESOLVE_KEY','AUTH_TO_SSO_STATUS_KEY',
+            'SSO_CLIENT_SECRET','INTERNAL_AUTH_KEY','INTERNAL_METRICS_KEY','SSO_MIGRATION_PROOF_WRITE_KEY','MAILTRAP_SMTP_PASSWORD']
+    }
+    def 'raw versus decoded material equality and explicit constructor supplied keys cannot bypass separation'(){
+        given:def env=environment();def raw='q'*32;env.SSO_LOGIN_PROOF_CONFIRM_KEY=raw;env.SSO_CODE_INTENT_LOOKUP_KEY=Base64.encoder.encodeToString(raw.bytes)
+        when:new CodeConfirmationConfiguration(env)
+        then:thrown(IllegalArgumentException)
+        when:new CodeConfirmationConfiguration(environment(),['local-component-key':environment().SSO_LOGIN_PROOF_CONFIRM_KEY.bytes])
+        then:thrown(IllegalArgumentException)
+        when:new CodeConfirmationConfiguration(environment(),['local-original-key':Base64.decoder.decode(environment().SSO_LOGIN_PROOF_RETENTION_HMAC_KEY)])
+        then:thrown(IllegalArgumentException)
+    }
+    def 'independent injected local material is copied without changing caller arrays and grants no remote completeness claim'(){
+        given:byte[] material=([77]*32) as byte[];byte[] original=material.clone()
+        when:def config=new CodeConfirmationConfiguration(environment(),['local-component-key':material])
+        then:config.enabled;Arrays.equals(material,original)
+    }
+    def 'injected raw and encoded bytes compare crosswise on BOTH sides without modifying callers'(){
+        given:
+        byte[] raw=('q'*32).bytes
+        byte[] encoded=Base64.encoder.encode(raw)
+        byte[] frozenRaw=raw.clone();byte[] frozenEncoded=encoded.clone()
+        when:new CodeConfirmationConfiguration(environment(),['raw':raw,'encoded':encoded])
+        then:thrown(IllegalArgumentException)
+        Arrays.equals(raw,frozenRaw);Arrays.equals(encoded,frozenEncoded)
+        when:new CodeConfirmationConfiguration(environment()+[SSO_LOGIN_PROOF_CONFIRM_KEY:new String(raw,java.nio.charset.StandardCharsets.US_ASCII)],['encoded':encoded])
+        then:thrown(IllegalArgumentException)
+        Arrays.equals(raw,frozenRaw);Arrays.equals(encoded,frozenEncoded)
+        when:new CodeConfirmationConfiguration(environment(),['encoded':encoded,'raw':raw])
+        then:thrown(IllegalArgumentException)
+    }
+    def 'independent opaque nontext bytes and independent encoded material remain accepted defensively'(){
+        given:
+        byte[] opaque=([-1,-2,0,1]*8) as byte[]
+        byte[] independent=Base64.encoder.encode(([99]*32) as byte[])
+        byte[] first=opaque.clone();byte[] second=independent.clone()
+        when:def config=new CodeConfirmationConfiguration(environment(),['opaque':opaque,'independent':independent])
+        then:config.enabled;Arrays.equals(opaque,first);Arrays.equals(independent,second)
+    }
+    def 'malformed observer credential URI is redacted without a retained cause or input'(){
+        given:String secret='synthetic-observer-private-password'
+        when:new CodeConfirmationConfiguration(environment()+[SSO_ENROLLMENT_STATUS_ORIGIN:'https://user:'+secret+'@[broken'])
+        then:
+        def rejected=thrown(IllegalArgumentException)
+        rejected.message=='Invalid code confirmation configuration';rejected.cause==null
+        def trace=new StringWriter();rejected.printStackTrace(new PrintWriter(trace))
+        !trace.toString().contains(secret);!trace.toString().contains('https://user:')
+    }
+}
