@@ -4,7 +4,16 @@ version = '0.1.0'
 repositories { mavenCentral() }
 java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
 def keycloakVersion = '26.7.4'
+// Pinned server APIs only: never bundled into the disposable fixture JAR.
+def reactiveVersion = '3.33.3.2'
+def providerArtifact = files('../build/libs/armoney-keycloak-provider-0.1.0.jar')
 dependencies {
+    compileOnly 'io.vertx:vertx-core:4.5.31'
+    testImplementation 'io.vertx:vertx-core:4.5.31'
+    compileOnly providerArtifact
+    testImplementation providerArtifact
+    compileOnly "io.quarkus.resteasy.reactive:resteasy-reactive:${reactiveVersion}"
+    testImplementation "io.quarkus.resteasy.reactive:resteasy-reactive:${reactiveVersion}"
     compileOnly "org.keycloak:keycloak-server-spi:${keycloakVersion}"
     compileOnly "org.keycloak:keycloak-server-spi-private:${keycloakVersion}"
     compileOnly "org.keycloak:keycloak-services:${keycloakVersion}"

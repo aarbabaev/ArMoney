@@ -1426,6 +1426,23 @@ and constructs keys before allocating its single owned HTTP transport. Disabled
 configuration returns no resources. It copies caller-supplied local key material,
 cleans up failed construction and closes owned resources idempotently; callers
 remain responsible for a complete local current/retained secret inventory.
-Independent source review approved this boundary; its four new tests have not
-been compiled or executed. It adds no SPI registration, hook or token release.
+At `d8638d0eff87c5802c7b4a187e40154d8b14a4fe`, isolated Java 21 compilation and
+32 focused tests across five suites passed with zero failures, errors or skips,
+including four lifecycle tests. Independent QA and security verified retained
+reports and source provenance. These unit tests use fake clients; they do not
+prove physical transport shutdown or key zeroization. It adds no SPI registration,
+hook or token release. The later fixture and modified deadline source described
+below have separate, unexecuted checks.
 Runtime lifecycle, combined Auth confirmation, DNS and clock gates remain open.
+
+An acceptance-only code-intent fixture source candidate adds explicit installation,
+bounded control handles, a native required-action continuation, original-request
+transaction outcome tracking and authenticated node-B membership before lookup
+and confirmation. Its local body timer retains only a transport connection and
+serializes completion against expiry. The invocation deadline retains its original
+sample and caps both the outer bound and four-second producer window without
+renewal. Independent source review is not runtime proof: 24 fixture tests and
+12 deadline tests remain uncompiled and unrun. Bootstrap, disposable SPI/theme
+wiring, physical body/DNS termination, classloader compatibility, clocks and
+genuine combined acceptance remain open; production eligibility and activation
+are unchanged. See the acceptance-fixture README for the evidence boundary.

@@ -1,4 +1,39 @@
-# Disposable observer acceptance fixture
+# Disposable observer and code-intent acceptance fixtures
+
+## Code-intent source candidate
+
+The code-intent fixture is acceptance-only source, not a completed combined
+acceptance flow. Its 24 fixture tests and 12 invocation-deadline tests have not
+been compiled or executed. Independent source review checked the bounded control
+state, native request ownership, strict UTF-8 parsing and original deadline
+intersection; this does not establish runtime readiness.
+
+Explicit disposable bootstrap must install the fixture's settings, code-intent
+resources and transport. Factories remain unavailable without installation.
+Production SPI registration and `VerificationAction` eligibility rules are
+unchanged. Disposable SPI/theme packaging, bootstrap, lifecycle maintenance and
+the exact HTTPS `/sso/realms/armoney` two-node topology still need integration.
+Auth authority must come from real verification consumption, materialization and
+persisted User projection acknowledgements. LOCALSMTPTEST evidence uses an
+ephemeral in-process transport peer and is not Mailtrap Sandbox delivery proof.
+
+The request-body guard source authenticates before allocating one of eight local
+permits, uses HTTP/1.1 connection-only timer capture and serializes completion
+against expiry. The original transaction callback captures only experiment ID;
+transaction commit is distinct from the driver's HTTP-response assertion.
+Authenticated node-B membership, lookup and confirmation share one original
+four-second invocation budget. These are source properties pending compilation
+and independent execution, not physical-timeout guarantees.
+
+Required open gates include locator-before-buffering behavior, stalled/drip body
+termination and reader release, keep-alive/timer cleanup races, physical DNS
+cancellation, clock assumptions, cross-JAR classloader compatibility and genuine
+native two-node acceptance. No token redemption, banking session, notice,
+production hook activation or positive feature-completion claim follows from
+this candidate.
+
+The observer fixture contract and historical build instructions below describe
+the existing observer tooling; they do not establish code-intent acceptance.
 
 This independent Java 21 / Keycloak 26.7.4 module is destructive test tooling,
 not part of the production provider, its SPI descriptors, or its image. Never
