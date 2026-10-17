@@ -56,7 +56,7 @@ class CodeIntentAuthorityFixtureIntegrationSpec extends Specification {
             CI:'true',CODE_SESSION_ACCEPTANCE_ISOLATED:'true',AUTH_VERIFICATION_DELIVERY_ENABLED:'false',
             AUTH_CODE_INTENT_FIXTURE_PROVIDER_KEY:FIXTURE_KEY,
             INTERNAL_AUTH_KEY:'synthetic-joint-auth-user-internal-service-key',
-            SSO_INTROSPECTION_URL:'http://127.0.0.1:1/unused',SSO_CLIENT_ID:'armoney-web',SSO_CLIENT_SECRET:'synthetic-joint-introspection-client-secret',
+            SSO_INTROSPECTION_URL:'http://127.0.0.1:1/sso/realms/armoney/protocol/openid-connect/token/introspect',SSO_CLIENT_ID:'armoney-web',SSO_CLIENT_SECRET:'synthetic-joint-introspection-client-secret',
             USER_BASE_URL:'http://127.0.0.1:'+userPort,
             VERIFICATION_SMS_SEND_TOKEN:SMS_SEND,SMS_SANDBOX_READ_TOKEN:SMS_READ,
             MAILTRAP_SMTP_USERNAME:'synthetic-joint-smtp-user',MAILTRAP_SMTP_PASSWORD:'synthetic-joint-smtp-password',MAILTRAP_FROM_EMAIL:'synthetic@example.test']
@@ -80,6 +80,10 @@ class CodeIntentAuthorityFixtureIntegrationSpec extends Specification {
     }
     static int freePort(){int port;new ServerSocket(0,0,InetAddress.loopbackAddress).withCloseable{port=it.localPort};port}
     void spawn(String module,String main,Map supplied,int port){
+        String healthPath=switch(module){
+            case 'auth-service','user-service','sms-sandbox'->'/health/ready'
+            default->throw new AssertionError('Unknown isolated fixture module')
+        }
         Path lib=(module=='auth-service'?Path.of('build','install',module,'lib'):Path.of('..',module,'build','install',module,'lib')).toAbsolutePath().normalize()
         assert Files.isDirectory(lib):'Actual distribution required; no substitute or fabricated ACK fallback'
         String java=Path.of(System.getProperty('java.home'),'bin',System.getProperty('os.name').toLowerCase().contains('win')?'java.exe':'java').toString()
@@ -91,12 +95,18 @@ class CodeIntentAuthorityFixtureIntegrationSpec extends Specification {
         Process process=builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();children.add(process)
         long limit=System.nanoTime()+TimeUnit.SECONDS.toNanos(35)
         boolean ready=false
+        int lastHttpStatus=-1
         while(!ready&&process.alive&&System.nanoTime()<limit){
-            try{ready=client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:${port}/health/ready")).timeout(Duration.ofSeconds(2)).GET().build(),HttpResponse.BodyHandlers.discarding()).statusCode()==200}
+            try{
+                lastHttpStatus=client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:${port}${healthPath}")).timeout(Duration.ofSeconds(2)).GET().build(),HttpResponse.BodyHandlers.discarding()).statusCode()
+                ready=lastHttpStatus==200
+            }
             catch(IOException ignored){}
             if(!ready)Thread.sleep(25)
         }
-        assert ready:"Isolated child unavailable; private synthetic log: ${log}"
+        boolean alive=process.alive
+        String exit=alive?'RUNNING':process.exitValue().toString()
+        assert ready:"Isolated child unavailable; module=${module}; alive=${alive}; exit=${exit}; lastHttpStatus=${lastHttpStatus}; private synthetic log: ${log}"
     }
     def setup(){
         int n=sequence.incrementAndGet()
