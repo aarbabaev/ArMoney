@@ -63,6 +63,8 @@ scrapes return Prometheus text format
 | `Gauge.OUTBOX_BACKLOG` | `armoney_outbox_backlog` | Records awaiting outbox delivery |
 | `Counter.RECOVERY_FAILURES` | `armoney_recovery_failures_total` | Failed recovery attempts in this process |
 | `Counter.OUTBOX_FAILURES` | `armoney_outbox_failures_total` | Failed delivery attempts in this process |
+| `Gauge.RECOVERY_OLDEST_PENDING_AGE_SECONDS` | `armoney_recovery_oldest_pending_age_seconds` | Elapsed age of the oldest mapped pending payment |
+| `Gauge.OUTBOX_OLDEST_PENDING_AGE_SECONDS` | `armoney_outbox_oldest_pending_age_seconds` | Elapsed age of the oldest pending email outbox row |
 
 Use `set(Gauge, long)` for a valid nonnegative observation,
 `increment(Counter)` for an observed failed attempt, and `unavailable(Gauge)` when
@@ -93,7 +95,40 @@ exceptions cannot change payment, retry or outbox outcomes.
 Counters reset on process restart and remain omitted/UNKNOWN until the first
 observed failure. Persisted attempt counts are not historical failure totals.
 Optional replica observation is described below; its deployment remains separate.
-Queue age is not measured.
+Pending-age observation is implemented in source as described below. On
+2026-10-16, affected Payment/runtime checks passed 272 tests across 20 suites
+(Payment 242, runtime 30), with zero failures, errors or skips in 62.2 seconds.
+An independent reviewer matched the tested source manifest and recounted the
+XML results. The collector's 19 tests passed separately. Exact-head CI, actual
+Compose acceptance and deployment remain pending.
+
+### Oldest unresolved age
+
+Payment reads both counts and ages in one read-only PostgreSQL statement, using
+one `statement_timestamp()` anchor. The populations match the existing counts:
+mapped `PENDING` payments and all `PENDING` outbox rows, including active leases,
+delayed retries and exhausted attempts awaiting terminalization. Age starts at
+the durable row's `created_at`, not its last claim or retry, and is floored to
+integer seconds. No rows, leases, attempts or financial state are changed.
+
+An empty population has known age zero. Any future or nonfinite creation time
+in a population makes only that age unknown; valid counts and the other age
+remain available. A database observation failure removes all four count/age
+gauges. A present age does not prove worker progress or freshness beyond the
+collector snapshot's expiry.
+
+The collector accepts both new names. Optional positive integer configuration
+keys `recovery_oldest_pending_age_seconds_limit` and
+`outbox_oldest_pending_age_seconds_limit` control `RECOVERY_AGE_LIMIT` and
+`OUTBOX_AGE_LIMIT`; equality fires. Missing thresholds or measurements yield
+UNKNOWN, not CLEAR. Existing private collector configurations remain valid.
+The example's 300-second values are local tuning examples, not delivery SLAs.
+
+Roll out the updated collector before a Payment producer emits these names:
+older strict collectors reject unfamiliar measurements and would mark the
+whole scrape unavailable. Verify bounded parsing, empty zeroes, invalid-time
+omission, database-failure clearing and recovery in isolated acceptance. Never
+run the deliberate-outage smoke test on persistent data.
 
 On 2026-10-16, the affected Payment check passed 231 tests with zero failures,
 errors or skips, including 26 worker-observation cases and PostgreSQL payment

@@ -190,7 +190,7 @@ for target in result['targets']:
  else:
   assert target['availability']==1 and values['armoney_ready']==1
  if target['service']=='payment-service':
-  assert all((values[name] is None if FAILED else values[name]==0) for name in ('armoney_recovery_backlog','armoney_outbox_backlog'))
+  assert all((values[name] is None if FAILED else values[name]==0) for name in ('armoney_recovery_backlog','armoney_outbox_backlog','armoney_recovery_oldest_pending_age_seconds','armoney_outbox_oldest_pending_age_seconds'))
  assert values['armoney_replica_lag_seconds'] is None
  for name in ('armoney_recovery_failures_total','armoney_outbox_failures_total'):
   value=values[name]

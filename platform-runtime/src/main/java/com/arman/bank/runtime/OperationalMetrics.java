@@ -10,7 +10,9 @@ public final class OperationalMetrics {
         READY("armoney_ready", "Whether the configured readiness probe currently succeeds."),
         RECOVERY_BACKLOG("armoney_recovery_backlog", "Commands waiting for operational recovery."),
         REPLICA_LAG_SECONDS("armoney_replica_lag_seconds", "Observed replication lag in seconds."),
-        OUTBOX_BACKLOG("armoney_outbox_backlog", "Outbox records waiting for delivery.");
+        OUTBOX_BACKLOG("armoney_outbox_backlog", "Outbox records waiting for delivery."),
+        RECOVERY_OLDEST_PENDING_AGE_SECONDS("armoney_recovery_oldest_pending_age_seconds", "Age of the oldest unresolved recovery record in seconds."),
+        OUTBOX_OLDEST_PENDING_AGE_SECONDS("armoney_outbox_oldest_pending_age_seconds", "Age of the oldest unresolved outbox record in seconds.");
 
         private final String name;
         private final String description;
