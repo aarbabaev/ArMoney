@@ -118,9 +118,21 @@ and key validation precede HTTP allocation; disabled configuration returns empty
 Enabled resources own one transport and release it after construction failure.
 Supplied key bytes are copied; the caller must supply its complete local current
 and retained secret inventory. Close revokes access; it does not promise key
-zeroization. Independent source review passed, but the four new tests remain
-uncompiled and unrun. No SPI registration, hook, token release or activation is
-added; combined runtime, physical DNS termination and clock gates remain open.
+zeroization. At source `d8638d0eff87c5802c7b4a187e40154d8b14a4fe`, the isolated
+run passed 32 focused tests across five suites with zero failures, errors or
+skips: four lifecycle tests plus the prior 28 client/HTTP/configuration/deadline
+tests. Independent QA and security verified the evidence and matching source.
+The lifecycle cases cover disabled/invalid configuration without allocation,
+defensive copies, one owned transport, idempotent close, post-close denial,
+construction-failure cleanup and leaving borrowed HTTP clients open. The runner
+exited zero with cleanup verified; overall elapsed time was 97.109 seconds
+(BUILD 50 seconds). Retained evidence is under
+`D:/ArMoneyDockerRecovery/2026-10-17/auth-code-confirmation/` with run suffix
+`59a352bd3110436aa94e1ab22090c92e`; archive SHA256 is
+`b9c7eb361437b018b8486645b028e1b8ae6310bf20916e7c442ee0a06fa4a61f`.
+These are synthetic-client unit tests, not real-network, physical DNS termination
+or zeroization proof. No SPI registration, hook, token release or activation is
+added; combined runtime and clock gates remain open.
 
 `CodeIntentClient` and `CodeIntentHttp` provide separate narrow stage, original-key
 lookup and confirmation operations at `/internal/sso-code-intents`,
