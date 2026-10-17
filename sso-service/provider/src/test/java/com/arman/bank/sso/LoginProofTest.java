@@ -23,6 +23,38 @@ final class LoginProofTest {
         return "{\"proof_id\":\""+PROOF+"\",\"event_id\":\""+EVENT+"\",\"kind\":\"interactive\",\"login_notice_eligible\":true,\"issued_at\":\""+NOW+"\",\"expires_at\":\""+EXPIRY+"\""
                 +(write?",\"code_key_id\":\"current\",\"state\":\"RECORDED\"":"")+"}";
     }
+    static String reuseReply() {
+        return reply(true).replace("\""+EVENT+"\"","null").replace("\"interactive\"","\"reuse\"")
+                .replace("\"login_notice_eligible\":true","\"login_notice_eligible\":false");
+    }
+    @Test void reuseHttpPayloadKeepsExactFieldsAndExplicitNullsWithPinnedSerialization() throws Exception {
+        var original=write();
+        var reuse=new LoginProof.Write(original.command(),original.digest(),original.keyId(),original.binding(),
+                original.authenticationSession(),original.issued(),original.expires(),"reuse",null,null);
+        var transport=new Transport(new Reply(200,reuseReply()));
+        var proof=client(transport).write(reuse);
+        assertFalse(proof.eligible()); assertNull(proof.event()); assertEquals("reuse",proof.kind());
+        byte[] bytes=requestBody(transport.requests.getFirst());
+        var parsed=Bridge.strictJson(bytes);
+        var fields=new HashSet<String>(); parsed.fieldNames().forEachRemaining(fields::add);
+        assertEquals(Set.of("command_id","code_digest","code_key_id","issuer","subject","client_id",
+                "user_session_id","authentication_session_id","issued_at","expires_at","kind",
+                "event_id","password_authenticated_at"),fields);
+        assertTrue(parsed.has("event_id") && parsed.get("event_id").isNull());
+        assertTrue(parsed.has("password_authenticated_at") && parsed.get("password_authenticated_at").isNull());
+        assertEquals(reuse,LoginProof.write(parsed));
+    }
+    static byte[] requestBody(HttpRequest request) throws Exception {
+        var bytes=new java.io.ByteArrayOutputStream();
+        var completed=new CompletableFuture<byte[]>();
+        request.bodyPublisher().orElseThrow().subscribe(new Flow.Subscriber<ByteBuffer>() {
+            public void onSubscribe(Flow.Subscription subscription){subscription.request(Long.MAX_VALUE);}
+            public void onNext(ByteBuffer buffer){byte[] chunk=new byte[buffer.remaining()];buffer.get(chunk);bytes.writeBytes(chunk);}
+            public void onError(Throwable error){completed.completeExceptionally(error);}
+            public void onComplete(){completed.complete(bytes.toByteArray());}
+        });
+        return completed.get(2,TimeUnit.SECONDS);
+    }
     @Test void digestMatchesIndependentDotNetHmacFixtureAndSeparatesCodeAndKey() {
         var ring=keys(); String digest=ring.digest(ring.keys().getFirst(),BINDING,CODE);
         assertEquals("7e5bb9463854e899859ae9b1ca92f336a81a42b8f207e1b66c04c20b2e0cf130",digest);

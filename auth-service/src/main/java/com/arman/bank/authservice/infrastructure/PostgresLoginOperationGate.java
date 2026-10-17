@@ -8,9 +8,9 @@ import java.util.Objects;
 import java.util.function.Function;
 import org.jooq.DSLContext;
 
-/** Dormant authorized-operation admission, not a physical orphan-HTTP worker bound.
+/** Shared authorized-operation admission, not a physical orphan-HTTP worker bound.
  * The caller owns one PRIMARY session for the entire scope; no connection is acquired here.
- * Session/transaction pooling is unsupported. No production caller selects this gate yet. */
+ * Session/transaction pooling is unsupported. Used by the default-off private proof bridge. */
 public final class PostgresLoginOperationGate {
     private static final int NAMESPACE=0x41524D4F;
     private static final int SLOTS=16;
