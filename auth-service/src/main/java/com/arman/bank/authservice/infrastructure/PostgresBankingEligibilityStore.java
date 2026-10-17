@@ -131,20 +131,42 @@ public final class PostgresBankingEligibilityStore implements BankingEligibility
     private Current current(UUID enrollment,Flow flow,Observation observation,Instant admittedAt) {
         BankingEligibility.fresh(flow,observation,admittedAt,now());
         IdentityVerification.evidence(flow,observation,now());
+        Current result=currentLocal(enrollment,flow.issuer(),flow.subject(),observation.email(),observation.phone());
+        BankingEligibility.fresh(flow,observation,admittedAt,now());
+        return result;
+    }
+    @Override public com.arman.bank.authservice.domain.LoginProof.CurrentEvidence requireForProof(
+            com.arman.bank.authservice.domain.LoginProof.Binding binding,
+            com.arman.bank.authservice.domain.LoginProof.Observation observation,Instant admittedAt){
+        PostgresVerificationProjectionStore.requireLocked(sql);
+        com.arman.bank.authservice.domain.LoginProof.observation(binding,observation,admittedAt,now());
+        var e=sql.fetchOne("select id from verification_enrollments where issuer=? and subject=?",binding.issuer(),binding.subject());
+        if(e==null)fail(Verification.Error.CONFLICT);
+        Current current=currentLocal(e.get("id",UUID.class),binding.issuer(),binding.subject(),observation.email(),observation.phone());
+        var grant=sql.fetchOne("select * from banking_eligibility_grants where identity_id=? and verification_epoch=?",current.identity(),current.projection().verificationEpoch());
+        if(grant==null||!matches(grant,current))fail(Verification.Error.CONFLICT);
+        Instant deadline=Collections.min(List.of(current.deadline(),time(grant,"expires_at"),observation.sessionDeadline(),admittedAt.plusSeconds(5)));
+        var result=new com.arman.bank.authservice.domain.LoginProof.CurrentEvidence(binding,snapshot(grant),current.email().get("canonical_value",String.class),admittedAt,deadline);
+        Instant checked=now();
+        com.arman.bank.authservice.domain.LoginProof.observation(binding,observation,admittedAt,checked);
+        if(!result.completeFor(binding,checked))fail(Verification.Error.UNAVAILABLE);
+        return result;
+    }
+    private Current currentLocal(UUID enrollment,String issuer,String subject,String emailValue,String phoneValue) {
         var e=sql.fetchOne("select * from verification_enrollments where id=? for update",enrollment);
         var a=sql.fetchOne("select * from verification_authorities where enrollment_id=? for update",enrollment);
         var marker=sql.fetchOne("select identity_id from managed_registration_principals where enrollment_id=?",enrollment);
-        if(e==null||a==null||marker==null||!flow.issuer().equals(e.get("issuer"))||!flow.subject().equals(e.get("subject")))fail(Verification.Error.CONFLICT);
+        if(e==null||a==null||marker==null||!issuer.equals(e.get("issuer"))||!subject.equals(e.get("subject")))fail(Verification.Error.CONFLICT);
         UUID identity=marker.get("identity_id",UUID.class);
         if(!identity.equals(a.get("mapped_identity_id",UUID.class))||!identity.equals(a.get("pending_identity_id",UUID.class))
                 ||!"PROJECTED".equals(a.get("state"))||!"VERIFIED".equals(e.get("state")))fail(Verification.Error.CONFLICT);
         if(sql.fetchOne("select id from identities where id=? for update",identity)==null
-                ||sql.fetchOne("select identity_id from external_identities where issuer=? and subject=? and identity_id=? for update",flow.issuer(),flow.subject(),identity)==null)fail(Verification.Error.CONFLICT);
+                ||sql.fetchOne("select identity_id from external_identities where issuer=? and subject=? and identity_id=? for update",issuer,subject,identity)==null)fail(Verification.Error.CONFLICT);
         Instant deadline=Collections.min(List.of(time(e,"expires_at"),time(a,"expires_at")));
         if(!now().isBefore(deadline))fail(Verification.Error.UNAVAILABLE);
         var email=candidate(a,"email_candidate_id",enrollment,"REGISTRATION_EMAIL");
         var phone=candidate(a,"phone_candidate_id",enrollment,"REGISTRATION_PHONE");
-        if(!Objects.equals(observation.email(),email.get("canonical_value"))||!Objects.equals(observation.phone(),phone.get("canonical_value"))
+        if(!Objects.equals(emailValue,email.get("canonical_value"))||!Objects.equals(phoneValue,phone.get("canonical_value"))
                 ||!Objects.equals(e.get("email"),email.get("canonical_value"))||!Objects.equals(e.get("phone"),phone.get("canonical_value")))fail(Verification.Error.CONFLICT);
         if(sql.fetchOne("select phone from verification_authority_phone_claims where phone=? and enrollment_id=?",phone.get("canonical_value"),enrollment)==null)fail(Verification.Error.CONFLICT);
         if(sql.fetchOne("select id from identities where registration_phone=? and id<>?",phone.get("canonical_value"),identity)!=null)fail(Verification.Error.CONFLICT);
@@ -167,8 +189,7 @@ public final class PostgresBankingEligibilityStore implements BankingEligibility
                 ||!email.get("version",Integer.class).equals(command.get("email_contact_version",Integer.class)))fail(Verification.Error.CONFLICT);
         if(sql.fetchOne("select operation_id from registration_completion_intents where enrollment_id=? and identity_id=? and operation_id=? and verification_epoch=? and projection_revision=?",
                 enrollment,identity,operation,projection.verificationEpoch(),projection.version())==null)fail(Verification.Error.CONFLICT);
-        BankingEligibility.fresh(flow,observation,admittedAt,now());
-        byte[] association=IdentityVerification.hash("armoney-eligibility-association-v1",flow.issuer(),flow.subject(),identity.toString());
+        byte[] association=IdentityVerification.hash("armoney-eligibility-association-v1",issuer,subject,identity.toString());
         return new Current(e,a,email,phone,identity,emailReceipt,phoneReceipt,projection,association,deadline);
     }
     private Record candidate(Record authority,String column,UUID enrollment,String purpose) {

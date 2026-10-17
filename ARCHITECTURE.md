@@ -7,6 +7,15 @@
 > This revision adds the #30 Saga design and #31 optional Kafka infrastructure
 > source; Kafka cluster acceptance and deployment remain unverified.
 
+The staged internal proof-creation consumer described in
+[ADR 0042](docs/adr/0042-staged-proof-eligibility-consumption.md) now rereads
+current eligibility evidence after persistence work. Its source security review
+and execution audits are clear: the local Auth check passed 766 tests across 43
+suites on 2026-10-16 with no failures, errors or skips. Exact integration-head CI
+and runtime acceptance remain pending. Production proof routes
+retain UNAVAILABLE, managed banking denial remains unconditional, and no
+provider adapter, ACTIVE status or session activation is added.
+
 ## Navigation
 
 1. [Readiness and stack](#readiness-and-stack)
