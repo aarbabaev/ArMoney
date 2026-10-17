@@ -23,7 +23,8 @@ not evidence of a persisted identity: disposable provisioning must precede start
 Core bootstrap accepts explicit configuration; the guarded fixture-only launch
 adapter supplies it. `Dockerfile.code-intent` now declares dedicated disposable
 SPI/theme assembly, without default enable flags or credentials. This image source
-has not been built. Actual orchestration, disabled provisioning followed by restart,
+built at `175c9d1` and passed augmentation and retained JAR/SPI/theme inventory
+checks. Actual orchestration, disabled provisioning followed by restart,
 classloader compatibility and bootstrap invocation remain unverified.
 
 The code-intent fixture is acceptance-only source, not a completed combined
@@ -158,8 +159,8 @@ real delivery, auth route wiring and production activation remain unavailable.
 
 The dedicated profile replaces the observer realm-resource descriptor with only
 `CodeIntentFixtureResourceFactory`, adds the disposable continuation action and
-uses the existing visibility protocol factory for the reviewed code-generation
-hook. It does not register old observer or visibility control resources. Theme
+uses the dedicated `CodeIntentFixtureLoginProtocolFactory` for the reviewed
+code-generation hook. It does not register old observer or visibility control resources. Theme
 discovery metadata and the continuation theme inheriting `armoney` are generated
 only inside this fixture build. Production provider packaging and SPI descriptors
 remain separate and unchanged. Generated fixture inputs and the dedicated
@@ -174,19 +175,24 @@ activation.
 
 The integrated source includes `auth-service/Dockerfile.code-intent-fixture` for
 the guarded test-Java companion. It supplies no isolation flags or credentials
-and has not been built. It is independent of production Auth packaging.
+and built at `175c9d1` with verified non-root Java 21/keytool and retained
+artifact inventory. It is independent of production Auth packaging.
 Separate Auth checkpoint `7aa71f8` reported 967 cases: 966 executed passes and
 one unresolved positive readiness-equivalence skip. Three authority PostgreSQL
 scenarios exercised local SMTP/STARTTLS, SMS and persisted User ACK paths with a
 synthetic provider peer. They do not establish native Keycloak or two-node
-acceptance. Local abort diagnostics and a zero-skip report gate remain unexecuted.
+acceptance. Later diagnostics revealed a test SQL timestamp parameter typing
+failure, preserved at `3fbc50c`. The test-only cast correction at `f274266` then
+passed 972 tests across 41 suites with no failures, errors or skips, including
+the positive readiness case and the strict required-test selection gate.
 
 The first disposable image build at `84a7db5` failed during Keycloak
 augmentation: legacy visibility and code-intent control resources exposed
 duplicate root POST endpoints. Replacing SPI descriptors alone did not isolate
 annotated resources. The SSO final image was not verified, and the sequential
 Auth image stage did not run. Retain this failed result; separate fixture
-artifact profiles and a fresh image build remain required.
+artifact profiles were subsequently implemented and verified by the `175c9d1`
+image build. The earlier failed result remains retained.
 
 The source fix introduces `codeIntentJar`, producing
 `armoney-code-intent-acceptance-fixture-0.1.0.jar` with only the code-intent
@@ -198,5 +204,23 @@ sources and retain the full test suite; `check` also verifies actual JAR class,
 SPI-target and scope inventories. Production provider packaging is unchanged.
 The code-intent Dockerfile selects the dedicated artifact and protocol SPI.
 Archive checks also reject retained class references to excluded profile classes.
-Three new protocol fail-closed unit cases remain unexecuted. This packaging fix
-remains unverified until a fresh build passes Keycloak augmentation.
+At `175c9d1`, both images built and passed their bounded inventory/offline
+checks. Independent audit verified source/archive and retained artifact hashes,
+actual Keycloak augmentation and selected protocol/resource/theme metadata.
+Separate unfiltered checks at the same `175c9d1` archive passed 157 tests
+across 29 suites with zero failures, errors or skips: 104 provider and 53
+fixture cases, including all three new protocol negative cases. Independent
+audit verified actual `verifyFixtureJars` execution and both retained profiles.
+These tests and image checks do not establish native login or activation.
+
+## Disposable realm source
+
+`code-intent-realm.json` defines an isolated `armoney` realm with the existing
+allowed public client `armoney-android`, exact `https://fixture-client/callback`,
+S256 and a required password-proof-only browser flow. Only the fixture
+continuation action is configured. No users or credentials are embedded. This
+new realm definition was not included in the tested `175c9d1` archive and has
+not been imported or exercised. Provision a complete synthetic user while both
+fixtures are disabled, read back its persisted UUID, stop both nodes and restart
+with the enabled exact subject/pair configuration. Production realm data and
+clients remain unchanged.

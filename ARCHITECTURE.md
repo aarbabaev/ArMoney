@@ -1495,15 +1495,17 @@ A dedicated `Dockerfile.code-intent` source now assembles only the disposable
 code-intent realm resource, continuation action and dedicated code-generation
 protocol hook, with fixture-theme discovery and separate provenance. It sets no
 default enable flags or credentials and does not change production SPI packaging.
-This profile has not been built; actual image inventory, classloading, theme
-inheritance and two-stage disposable startup remain verification gates.
+At `175c9d1`, this image built and passed Keycloak augmentation plus retained
+JAR/SPI/theme inventory checks. Runtime classloading, theme rendering and
+two-stage disposable startup remain verification gates.
 
 The Auth-side disposable companion has separate image assembly source at
 `auth-service/Dockerfile.code-intent-fixture`. It compiles test classes and service
 distributions, then runs only the test-Java companion with Auth libraries as a
 non-root user; the JDK remains available for its ephemeral local SMTP certificate.
 No default isolation flag, credential, database or host publication is configured.
-This image has not been built, and compilation is not acceptance execution.
+At `175c9d1`, this image built and passed non-root Java 21/keytool and artifact
+inventory checks. These offline checks are not enabled companion acceptance.
 
 Separate Auth checkpoint `7aa71f8` recorded 946 unit passes, three authority
 PostgreSQL passes and 17 readiness-helper passes, with one positive readiness
@@ -1524,7 +1526,8 @@ augmentation: legacy visibility and code-intent control resources exposed
 duplicate root POST endpoints. Replacing SPI descriptors alone did not isolate
 annotated resources. The SSO final image was not verified, and the sequential
 Auth image stage did not run. Retain this failed result; separate fixture
-artifact profiles and a fresh image build remain required.
+artifact profiles were subsequently implemented and verified by the `175c9d1`
+image build. The earlier failed result remains retained.
 
 The source fix introduces `codeIntentJar`, producing
 `armoney-code-intent-acceptance-fixture-0.1.0.jar` with only the code-intent
@@ -1536,5 +1539,12 @@ sources and retain the full test suite; `check` also verifies actual JAR class,
 SPI-target and scope inventories. Production provider packaging is unchanged.
 The code-intent Dockerfile selects the dedicated artifact and protocol SPI.
 Archive checks also reject retained class references to excluded profile classes.
-Three new protocol fail-closed unit cases remain unexecuted. This packaging fix
-remains unverified until a fresh build passes Keycloak augmentation.
+At `175c9d1`, the fresh sequential SSO/Auth image build passed in 190.438
+seconds; independent audit verified exact archived inputs, retained artifact
+hashes, selected SPI/theme classes, Keycloak augmentation and offline Auth
+Java/keytool checks. Separate unfiltered checks at the same `175c9d1` archive passed 157 tests
+across 29 suites with zero failures, errors or skips: 104 provider and 53
+fixture cases, including all three new protocol negative cases. Independent
+audit verified actual archive-check task execution and both JAR profiles. Native
+login, startup configuration, physical body/DNS termination and activation
+remain outside this image-build evidence.

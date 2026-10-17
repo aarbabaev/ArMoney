@@ -133,8 +133,9 @@ CodeConfirmationResources supplies explicit default-off composition. At 36650b81
 build compiles test classes and Auth/User/SMS distributions; it does not execute
 the acceptance matrix. Runtime contains the test-Java companion and Auth
 libraries, runs as a non-root user, and supplies no default flags or credentials.
-Actual image creation, keytool availability, classloading and disposable topology
-remain unverified. The production Auth distribution does not acquire test classes.
+At `175c9d1`, actual image creation, non-root Java 21/keytool and artifact
+inventory checks passed. Enabled classloading and disposable topology remain
+unverified. The production Auth distribution does not acquire test classes.
 
 At separate checkpoint `7aa71f8`, 946 Auth unit tests and three authority
 PostgreSQL scenarios passed. Readiness equivalence reported 17 passes and one
