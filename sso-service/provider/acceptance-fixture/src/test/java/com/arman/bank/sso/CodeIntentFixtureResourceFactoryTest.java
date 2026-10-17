@@ -8,10 +8,10 @@ import static org.junit.jupiter.api.Assertions.*;
 @ResourceLock("code-intent-fixture-install")
 class CodeIntentFixtureResourceFactoryTest {
     @Test void unknownContextDeniesBeforeAnyBodyOrTimer(){
-        var factory=new CodeIntentFixtureResourceFactory();try(var provider=factory.create(null)){
+        var factory=new CodeIntentFixtureResourceFactory();var provider=factory.create(null);try{
             var failure=assertThrows(jakarta.ws.rs.WebApplicationException.class,provider::getResource);
             assertEquals(503,failure.getResponse().getStatus());assertEquals("no-store",failure.getResponse().getHeaderString("Cache-Control"));
-        }
+        }finally{try{provider.close();}finally{factory.close();}}
     }
     @Test void missingWrongDuplicateAndDirectionalCredentialsDenyBeforeArming(){try(var h=new CodeIntentFixtureSupportTest.Harness()){
         CodeIntentFixtureSupport.install(h.support);
