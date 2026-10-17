@@ -112,6 +112,16 @@ exact-head required CI remain unproven; no production activation follows.
 
 ### Unwired code-intent client
 
+`CodeIntentResources.open(configuration, localKeyMaterial)` now provides an unwired
+lifecycle owner with `client()`, `keys()` and idempotent `close()`. Configuration
+and key validation precede HTTP allocation; disabled configuration returns empty.
+Enabled resources own one transport and release it after construction failure.
+Supplied key bytes are copied; the caller must supply its complete local current
+and retained secret inventory. Close revokes access; it does not promise key
+zeroization. Independent source review passed, but the four new tests remain
+uncompiled and unrun. No SPI registration, hook, token release or activation is
+added; combined runtime, physical DNS termination and clock gates remain open.
+
 `CodeIntentClient` and `CodeIntentHttp` provide separate narrow stage, original-key
 lookup and confirmation operations at `/internal/sso-code-intents`,
 `/internal/sso-code-intents/key` and `/internal/sso-code-intents/confirm`.
