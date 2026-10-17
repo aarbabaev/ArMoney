@@ -22,7 +22,10 @@ DOCKER_ENV = None
 REPO = Path(__file__).resolve().parents[1]
 DBS = {name + '-db': ('bank', 'bank') for name in ('auth', 'user', 'wallet', 'payment', 'ledger')}
 DBS['sso-db'] = ('keycloak', 'keycloak')
+OPTIONAL_DBS = {'assistant-db': ('assistant', 'assistant_operator')}
+ASSISTANT_IMAGE = 'pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d'
 WRITERS = {'edge', 'app-gateway', 'auth-service', 'user-service', 'wallet-service', 'payment-service', 'ledger-service', 'sso-service'}
+OPTIONAL_WRITERS = {'ai-assistant-service', 'assistant-ingestion'}
 AUX = {'ledger-db-replica1', 'ledger-db-replica2', 'ledger-replication-setup'}
 LABEL = 'io.armoney.baseline-verification'
 RELATIONS = """SELECT json_build_object('tables',count(*) FILTER (WHERE relkind IN ('r','p')),
@@ -81,6 +84,8 @@ def local_daemon():
 def db_spec(service):
     if service in DBS:
         return DBS[service]
+    if service in OPTIONAL_DBS:
+        return OPTIONAL_DBS[service]
     if re.fullmatch(r'user-shard-s[1-9][0-9]*', service):
         return ('bank', 'bank')
     return None
@@ -94,11 +99,12 @@ def validate_inventory(items):
         require(labels.get('com.docker.compose.project') == PROJECT, 'Unexpected Compose project')
         require(labels.get('com.docker.compose.oneoff', '').lower() == 'false', 'One-off container rejected')
         require(service not in found, 'Duplicate service container rejected')
-        require(service in WRITERS or service in AUX or db_spec(service), 'Unexpected Compose service')
+        require(service in WRITERS | OPTIONAL_WRITERS or service in AUX or db_spec(service), 'Unexpected Compose service')
         require(re.fullmatch(r'[0-9a-f]{64}', item['Id']) is not None, 'Invalid container ID')
         require(not item['State'].get('Paused') and not item['State'].get('Restarting'), 'Unstable container state')
         if db_spec(service) or service in AUX:
-            require(item['Config']['Image'] == 'postgres:17.6-alpine', 'Unexpected PostgreSQL image')
+            expected_image = ASSISTANT_IMAGE if service == 'assistant-db' else 'postgres:17.6-alpine'
+            require(item['Config']['Image'] == expected_image, 'Unexpected PostgreSQL image')
         if db_spec(service):
             require(item['State']['Running'], 'All discovered primary databases must be running')
             database, user = db_spec(service)
@@ -108,6 +114,8 @@ def validate_inventory(items):
         found[service] = item
     require(DBS.keys() <= found.keys(), 'Missing core database (including Keycloak)')
     require(WRITERS <= found.keys(), 'Missing application/SSO/edge service')
+    require(not (OPTIONAL_WRITERS & found.keys()) or 'assistant-db' in found,
+            'Assistant writer requires its database')
     return found
 
 
@@ -186,11 +194,16 @@ def snapshot_metrics(container, database, user, service, expected_fixture_count=
     tables = json.loads(sql(container, database, user, """SELECT coalesce(json_agg(json_build_array(schemaname,tablename)
     ORDER BY schemaname,tablename),'[]'::json) FROM pg_tables
     WHERE schemaname NOT IN ('pg_catalog','information_schema') AND schemaname NOT LIKE 'pg_toast%';"""))
-    result = {'table_rows': {}, 'flyway': None}
+    result = {'table_rows': {}, 'table_fingerprints': {}, 'flyway': None}
     for schema, table in tables:
         # Identifiers come from PostgreSQL catalogs and are still quoted correctly.
         qualified = '.'.join('"' + name.replace('"', '""') + '"' for name in (schema, table))
         result['table_rows'][schema + '.' + table] = int(sql(container, database, user, 'SELECT count(*) FROM ' + qualified))
+        # Stream only a digest back to Python; preserve every field and duplicate
+        # without exposing database contents in diagnostics or the manifest.
+        result['table_fingerprints'][schema + '.' + table] = sql(container, database, user,
+            "SELECT md5(coalesce(string_agg(row_digest, '' ORDER BY row_digest COLLATE \"C\"),'')) "
+            "FROM (SELECT md5(row_to_json(t)::text) AS row_digest FROM " + qualified + " t) fingerprints")
         if table == 'flyway_schema_history':
             result['flyway'] = json.loads(sql(container, database, user,
                 "SELECT coalesce(json_agg(json_build_object('version',version,'checksum',checksum,'success',success) "
@@ -237,7 +250,32 @@ def owned_resource(kind, name, token):
     return item
 
 
+def restored_ledger_guards(name, database, user, metrics):
+    """Verify restored database guarantees; this is not application replay."""
+    checks = []
+    if metrics['financial']['postings']:
+        for table, assignment, expected in (
+                ('transfers', 'amount_minor=amount_minor', 'Ledger transfers are immutable; post a compensating transfer'),
+                ('transfer_requests', 'outcome=outcome', 'Transfer request identity is immutable')):
+            predicate = 'true' if table == 'transfers' else "outcome<>'PENDING'"
+            if sql(name, database, user, 'SELECT count(*) FROM ' + table + ' WHERE ' + predicate) == '0':
+                continue
+            # Assert the exact trigger error inside PostgreSQL. A syntax error,
+            # lost connection or missing table must fail, never count as rejection.
+            sql(name, database, user, "DO $$ BEGIN BEGIN UPDATE " + table + ' SET ' + assignment +
+                ' WHERE payment_id=(SELECT payment_id FROM ' + table + ' WHERE ' + predicate +
+                " LIMIT 1); RAISE EXCEPTION 'Mutation unexpectedly accepted' USING ERRCODE='P9999'; "
+                "EXCEPTION WHEN SQLSTATE 'P0001' THEN IF SQLERRM<> '" + expected +
+                "' THEN RAISE; END IF; END; END $$;")
+            checks.append(table + '_mutation_rejected')
+        sql(name, database, user, 'INSERT INTO transfers SELECT * FROM transfers WHERE true LIMIT 1 ON CONFLICT(payment_id) DO NOTHING;')
+        require(snapshot_metrics(name, database, user, 'ledger-db') == metrics, 'Original-ID database duplicate altered ledger')
+        checks.append('original_payment_id_database_duplicate_unchanged')
+    return checks
+
+
 def restore_verify(archive, metadata):
+    started = time.monotonic()
     token = uuid.uuid4().hex
     name = 'armoney-verify-' + token + '-postgres'
     volume = 'armoney-verify-' + token + '-data'
@@ -279,7 +317,9 @@ def restore_verify(archive, metadata):
         require(counts == metadata['relations'], 'Restored relation counts differ')
         metrics = snapshot_metrics(name, database, user, metadata['service'], metadata['expected_fixture_count'])
         require(metrics == metadata['metrics'], 'Restored schema/data metrics differ')
-        return {'status': 'database_restore_verified', 'relations': counts, 'metrics_match': True}
+        guards = restored_ledger_guards(name, database, user, metrics) if metadata['service'] == 'ledger-db' else []
+        return {'status': 'database_restore_verified', 'relations': counts, 'metrics_match': True,
+                'database_restore_seconds': round(time.monotonic() - started, 3), 'ledger_database_guards': guards}
     finally:
         # No compose down, pruning, or removal of a source resource is supported.
         if container_created:
@@ -296,9 +336,10 @@ def backup(output, expected_fixture_count=200):
     revision = source_revision()
     found = inventory()
     output = private_directory(output)
-    running = [item['Id'] for service, item in found.items() if service in WRITERS and item['State']['Running']]
+    running = [item['Id'] for service, item in found.items() if service in WRITERS | OPTIONAL_WRITERS and item['State']['Running']]
     manifest = {'format': 1, 'project': PROJECT, 'created_at': datetime.now(timezone.utc).isoformat(),
-                'status': 'incomplete', 'source': revision, 'databases': []}
+                'status': 'incomplete', 'source': revision, 'databases': [],
+                'optional_database_coverage': sorted(OPTIONAL_DBS.keys() & found.keys())}
     manifest_path = output / 'manifest.json'
     def save():
         manifest_path.write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
@@ -309,7 +350,7 @@ def backup(output, expected_fixture_count=200):
         current = inventory()
         require({k: v['Id'] for k, v in current.items()} == {k: v['Id'] for k, v in found.items()},
                 'Compose inventory changed during backup')
-        require(not any(item['State']['Running'] for service, item in current.items() if service in WRITERS),
+        require(not any(item['State']['Running'] for service, item in current.items() if service in WRITERS | OPTIONAL_WRITERS),
                 'Application writers are still running')
         manifest['user_shard_coverage'] = shard_coverage(current)
         save()

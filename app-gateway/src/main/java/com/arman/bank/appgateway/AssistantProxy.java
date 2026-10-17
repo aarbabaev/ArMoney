@@ -25,10 +25,15 @@ public final class AssistantProxy implements AutoCloseable {
         .followRedirects(HttpClient.Redirect.NEVER).build();
     private final Semaphore turns = new Semaphore(4), reads = new Semaphore(16);
     private final AssistantDelegations delegations = new AssistantDelegations();
-    private final AssistantRateLimit quota = new AssistantRateLimit(Clock.systemUTC());
+    private final AssistantRateLimit quota;
 
     public AssistantProxy(URI auth, URI wallets, URI payments, String internalKey,
                           URI assistant, String outboundKey, String inboundKey) {
+        this(auth, wallets, payments, internalKey, assistant, outboundKey, inboundKey, Clock.systemUTC());
+    }
+    AssistantProxy(URI auth, URI wallets, URI payments, String internalKey,
+                   URI assistant, String outboundKey, String inboundKey, Clock clock) {
+        this.quota = new AssistantRateLimit(Objects.requireNonNull(clock));
         this.auth = origin(auth); this.wallets = origin(wallets); this.payments = origin(payments);
         this.internalKey = key(internalKey);
         this.assistant = assistant == null ? null : origin(assistant);

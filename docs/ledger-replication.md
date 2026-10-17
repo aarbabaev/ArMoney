@@ -184,6 +184,12 @@ python scripts/ledger-replication-smoke.py
 
 The smoke creates its own random Compose project, credentials, private network and
 volumes, uses no local `.env`/override/host ports, and removes only that project.
+Before creating fixtures it rejects remote Docker endpoints, resolves a local
+Unix socket or local-dot named pipe, and pins that endpoint for every command,
+including diagnostics and cleanup. Ambient Docker and Compose overrides are
+removed from the subprocess environment.
+Replication shell scripts are LF-pinned in `.gitattributes` so their actual
+bind mounts work from Windows checkouts; no fixture-only line-ending rewrite is used.
 It tests direct streaming, read-only replicas, quorum interruption/recovery,
 primary restart and manual promotion/reparenting with a synchronous write using a generic isolated
 table. Real ledger financial invariants and read routing are tested separately by
