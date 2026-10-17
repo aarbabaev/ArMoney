@@ -156,7 +156,7 @@ def sso(roles, material, subject=None):
         return result
     result.update({"CI": "true", "CODE_SESSION_ACCEPTANCE_ISOLATED": "true",
         "ARMONEY_CODE_INTENT_FIXTURE_ENABLED": "true", "ARMONEY_LOGIN_PROOF_ENABLED": "true",
-        "ARMONEY_VERIFICATION_ENABLED": "true", "SSO_ISSUER": ISSUER,
+        "ARMONEY_VERIFICATION_ENABLED": "true", "ARMONEY_CODE_SESSION_OBSERVATION_ENABLED": "true", "SSO_ISSUER": ISSUER,
         "SSO_VERIFICATION_CLIENT_IDS": CLIENT, "ARMONEY_AUTH_BRIDGE_URL": "http://auth-service:8080",
         "ARMONEY_SSO_MANAGED_PAIRS": packed([{"issuer": ISSUER, "client_id": CLIENT}]).decode(),
         "ARMONEY_SSO_LEGACY_PAIRS": "[]", "SSO_LOGIN_PROOF_WRITER_ID": "sso-provider",
@@ -174,9 +174,9 @@ def sso(roles, material, subject=None):
 
 def initialize(output, phone, email, name, local_material=None):
     require_posix()
-    if not re.fullmatch(r"\+9715[024568][0-9]{7}", phone) or len(email) > 254 or not re.fullmatch(r"[a-z0-9.!#$%&*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+", email):
+    if not re.fullmatch(r"\+9715[024568][0-9]{7}", phone) or len(email) > 254 or not email.endswith((".test", ".invalid")) or not re.fullmatch(r"[a-z0-9.!#$%&*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+", email):
         reject()
-    if not isinstance(name, str) or not 1 <= len(name) <= 100 or not name.strip() or any(ord(c) < 32 or 0xD800 <= ord(c) <= 0xDFFF or c.isspace() and c != " " for c in name):
+    if not isinstance(name, str) or not 1 <= len(name) <= 100 or not name.strip() or any(not 32 <= ord(c) < 127 for c in name):
         reject()
     roles = {role: base64.b64encode(secrets.token_bytes(32)).decode() if role in BINARY else secrets.token_urlsafe(32) for role in ROLES}
     if local_material is not None and not isinstance(local_material, dict):
@@ -213,7 +213,9 @@ def initialize(output, phone, email, name, local_material=None):
         "AUTH_TO_USER_VERIFICATION_PROJECTION_KEY": roles["projection"]}
     files = {"auth.env": encode_env(auth), "authority.env": encode_env(authority), "user.env": encode_env(user),
         "sms.env": encode_env({"SMS_SANDBOX_SEND_TOKEN": roles["sms-send"], "SMS_SANDBOX_READ_TOKEN": roles["sms-read"], "SMS_SANDBOX_DATA_DIR": "/tmp/sms-inbox", "PORT": "8080"}),
-        "sso-off.env": encode_env(sso(roles, material)), "provision.json": packed({"phone": phone, "email": email, "name": name, "password": roles["password"]}),
+        "sso-off.env": encode_env(sso(roles, material)), "provision.json": packed({"CI": "true", "CODE_SESSION_ACCEPTANCE_ISOLATED": "true",
+            "ARMONEY_CODE_INTENT_FIXTURE_ENABLED": "false", "expected_issuer": ISSUER, "admin_username": "admin", "admin_password": roles["admin"],
+            "synthetic_user": {"username": phone, "email": email, "firstName": name, "lastName": "Fixture", "password": roles["password"]}}),
         "inventory.json": packed({"format": 1, "roles": roles, "material": material})}
     for role in ("auth", "user", "sso"):
         files[role + "-db.env"] = encode_env({"POSTGRES_PASSWORD": roles[role + "-db"]})

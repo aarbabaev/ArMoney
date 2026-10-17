@@ -56,8 +56,9 @@ class EnvironmentTests(unittest.TestCase):
         self.assertTrue(authority["SMS_SANDBOX_READ_TOKEN"] == sms["SMS_SANDBOX_READ_TOKEN"])
         self.assertTrue(auth["AUTH_TO_USER_VERIFICATION_PROJECTION_KEY"] == user["AUTH_TO_USER_VERIFICATION_PROJECTION_KEY"])
         provision = b.read_private(self.root / "provision.json")
-        self.assertEqual(set(provision), {"phone", "email", "name", "password"})
-        self.assertTrue(len(provision["password"]) >= 32)
+        self.assertEqual(set(provision), {"CI", "CODE_SESSION_ACCEPTANCE_ISOLATED", "ARMONEY_CODE_INTENT_FIXTURE_ENABLED",
+            "expected_issuer", "admin_username", "admin_password", "synthetic_user"})
+        self.assertTrue(len(provision["synthetic_user"]["password"]) >= 32)
         self.assertFalse((self.root / "sso-on.env").exists())
 
     def test_on_requires_canonical_external_uuid_and_preserves_original_material(self):
@@ -68,12 +69,28 @@ class EnvironmentTests(unittest.TestCase):
         on = env(self.root / "sso-on.env")
         self.assertEqual(on["ARMONEY_CODE_INTENT_FIXTURE_SUBJECT"], subject)
         self.assertEqual(on["ARMONEY_CODE_INTENT_FIXTURE_ENABLED"], "true")
+        self.assertEqual(on["ARMONEY_CODE_SESSION_OBSERVATION_ENABLED"], "true")
+        self.assertNotEqual(env(self.root / "sso-off.env").get("ARMONEY_CODE_SESSION_OBSERVATION_ENABLED"), "true")
         self.assertEqual(on["ARMONEY_AUTH_BRIDGE_URL"], "http://auth-service:8080")
         self.assertTrue(before == (self.root / "inventory.json").read_bytes())
         self.assertFalse(any("RETENTION" in k or "ENCRYPTION" in k for k in on))
         self.assertEqual(set(json.loads(on["ARMONEY_CODE_INTENT_FIXTURE_LOCAL_MATERIAL"])), {"code-v1"})
         with self.assertRaises(FileExistsError):
             b.enable(self.root, subject)
+
+    def test_generated_provisioning_input_is_accepted_by_actual_sso_parser(self):
+        self.generate()
+        helper_path = Path(__file__).resolve().parents[4] / "sso-service/provider/acceptance-fixture/provision-code-intent-realm.py"
+        helper_spec = importlib.util.spec_from_file_location("provision_code_intent", helper_path)
+        helper = importlib.util.module_from_spec(helper_spec)
+        helper_spec.loader.exec_module(helper)
+        parsed = helper.configuration((self.root / "provision.json").read_bytes())
+        self.assertEqual(parsed["expected_issuer"], b.ISSUER)
+        self.assertEqual(parsed["admin_username"], "admin")
+        self.assertTrue(parsed["admin_password"] == env(self.root / "sso-off.env")["KC_BOOTSTRAP_ADMIN_PASSWORD"])
+        self.assertEqual(parsed["synthetic_user"]["username"], "+971501234567")
+        self.assertEqual(parsed["synthetic_user"]["firstName"], "Synthetic Fixture")
+        self.assertEqual(parsed["synthetic_user"]["lastName"], "Fixture")
 
     def test_on_rejects_missing_noncanonical_and_nonuuid_without_creating_file(self):
         self.generate()
@@ -127,7 +144,9 @@ class EnvironmentTests(unittest.TestCase):
 
     def test_bad_contact_and_name_inputs_never_allocate_output(self):
         for phone, email, name in (("123", "fixture@example.test", "Fixture"), ("+971501234567", "bad\nmail", "Fixture"),
-                ("+971501234567", "fixture@example.test", "bad\nname"), ("+971501234567", "fixture@example.test", " ")):
+                ("+971501234567", "fixture@example.test", "bad\nname"), ("+971501234567", "fixture@example.test", " "),
+                ("+971501234567", "fixture@example.com", "Fixture"), ("+971501234567", "fixture@example.test", "Unicode\u00e9"),
+                ("+971501234567", "fixture@example.test", "x" * 101)):
             with self.assertRaises(ValueError):
                 b.initialize(self.root, phone, email, name)
         self.assertFalse(self.root.exists())
