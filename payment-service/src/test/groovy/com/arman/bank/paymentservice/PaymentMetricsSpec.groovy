@@ -56,6 +56,7 @@ class PaymentMetricsSpec extends Specification {
         accepted.headers().firstValue('Content-Type').orElse('').contains('version=0.0.4')
         accepted.body().contains('armoney_ready 1\n')
         !accepted.body().contains('backlog')
+        !accepted.body().contains('oldest_pending_age_seconds')
         !accepted.body().contains('failures_total')
         calls.get() == 1
         cleanup:
@@ -97,6 +98,12 @@ class PaymentMetricsSpec extends Specification {
                 calls.incrementAndGet()
                 measurements.set(OperationalMetrics.Gauge.RECOVERY_BACKLOG, 3)
                 measurements.set(OperationalMetrics.Gauge.OUTBOX_BACKLOG, 5)
+                measurements.set(OperationalMetrics.Gauge.RECOVERY_OLDEST_PENDING_AGE_SECONDS, 60)
+                measurements.set(OperationalMetrics.Gauge.OUTBOX_OLDEST_PENDING_AGE_SECONDS, 120)
+                if (calls.get() > 1) {
+                    measurements.unavailable(OperationalMetrics.Gauge.RECOVERY_OLDEST_PENDING_AGE_SECONDS)
+                    measurements.set(OperationalMetrics.Gauge.OUTBOX_OLDEST_PENDING_AGE_SECONDS, 0)
+                }
             } as Runnable)
         })
         def client = HttpClient.newHttpClient()
@@ -114,8 +121,18 @@ class PaymentMetricsSpec extends Specification {
         calls.get() == 1
         accepted.body().contains('armoney_recovery_backlog 3\n')
         accepted.body().contains('armoney_outbox_backlog 5\n')
+        accepted.body().contains('armoney_recovery_oldest_pending_age_seconds 60\n')
+        accepted.body().contains('armoney_outbox_oldest_pending_age_seconds 120\n')
         !accepted.body().contains('failures_total')
         !accepted.body().contains('lag_seconds')
+        when:
+        def unknown = scrape(client, runtime, KEY)
+        then:
+        unknown.statusCode() == 200
+        !unknown.body().contains('armoney_recovery_oldest_pending_age_seconds')
+        unknown.body().contains('armoney_outbox_oldest_pending_age_seconds 0\n')
+        unknown.body().contains('armoney_recovery_backlog 3\n')
+        unknown.body().contains('armoney_outbox_backlog 5\n')
         cleanup:
         client?.close()
         runtime?.close()

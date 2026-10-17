@@ -130,20 +130,25 @@ class PaymentIntegrationSpec extends Specification {
         given:
         def payment = store.create(alice, 'uncertain', request, mapping)
         def firstPeers = Stub(PaymentPeers) { post(_) >> { throw new IOException('response lost after remote commit') } }
-        def firstWorker = new PaymentWorker(store, firstPeers)
+        int failures = 0
+        def firstWorker = new PaymentWorker(store, firstPeers, { failures++; throw new IllegalStateException('synthetic observation failure') })
         when:
         firstWorker.tick()
         firstWorker.close()
         then:
+        failures == 1
         store.visible(alice, payment.id()).get().status() == 'PENDING'
         store.notifications(alice).empty
         when:
         db.transaction { it.execute("update payments set next_attempt_at = clock_timestamp() - interval '1 second' where id = ?", payment.id()) }
         def observed = new java.util.concurrent.atomic.AtomicReference<Payment>()
         def peers = Stub(PaymentPeers) { post(_) >> { Payment p -> observed.set(p); PaymentPeers.Outcome.POSTED } }
-        def restarted = new PaymentWorker(new PostgresPayments(db), peers)
+        int restartedFailures = 0
+        def restarted = new PaymentWorker(new PostgresPayments(db), peers, { restartedFailures++ })
         restarted.tick()
         then:
+        restartedFailures == 0
+        failures == 1
         observed.get().id() == payment.id()
         observed.get().debitAccountId() == mapping.debitAccountId()
         observed.get().request() == request

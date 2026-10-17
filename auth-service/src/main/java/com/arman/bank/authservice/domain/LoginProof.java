@@ -58,6 +58,28 @@ public final class LoginProof {
         }
         @Override public String toString() { return "LoginProofActivation[redacted]"; }
     }
+    /** Internal staged facts from a trusted port, never a provider HTTP DTO or ACTIVE assertion. */
+    public record Observation(Binding binding,String username,String email,String phone,boolean enabled,
+                              boolean sessionActive,Instant sessionDeadline,Instant observationStartedAt) {
+        @Override public String toString(){return "LoginProofObservation[redacted]";}
+    }
+    public record CurrentEvidence(Binding binding,BankingEligibility.Grant grant,String verifiedEmail,
+                                  Instant observationStartedAt,Instant validUntil) {
+        public boolean completeFor(Binding expected,Instant now){
+            return expected!=null&&expected.equals(binding)&&grant!=null&&canonicalEmail(verifiedEmail)
+                &&observationStartedAt!=null&&!observationStartedAt.isAfter(now)
+                &&!observationStartedAt.isBefore(now.minusSeconds(5))&&validUntil!=null&&now.isBefore(validUntil)
+                &&now.isBefore(grant.expiresAt());
+        }
+        @Override public String toString(){return "LoginProofCurrentEvidence[redacted]";}
+    }
+    public static void observation(Binding binding,Observation facts,Instant admittedAt,Instant now){
+        if(facts==null||admittedAt==null||!binding.equals(facts.binding())||!admittedAt.equals(facts.observationStartedAt())
+                ||admittedAt.isAfter(now)||admittedAt.isBefore(now.minusSeconds(5))||facts.sessionDeadline()==null
+                ||!now.isBefore(facts.sessionDeadline()))fail(Error.UNAVAILABLE);
+        if(!facts.enabled()||!facts.sessionActive()||!canonicalEmail(facts.email())||facts.phone()==null
+                ||!facts.phone().matches("\\+9715[024568][0-9]{7}")||!facts.phone().equals(facts.username()))fail(Error.CONFLICT);
+    }
     public record Policy(Set<String> issuers, Set<String> clients, Set<String> codeKeyIds, Set<String> writers,
                          int maxProofs, int maxCommands, int maxHourly) {
         public Policy {

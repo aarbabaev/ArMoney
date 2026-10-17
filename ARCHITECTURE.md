@@ -7,6 +7,15 @@
 > This revision adds the #30 Saga design and #31 optional Kafka infrastructure
 > source; Kafka cluster acceptance and deployment remain unverified.
 
+The staged internal proof-creation consumer described in
+[ADR 0042](docs/adr/0042-staged-proof-eligibility-consumption.md) now rereads
+current eligibility evidence after persistence work. Its source security review
+and execution audits are clear: the local Auth check passed 766 tests across 43
+suites on 2026-10-16 with no failures, errors or skips. Exact integration-head CI
+and runtime acceptance remain pending. Production proof routes
+retain UNAVAILABLE, managed banking denial remains unconditional, and no
+provider adapter, ACTIVE status or session activation is added.
+
 ## Navigation
 
 1. [Readiness and stack](#readiness-and-stack)
@@ -39,7 +48,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | AI assistant | Implemented read-only C# service, local policy RAG, constrained bank reads and Android screen; local rollout verified on 2026-10-13 | Finite demonstration topics, English extracts, at most six wallets and first-page history of 50; physical-device/live-owner acceptance not run |
 | Gateway | Auth, profile/phone, wallets/balances, P2P and notifications | Further hardening |
 | Local SMS sandbox | Optional authenticated capture API and web inbox, bounded persistent file storage; no carrier delivery | Identity OTP and transaction producers are separate integration tasks |
-| Operational metrics (#22) | Source: six-service private readiness, payment recovery/email backlog counts, bounded local collector and finite stdout alerts | Baseline exact-head CI and failure acceptance passed in PR #73; deployment/key provisioning remain pending. Worker counters and queue age remain unknown; explicit-name replica observation is source-only in the current follow-up |
+| Operational metrics (#22) | Source: six-service private readiness, payment backlog counts/oldest unresolved ages, process-local worker failure counters, optional named-replica observations and local collector | Baseline and replica observations deployed with bounded independent audits on 2026-10-16; age local checks passed 272 tests; worker/age exact-head CI and rollout remain pending; counters reset and are unknown until first failure |
 | Kafka infrastructure | Optional source-defined three-controller/three-broker KRaft cluster, mutual TLS, exact service ACLs and cold snapshot helper | Real-cluster acceptance and deployment pending; service adapters and financial Saga recovery remain planned |
 
 A payment email presentation candidate adds HTML/plain text and a frozen optional
@@ -450,14 +459,23 @@ leased work; failed collection removes those observations.
 The local collector authenticates fixed private targets, refuses redirects and
 environment proxies, bounds I/O and emits expiring atomic status snapshots plus
 finite stdout state-transition alerts. Missing/stale data stays unknown; no
-external notification provider is used. Worker counters, queue age and replica
-lag remain unobserved. An explicit `compose.metrics.yaml` override provides a
-nonroot collector without published ports; private deployment and key provisioning
-are pending. CI source includes an isolated UUID-project fixture with owned-resource
+external notification provider is used. Payment worker failure counters are
+process-local observations and remain unknown until the first failure; they
+reset on restart. Oldest unresolved age is source-implemented with a database
+anchor and unknown-on-invalid-time behavior. On 2026-10-16 its affected Java/PG
+checks passed 272 tests with zero failures, errors or skips; exact-head CI,
+actual Compose acceptance and rollout remain pending. Replica lag is a
+separately verified operational observation.
+An explicit `compose.metrics.yaml` override provides a
+nonroot collector without published ports. The baseline from `a0fab1b` was
+deployed and independently verified on 2026-10-16 with a dedicated private key,
+six ready targets, two fresh snapshots and public internal-path 404. This does
+not establish deployment of worker counters or replica observations, which remain
+pending. CI source includes an isolated UUID-project fixture with owned-resource
 cleanup, real edge exclusion and a reversible payment-database outage.
-Combined business middleware, actual database failure, full integrated
-CI, independent verification and runtime acceptance still require evidence;
-source wiring does not establish deployment. See [operational metrics](docs/operational-metrics.md)
+Baseline exact-head CI and isolated failure acceptance passed in PR #73;
+each later integration still requires its own checks and rollout evidence.
+Source wiring does not establish deployment. See [operational metrics](docs/operational-metrics.md)
 and [ADR 0027](docs/adr/0027-local-operational-metrics.md).
 
 ```mermaid
@@ -532,6 +550,29 @@ migrations are append-only. The current DB owner has administrative capabilities
 triggers do not protect against an administrator. A restricted runtime DB role is future work.
 
 ### Optional ledger replicas
+
+The isolated nine-store recovery drill passed again on 2026-10-17 at
+`a3fd9cec8d1eb8a77dd0ddbd02c0a059153f498a`: 82.102 seconds capture,
+231.073 seconds outage through acceptance, and 718.438 seconds total staging and
+cleanup. Independent retained-evidence review and financial QA cover one completed
+pre-capture synthetic payment, balanced AED replay and standby restart/rebuild.
+They do not establish in-flight/concurrent recovery or production RTO/RPO.
+Independent security review is also clear. Exact-head CI remains a separate gate; the workflow does not
+invoke this full drill. See the dated evidence and retention limits in
+[database recovery](docs/backup-recovery.md).
+
+Saved logical backup preflight, persistent-store coverage and disposable recovery
+tooling are documented in [database recovery](docs/backup-recovery.md). Disposable
+application recovery passed on 2026-10-16 at `960087d863fbd4e57d0c1b78109ae91fe277b64d`:
+nine restored stores, legacy/native PKCE sessions, owner isolation, original
+payment replay, reconciled immutable AED journal, and read-only physical standby
+restart/fresh-volume rebuild, with zero missing acknowledged fixture payments and
+ownership-checked cleanup. Capture took 78.216 seconds and outage through all
+acceptance took 225.969 seconds before cleanup. Independent QA matched the private
+stage/runner receipts and three versioned source hashes. This same-host fixture
+does not establish production RTO/RPO, PITR, HA, promotion, synchronous-quorum
+recovery, the 200-owner baseline, assistant-model or production TLS recovery.
+Subsequent integrated-revision CI/review and deployment remain separate gates.
 
 `compose.ledger-replication.yaml` preserves `ledger-db` and adds two direct
 PostgreSQL physical hot standbys. Application commits require WAL flush on at
@@ -1269,6 +1310,16 @@ positive proof authority, legacy backfill or activation is introduced. Managed
 banking denial remains in force in every mode. No automatic renewal, suspension
 recovery or general retention/erasure guarantee is supplied. See
 [ADR 0041](docs/adr/0041-internal-managed-eligibility-grants.md).
+### Authenticated token context: metadata only
+
+Auth retains optional client/session/time and login-proof claim context after its
+existing mandatory introspection checks. Each field distinguishes absence,
+malformation and valid format. Format classification grants no proof authority or
+banking eligibility. Malformed optional context preserves unmanaged legacy login
+compatibility; permanent managed-principal denial remains unconditional.
+The public HTTP contract and production proof wiring are unchanged. See
+[the token context contract](docs/auth-token-context.md). The full local Auth check passed 847 tests across 43 suites on 2026-10-17 with zero failures, errors or skips. Independent evidence audit and exact-head CI remain separate gates; this does not establish deployment or activation.
+
 ### Bounded replica observation follow-up
 
 Ledger can optionally observe explicitly named primary WAL senders for metrics only.

@@ -449,6 +449,89 @@ class AuthIntegrationSpec extends Specification {
         database.transaction { sql -> sql.fetchOne('select count(*) from identities where registration_phone is null').get(0, Long) } == 2
     }
 
+    def 'authenticated token metadata cannot bypass permanent managed denial in either enforcement mode'(){
+        given:
+        UUID identity=UUID.randomUUID()
+        String issuer='https://issuer.example/realm'
+        database.transaction{sql->
+            sql.execute('insert into identities(id,registration_phone) values (?,?)',identity,'+971501234567')
+            sql.execute('insert into external_identities(issuer,subject,identity_id) values (?,?,?)',issuer,'managed-subject',identity)
+            sql.execute('insert into managed_registration_principals(identity_id,enrollment_id) values (?,?)',identity,UUID.randomUUID())
+        }
+        def before=database.transaction{it.fetchOne('select to_jsonb(i)::text from identities i').get(0,String)}
+        def claims=[active:true,iss:issuer,sub:'managed-subject',phone_number:'+971501234567',email:'changed@example.test',email_verified:true,
+            aud:'armoney-api',client_id:'armoney-web',azp:'armoney-web',token_type:'Bearer',exp:clock.instant().epochSecond+600]
+        if(metadata!='absent')claims += [sid:(metadata=='malformed' ? ['wrong-type'] : 'exact-user-session'),iat:clock.instant().epochSecond,
+            armoney_login_kind:'interactive',armoney_login_event_id:UUID.randomUUID().toString(),armoney_login_notice_eligible:true]
+        if(metadata=='interactive-false')claims.armoney_login_notice_eligible=false
+        if(metadata=='reuse'){
+            claims.armoney_login_kind='reuse';claims.armoney_login_notice_eligible=false;claims.remove('armoney_login_event_id')
+        }
+        if(metadata=='malformed-proof')claims.armoney_login_kind='unknown'
+        def observer=com.sun.net.httpserver.HttpServer.create(new InetSocketAddress('127.0.0.1',0),0)
+        observer.createContext('/protocol/openid-connect/token/introspect'){exchange->
+            exchange.requestBody.readAllBytes();byte[] payload=JsonOutput.toJson(claims).bytes
+            exchange.sendResponseHeaders(200,payload.length);exchange.responseBody.write(payload);exchange.close()
+        }
+        observer.start()
+        def provider=new KeycloakTokens(URI.create('http://127.0.0.1:'+observer.address.port+'/protocol/openid-connect/token/introspect'),issuer,'armoney-auth','synthetic-introspection-credential-32-plus',clock)
+        def guarded=new AuthService(new PostgresAuthStore(database,enforcement),new Argon2Passwords(),clock,profiles)
+        def parsed=provider.verify('synthetic-access-token')
+        if(metadata in ['valid-format','interactive-false','reuse'])assert parsed.tokenContext().proof().status()==SsoTokens.MetadataStatus.PRESENT_VALID_FORMAT
+        when:
+        guarded.sso('synthetic-access-token',provider)
+        then:
+        def failure=thrown(AuthFailure)
+        failure.kind()==AuthFailure.Kind.UNAUTHORIZED
+        profiles.claims.isEmpty()
+        database.transaction{sql->
+            assert sql.fetchOne('select to_jsonb(i)::text from identities i').get(0,String)==before
+            assert sql.fetchOne('select count(*) from identities').get(0,Integer)==1
+            assert sql.fetchOne('select count(*) from external_identities').get(0,Integer)==1
+            ['sessions','sso_login_proofs','sso_login_events','banking_eligibility_grants'].every{table->sql.fetchOne('select count(*) from '+table).get(0,Integer)==0}
+        }
+        cleanup:
+        provider?.close();observer?.stop(0)
+        where:
+        metadata | enforcement
+        'absent' | false
+        'absent' | true
+        'malformed' | false
+        'malformed' | true
+        'valid-format' | false
+        'valid-format' | true
+        'interactive-false' | false
+        'interactive-false' | true
+        'reuse' | false
+        'reuse' | true
+        'malformed-proof' | false
+        'malformed-proof' | true
+    }
+    def 'malformed optional token metadata keeps unmanaged legacy exchange compatibility'(){
+        given:
+        String issuer='https://issuer.example/realm'
+        def claims=[active:true,iss:issuer,sub:'legacy-context-subject',phone_number:'+971501234567',aud:'armoney-api',client_id:'armoney-web',azp:'armoney-web',
+            token_type:'Bearer',exp:clock.instant().epochSecond+600,sid:['wrong-type'],iat:clock.instant().epochSecond+1,armoney_login_kind:'invalid']
+        def observer=com.sun.net.httpserver.HttpServer.create(new InetSocketAddress('127.0.0.1',0),0)
+        observer.createContext('/protocol/openid-connect/token/introspect'){exchange->
+            exchange.requestBody.readAllBytes();byte[] payload=JsonOutput.toJson(claims).bytes
+            exchange.sendResponseHeaders(200,payload.length);exchange.responseBody.write(payload);exchange.close()
+        }
+        observer.start()
+        def provider=new KeycloakTokens(URI.create('http://127.0.0.1:'+observer.address.port+'/protocol/openid-connect/token/introspect'),issuer,'armoney-auth','synthetic-introspection-credential-32-plus',clock)
+        when:
+        def principal=provider.verify('synthetic-access-token')
+        def session=service.sso('synthetic-access-token',provider)
+        then:
+        principal.tokenContext().sessionId().status()==SsoTokens.MetadataStatus.MALFORMED
+        principal.tokenContext().issuedAt().status()==SsoTokens.MetadataStatus.MALFORMED
+        principal.tokenContext().proof().status()==SsoTokens.MetadataStatus.MALFORMED
+        service.me('Bearer '+session.accessToken()).registrationPhone()=='+971501234567'
+        profiles.claims.size()==1
+        cleanup:
+        provider?.close();observer?.stop(0)
+    }
+
     static class TestProfiles implements RegistrationProfiles {
         Map<UUID, String> claims = new ConcurrentHashMap<>()
         volatile boolean failAfterCommit

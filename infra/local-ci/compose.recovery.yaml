@@ -1,0 +1,70 @@
+{
+  "name": "${RECOVERY_PROJECT:?Set a new unique recovery-only project name}",
+  "services": {
+    "daemon": {
+      "image": "docker:29.8.1-dind",
+      "privileged": true,
+      "restart": "no",
+      "environment": {
+        "DOCKER_TLS_CERTDIR": ""
+      },
+      "command": [
+        "dockerd",
+        "--host=unix:///run/recovery-docker/docker.sock",
+        "--label=io.armoney.disposable-recovery=true",
+        "--storage-driver=overlay2"
+      ],
+      "volumes": [
+        "recovery-data:/var/lib/docker",
+        "recovery-socket:/run/recovery-docker"
+      ],
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "docker",
+          "--host=unix:///run/recovery-docker/docker.sock",
+          "info"
+        ],
+        "interval": "5s",
+        "timeout": "5s",
+        "retries": 30
+      },
+      "pull_policy": "never"
+    },
+    "runner": {
+      "image": "armoney-local-runner:2.338.0",
+      "restart": "no",
+      "init": true,
+      "entrypoint": [
+        "/bin/bash"
+      ],
+      "command": [
+        "-lc",
+        "git clone --no-checkout /work/recovery-source.bundle /work/ArMoney/ArMoney && cd /work/ArMoney/ArMoney && git checkout --detach \"$$RECOVERY_REVISION\" && bash scripts/run-application-recovery-ci.sh"
+      ],
+      "network_mode": "service:daemon",
+      "depends_on": {
+        "daemon": {
+          "condition": "service_healthy"
+        }
+      },
+      "environment": {
+        "RECOVERY_DAEMON": "unix:///run/recovery-docker/docker.sock",
+        "ARMONEY_DISPOSABLE_CI": "true",
+        "RECOVERY_REVISION": "${RECOVERY_REVISION:?Set exact clean source revision}",
+        "GITHUB_WORKSPACE": "/work/ArMoney/ArMoney"
+      },
+      "volumes": [
+        "recovery-socket:/run/recovery-docker",
+        "recovery-workspace:/work"
+      ],
+      "stop_grace_period": "60s",
+      "pull_policy": "never"
+    }
+  },
+  "volumes": {
+    "recovery-data": {},
+    "recovery-socket": {},
+    "recovery-workspace": {}
+  }
+}

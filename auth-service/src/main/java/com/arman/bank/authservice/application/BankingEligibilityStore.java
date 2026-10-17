@@ -14,4 +14,8 @@ public interface BankingEligibilityStore {
     Optional<Grant> record(UUID enrollmentId, Flow flow, Observation observation, Instant admittedAt);
     boolean invalidateIfChanged(UUID enrollmentId, Flow flow, Observation observation, Instant admittedAt);
     void invalidateAfterMutation(UUID enrollmentId);
+    /** Existing immutable evidence only; no mint, ACTIVE transition, flow renewal or session decision. */
+    com.arman.bank.authservice.domain.LoginProof.CurrentEvidence requireForProof(
+        com.arman.bank.authservice.domain.LoginProof.Binding binding,
+        com.arman.bank.authservice.domain.LoginProof.Observation observation,Instant admittedAt);
 }

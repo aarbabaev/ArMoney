@@ -85,6 +85,58 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(states['REPLICA_LAG_LIMIT'], 'FIRING')
         self.assertEqual(states['OUTBOX_BACKLOG_LIMIT'], 'CLEAR')
 
+    def test_pending_age_parsing_boundaries_empty_and_missing_are_distinct(self):
+        values = collector.parse_metrics(
+            b'armoney_ready 1\narmoney_recovery_oldest_pending_age_seconds 300\n'
+            b'armoney_outbox_oldest_pending_age_seconds 299\n')
+        target = self.collect(values)['targets'][0]
+        states = {rule['code']: rule['state'] for rule in target['alerts']}
+        self.assertEqual(states['RECOVERY_AGE_LIMIT'], 'FIRING')
+        self.assertEqual(states['OUTBOX_AGE_LIMIT'], 'CLEAR')
+        empty = self.collect({'armoney_ready': 1,
+                              'armoney_recovery_oldest_pending_age_seconds': 0,
+                              'armoney_outbox_oldest_pending_age_seconds': 0})['targets'][0]
+        self.assertTrue(all(rule['state'] == 'CLEAR' for rule in empty['alerts']
+                            if rule['code'] in ('RECOVERY_AGE_LIMIT', 'OUTBOX_AGE_LIMIT')))
+        missing = self.collect({'armoney_ready': 1})['targets'][0]
+        for name in ('armoney_recovery_oldest_pending_age_seconds', 'armoney_outbox_oldest_pending_age_seconds'):
+            self.assertIsNone(missing['metrics'][name])
+        self.assertTrue(all(rule['state'] == 'UNKNOWN' for rule in missing['alerts']
+                            if rule['code'] in ('RECOVERY_AGE_LIMIT', 'OUTBOX_AGE_LIMIT')))
+
+    def test_age_thresholds_are_optional_but_invalid_explicit_values_fail_closed(self):
+        config = copy.deepcopy(self.config)
+        for name in ('recovery_oldest_pending_age_seconds_limit', 'outbox_oldest_pending_age_seconds_limit'):
+            config.pop(name)
+        collector.validate(config)
+        target = collector.collect(config, {'INTERNAL_METRICS_KEY': KEY}, now=self.now,
+                                   fetcher=lambda *unused: {'armoney_ready': 1,
+                                       'armoney_recovery_oldest_pending_age_seconds': 900})['targets'][0]
+        self.assertEqual(target['metrics']['armoney_recovery_oldest_pending_age_seconds'], 900)
+        self.assertEqual(next(rule['state'] for rule in target['alerts'] if rule['code'] == 'RECOVERY_AGE_LIMIT'), 'UNKNOWN')
+        for name in ('recovery_oldest_pending_age_seconds_limit', 'outbox_oldest_pending_age_seconds_limit'):
+            for invalid in (None, False, 0, -1, '300', 300.0, collector.MAX_LONG + 1):
+                broken = copy.deepcopy(config)
+                broken[name] = invalid
+                with self.assertRaises(ValueError):
+                    collector.validate(broken)
+
+    def test_failed_scrape_clears_old_ages_and_recovery_uses_new_observation(self):
+        previous = self.collect({'armoney_ready': 1, 'armoney_recovery_oldest_pending_age_seconds': 600,
+                                 'armoney_outbox_oldest_pending_age_seconds': 400})
+        def unavailable(*unused):
+            raise collector.ObservationError('SCRAPE_UNAVAILABLE')
+        failed = collector.collect(self.config, {'INTERNAL_METRICS_KEY': KEY}, previous, self.now, unavailable)
+        for name in ('armoney_recovery_oldest_pending_age_seconds', 'armoney_outbox_oldest_pending_age_seconds'):
+            self.assertIsNone(failed['targets'][0]['metrics'][name])
+        recovered = collector.collect(self.config, {'INTERNAL_METRICS_KEY': KEY}, failed, self.now,
+                                      lambda *unused: {'armoney_ready': 1,
+                                          'armoney_recovery_oldest_pending_age_seconds': 0,
+                                          'armoney_outbox_oldest_pending_age_seconds': 0})
+        self.assertEqual(recovered['targets'][0]['metrics']['armoney_recovery_oldest_pending_age_seconds'], 0)
+        self.assertTrue(all(rule['state'] == 'CLEAR' for rule in recovered['targets'][0]['alerts']
+                            if rule['code'] in ('RECOVERY_AGE_LIMIT', 'OUTBOX_AGE_LIMIT')))
+
     def test_scrape_failure_drops_old_observations_instead_of_reusing_readiness(self):
         previous = self.collect({'armoney_ready': 1})
         def fail(*unused):

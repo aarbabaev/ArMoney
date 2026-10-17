@@ -409,6 +409,20 @@ def removal_checks(a, b, flow, kind):
     expect(503, observer(b, flow, diagnostic=observer_boundary), "removed session denial")
 
 
+def disabled_observation_checks(node, flow, first):
+    # Disabling a user is negative evidence, never enrollment/login authority.
+    # The same trusted tuple must still resolve; do not substitute a new flow.
+    current = expect(200, observer(node, flow, diagnostic=observer_boundary), "disabled user observation")
+    require(set(current) == OBSERVATION, "exact disabled observation DTO")
+    require(all(current[key] == flow[key] for key in FLOW), "same disabled observation binding")
+    require(current["enabled"] is False and current["authentication_session_active"] is True,
+            "literal disabled user and live session flags")
+    expected = dict(first, enabled=False)
+    require(current == expected, "disabled observation preserves contacts and original deadline")
+    deadline = datetime.datetime.fromisoformat(current["authentication_session_expires_at"].replace("Z", "+00:00")).timestamp()
+    require(deadline > controls(node, "inspect", flow)["server_time"], "disabled observation deadline remains future")
+
+
 def acceptance():
     phase("READINESS")
     from playwright.sync_api import sync_playwright
@@ -523,7 +537,7 @@ def acceptance():
             page, flow, first = login()
             phase("DISABLE_DELETE")
             expect(204, request("PUT", users + "/" + identifier, {"enabled": False}, authorization), "disable synthetic user")
-            expect(503, observer(b, flow), "disabled user denial")
+            disabled_observation_checks(b, flow, first)
             expect(204, request("DELETE", users + "/" + identifier, headers=authorization), "delete synthetic user")
             identifier = None
             expect(503, observer(b, flow), "deleted user denial")

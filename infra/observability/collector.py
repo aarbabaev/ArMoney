@@ -14,7 +14,8 @@ import urllib.request
 
 SERVICES = frozenset(('auth-service', 'user-service', 'wallet-service', 'payment-service', 'ledger-service', 'app-gateway'))
 METRICS = frozenset(('armoney_ready', 'armoney_recovery_backlog', 'armoney_replica_lag_seconds',
-                     'armoney_outbox_backlog', 'armoney_recovery_failures_total', 'armoney_outbox_failures_total'))
+                     'armoney_outbox_backlog', 'armoney_recovery_failures_total', 'armoney_outbox_failures_total',
+                     'armoney_recovery_oldest_pending_age_seconds', 'armoney_outbox_oldest_pending_age_seconds'))
 MAX_LONG = 9223372036854775807
 
 
@@ -56,6 +57,9 @@ def validate(config):
     for name in ('recovery_backlog_limit', 'outbox_backlog_limit', 'replica_lag_seconds_limit'):
         if type(config.get(name)) is not int or not 1 <= config[name] <= MAX_LONG:
             raise ValueError('Invalid alert threshold')
+    for name in ('recovery_oldest_pending_age_seconds_limit', 'outbox_oldest_pending_age_seconds_limit'):
+        if name in config and (type(config[name]) is not int or not 1 <= config[name] <= MAX_LONG):
+            raise ValueError('Invalid pending-age threshold')
     return config
 
 
@@ -189,6 +193,11 @@ def collect(config, environment, previous=None, now=None, fetcher=fetch):
                 ('armoney_replica_lag_seconds', 'replica_lag_seconds_limit', 'REPLICA_LAG_LIMIT')):
             value = values[metric]
             rules.append(alert(code, None if value is None else value >= config[limit]))
+        for metric, limit, code in (
+                ('armoney_recovery_oldest_pending_age_seconds', 'recovery_oldest_pending_age_seconds_limit', 'RECOVERY_AGE_LIMIT'),
+                ('armoney_outbox_oldest_pending_age_seconds', 'outbox_oldest_pending_age_seconds_limit', 'OUTBOX_AGE_LIMIT')):
+            value = values[metric]
+            rules.append(alert(code, None if value is None or limit not in config else value >= config[limit]))
         old = old_targets.get(target['service'], {}).get('metrics', {})
         for metric, code in (('armoney_recovery_failures_total', 'RECOVERY_FAILURES_RECENT'),
                              ('armoney_outbox_failures_total', 'OUTBOX_FAILURES_RECENT')):

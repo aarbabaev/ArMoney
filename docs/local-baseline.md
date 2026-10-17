@@ -59,6 +59,9 @@ does not credit again. Do not invent a new funding ID to retry or refill an acco
 
 ## Backup and restore boundaries
 
+See [database recovery inventory and limitations](backup-recovery.md) for saved
+archive preflight and pending disposable recovery acceptance.
+
 After all 200 users are funded, verify the fixed default baseline through Gateway:
 
 ```powershell

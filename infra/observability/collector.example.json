@@ -5,6 +5,8 @@
   "recovery_backlog_limit": 100,
   "outbox_backlog_limit": 100,
   "replica_lag_seconds_limit": 30,
+  "recovery_oldest_pending_age_seconds_limit": 300,
+  "outbox_oldest_pending_age_seconds_limit": 300,
   "targets": [
     {
       "service": "payment-service",
