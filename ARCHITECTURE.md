@@ -1281,3 +1281,25 @@ readiness or durability. Local affected Ledger checks passed 93 tests across 13
 suites, including real physical standbys, on the recorded source patch. Combined
 current-main CI, Compose acceptance and deployment remain pending. See
 [ADR 0040](docs/adr/0040-replica-observation.md).
+### Default-off client-session observer follow-up
+
+The provider source adds private `armoney-status/code-session`, separately gated
+by default-false `ARMONEY_CODE_SESSION_OBSERVATION_ENABLED`. Its strict four-field
+request binds the exact user/session/public client; the exact twelve-field
+response includes both session flags and observed/deadline timestamps. Existing
+status/enrollment contracts and production factory registrations are unchanged.
+Canonical contacts, LOGGED_IN online persistence, exact client membership and
+pinned user/client idle/max validity are required. This is observation only,
+not Auth receipts/projection/ACTIVE authority.
+Null adapter-local persistence state requires an independent exact durable online
+realm/session/subject LOGGED_IN tuple from Keycloak's session persister; explicit
+TRANSIENT and unavailable/mismatched provenance deny. That follow-up passed
+65 local provider tests across 13 suites; real two-node verification remains
+pending. No failure cause or successful activation is
+inferred from the earlier BASELINE failure.
+Earlier local provider checks passed
+64 tests across 13 suites, independently bound to unchanged source and packaged
+SPI evidence. Two-node runtime acceptance and exact-head required CI remain
+pending. See the provider README and scoped frozen contract in
+[PR #85](https://github.com/aarbabaev/ArMoney/pull/85); clock-rate assumptions and
+all activation gates remain explicit.
