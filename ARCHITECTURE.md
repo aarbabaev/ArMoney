@@ -1368,3 +1368,14 @@ SPI evidence. Two-node runtime acceptance and exact-head required CI remain
 pending. See the provider README and scoped frozen contract in
 [PR #85](https://github.com/aarbabaev/ArMoney/pull/85); clock-rate assumptions and
 all activation gates remain explicit.
+
+### Unwired code-intent configuration validation
+
+The provider contains a pure configuration parser for the scoped managed code-intent
+flow. It validates explicit issuer/client pairs, disabled-by-default settings and
+locally supplied credential/key material without allocating network or database
+resources. It is not wired into production factories; existing SPI registrations,
+transports and token hooks remain unchanged. Auth-only dependencies, remote public
+client models and deployment state are outside this parser's validation boundary.
+Compilation and focused tests remain pending; confirmation and activation remain
+gated. See the provider README for the exact source scope and limitations.

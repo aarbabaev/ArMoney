@@ -58,6 +58,29 @@ These results apply to that source revision. After integration of main's dormant
 proof-wire corrections, fresh combined-head CI remains required before approval.
 ## Private auth wire
 
+### Unwired code-intent configuration
+
+`CodeIntentConfiguration` is a pure explicit-Map parser; no factory calls it and
+it allocates no HTTP/DB resources. `ARMONEY_LOGIN_PROOF_ENABLED` defaults false
+and accepts only lowercase `true`/`false`. Shared managed/legacy pair variables
+use exact `{issuer, client_id}` JSON objects, at most16 pairs/16KiB per array;
+supplied dormant arrays still receive strict validation. Enabled scope is the
+single configured issuer and existing public verification-client subset.
+Unknown/overlapping pairs deny; mixed-subject routing remains unsupported.
+Actual public-client models must still be checked by future runtime consumers.
+
+Enabled parsing requires separate write/confirm/lookup credentials, the existing
+private bridge base, writer/actor and code-key-ID configuration. Constructor-held
+code material is supplied separately under its configured key ID (32 bytes),
+along with all other locally held current/retained secrets for inequality checks;
+no new code-key environment aliases are introduced. Callers must supply their
+complete locally known material inventory. Raw and canonical-base64-decoded
+aliases reject. Auth-only dependency flags, databases, migrations, retention/AEAD
+keys and remote model/deployment state are not inspected by this provider parser.
+No secrets are imported merely to compare them. Configuration is not wired,
+stage/lookup/confirmation transport remains unimplemented, and no SPI registration
+or production enablement changes. New parser tests are source-only and UNRUN.
+
 ### Default-off code-session observation
 
 `POST /realms/{realm}/armoney-status/code-session` is a separate source-level
