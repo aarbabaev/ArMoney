@@ -6,7 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.*;
 
-/** Off by default. This transport flag cannot supply positive banking eligibility. */
+/** Off by default. Enabled requests always use global PRIMARY admission; no positive eligibility. */
 public final class LoginProofConfiguration {
     public final boolean enabled;
     private final String writer, writeKey, resolveKey;

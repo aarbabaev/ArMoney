@@ -37,51 +37,47 @@ public final class PostgresLoginProofStore implements LoginProofStore {
             return action.apply(sql, now(sql));
         });
     }
-    @Override public void admit(String writer) {
-        LoginProof.writer(writer, policy);
-        // This transaction commits before parsing/provider I/O and before any rejected write.
-        boolean allowed = transaction((sql, now) -> {
-            byte[] key = LoginProof.writerHash(writer);
-            var row = sql.fetchOne("select credits, refilled_at from sso_login_proof_admission where writer_hash = ?", key);
-            BigDecimal credits;
-            if (row == null) {
-                if (count(sql, "select count(*) as n from sso_login_proof_admission") >= 16) return false;
-                credits = BigDecimal.valueOf(20);
-                sql.execute("insert into sso_login_proof_admission(writer_hash, credits, refilled_at) values (?, ?, cast(? as timestamptz))", key, credits, at(now));
-            } else {
-                BigDecimal elapsed = BigDecimal.valueOf(Math.max(0, Duration.between(time(row, "refilled_at"), now).toNanos()), 9);
-                credits = row.get("credits", BigDecimal.class).add(elapsed.multiply(BigDecimal.valueOf(2))).min(BigDecimal.valueOf(20));
-            }
-            boolean permit = credits.compareTo(BigDecimal.ONE) >= 0;
-            sql.execute("update sso_login_proof_admission set credits = ?, refilled_at = cast(? as timestamptz) where writer_hash = ?",
-                permit ? credits.subtract(BigDecimal.ONE) : credits, at(now), key);
-            return permit;
-        });
-        if (!allowed) throw new Failure(Error.RATE_LIMITED);
+    @Override public <T>T inRequest(String writer,Function<LoginProofStore.Request,T> operation) {
+        LoginProof.writer(writer,policy);
+        return new PostgresLoginRequestScope(database).inRequest(writer,owned -> operation.apply(new Scoped(owned)));
     }
-    private record Admitted(PostgresLoginProofStore owner,String writer,Binding binding,Instant startedAt,byte[] payload) implements Admission {
-        private Admitted{payload=payload.clone();}
+    /** Compatibility admission is a complete operation; callers must use inRequest to avoid a second debit. */
+    @Override public void admit(String writer) { inRequest(writer,request -> null); }
+    private record Admitted(PostgresLoginProofStore owner,PostgresLoginRequestScope.Request request,String writer,Binding binding,Instant startedAt,byte[] payload) implements Admission {
+        private Admitted { payload=payload.clone(); }
         @Override public String toString(){return "LoginProofAdmission[redacted]";}
     }
-    @Override public Admission admitCreate(String writer,Write input){
-        admit(writer);
-        LoginProof.validate(input,writer,policy);
-        return transaction((sql,now)->new Admitted(this,writer,input.binding(),now(sql),LoginProof.payloadHash(input)));
+    private final class Scoped implements LoginProofStore.Request {
+        private final PostgresLoginRequestScope.Request request;
+        private boolean consumed, anchored;
+        private Scoped(PostgresLoginRequestScope.Request request){this.request=request;}
+        private void consume(){request.check();if(consumed)throw new Failure(Error.UNAVAILABLE);consumed=true;}
+        @Override public Admission admitCreate(Write input){
+            request.check(); LoginProof.validate(input,request.actor(),policy);
+            if(consumed||anchored)throw new Failure(Error.UNAVAILABLE);anchored=true;
+            return request.transaction(sql->new Admitted(PostgresLoginProofStore.this,request,request.actor(),input.binding(),now(sql),LoginProof.payloadHash(input)));
+        }
+        @Override public Snapshot writeObserved(Write input,Admission admission,Observation observation){
+            consume(); LoginProof.validate(input,request.actor(),policy);
+            if(input.kind()!=Kind.INTERACTIVE)throw new Failure(Error.CONFLICT);
+            if(!(admission instanceof Admitted value)||value.owner()!=PostgresLoginProofStore.this||value.request()!=request
+                ||!request.actor().equals(value.writer())||!input.binding().equals(value.binding())
+                ||!MessageDigest.isEqual(value.payload(),LoginProof.payloadHash(input)))throw new Failure(Error.UNAVAILABLE);
+            return writeInternal(request,input,admission,observation);
+        }
+        @Override public Snapshot write(Write input){consume();if(anchored)throw new Failure(Error.UNAVAILABLE);return writeInternal(request,input,null,null);}
+        @Override public Snapshot resolve(Resolve input){consume();if(anchored)throw new Failure(Error.UNAVAILABLE);return resolveInternal(request,input);}
     }
-    @Override public Snapshot writeObserved(String writer,Write input,Admission admission,Observation observation){
-        LoginProof.validate(input,writer,policy);
-        // This staged consumer supports interactive CREATE/replay only. Legacy reuse remains unchanged.
-        if(input.kind()!=Kind.INTERACTIVE)throw new Failure(Error.CONFLICT);
-        if(!(admission instanceof Admitted value)||value.owner()!=this||!writer.equals(value.writer())
-                ||!input.binding().equals(value.binding())||!MessageDigest.isEqual(value.payload(),LoginProof.payloadHash(input)))throw new Failure(Error.UNAVAILABLE);
-        return writeInternal(writer,input,admission,observation);
-    }
-    @Override public Snapshot write(String writer, Write input) {
-        return writeInternal(writer,input,null,null);
-    }
-    private Snapshot writeInternal(String writer,Write input,Admission admission,Observation observation){
+    /** An admission cannot escape its operation; staged callers must use the request capability. */
+    @Override public Admission admitCreate(String writer,Write input){throw new Failure(Error.UNAVAILABLE);}
+    @Override public Snapshot writeObserved(String writer,Write input,Admission admission,Observation observation){throw new Failure(Error.UNAVAILABLE);}
+    @Override public Snapshot write(String writer,Write input){return inRequest(writer,request->request.write(input));}
+    private Snapshot writeInternal(PostgresLoginRequestScope.Request request,Write input,Admission admission,Observation observation){
+        request.check();
+        String writer=request.actor();
         LoginProof.validate(input, writer, policy);
-        return transaction((sql, now) -> {
+        return request.transaction(sql -> {
+            Instant now=now(sql);
             LoginProof.unexpired(input.expiresAt(), now);
             byte[] requester = LoginProof.requesterHash(writer, input.issuer(), input.clientId()), payload = LoginProof.payloadHash(input);
             var command = sql.fetchOne("select * from sso_login_proof_commands where requester_hash = ? and command_id = ?", requester, input.commandId());
@@ -108,12 +104,12 @@ public final class PostgresLoginProofStore implements LoginProofStore {
             }
             LoginProof.fresh(input, now);
             if (count(sql, "select count(*) as n from sso_login_proofs") >= policy.maxProofs()
-                    || count(sql, "select count(*) as n from sso_login_proof_commands") >= policy.maxCommands()
-                    || count(sql, "select count(*) as n from sso_login_proofs where created_at > cast(? as timestamptz)", at(now.minusSeconds(3600))) >= policy.maxHourly())
+                    || count(sql, "select count(*) as n from sso_login_proof_commands") >= policy.maxCommands())
                 throw new Failure(Error.RATE_LIMITED);
             Authority active = authority(sql, input.binding(), now,admission,observation);
             if (input.kind() == Kind.INTERACTIVE) event(sql, input, active, now, true);
             UUID proof = UUID.randomUUID();
+            PostgresLoginCreationBudget.reserve(sql, proof, "PROOF", now, policy.maxHourly());
             sql.execute("""
                 insert into sso_login_proofs(id, issuer, code_digest, code_key_id, binding_hash, payload_hash,
                     kind, event_id, login_notice_eligible, issued_at, expires_at, created_at, retained_until)
@@ -202,9 +198,10 @@ public final class PostgresLoginProofStore implements LoginProofStore {
         LoginProof.unexpired(input.expiresAt(),checked);
         if(!active.completeFor(input.binding(),checked))throw new Failure(Error.CONFLICT);
     }
-    @Override public Snapshot resolve(String writer, Resolve input) {
-        LoginProof.writer(writer, policy); LoginProof.validate(input, policy);
-        return database.transaction(sql -> {
+    @Override public Snapshot resolve(String writer,Resolve input){return inRequest(writer,request->request.resolve(input));}
+    private Snapshot resolveInternal(PostgresLoginRequestScope.Request request, Resolve input) {
+        request.check(); LoginProof.validate(input, policy);
+        return request.transaction(sql -> {
             var proof = sql.fetchOne("select * from sso_login_proofs where issuer = ? and code_digest = ?", input.issuer(), input.codeDigest());
             if (proof == null) throw new Failure(Error.MISSING);
             same(proof.get("binding_hash", byte[].class), LoginProof.bindingHash(input.binding()));
