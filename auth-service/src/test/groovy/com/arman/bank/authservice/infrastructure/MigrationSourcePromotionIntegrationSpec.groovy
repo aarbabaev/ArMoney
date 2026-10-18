@@ -66,6 +66,8 @@ class MigrationSourcePromotionIntegrationSpec extends Specification {
         producer=PostgresMigrationFinalAckStore.synthetic(managed.database,managed.custody,managed.crypto,fixture.journal,fixture.otp,managed.managed,consumer,managed.ACTOR,settings.publicationKey(),settings.origin())
         producer.publish(original.admission.migrationId(),original.admission.ownerCapability())
         def command=new PostgresLoginRequestScope(managed.database).inRequest(managed.ACTOR){owned->producer.reserveFinalCommand(owned,original.admission.migrationId(),original.admission.ownerCapability())}
+        // Existing token remains live under the deployment enforcement setting before FINAL.
+        assert new PostgresAuthStore(managed.database,true).findSession(com.arman.bank.authservice.application.AuthService.digest(original.token),Instant.now()).orElseThrow().id()==original.identityId
         [original:original,decision:decision,command:command]
     }
     private void promote(Map prepared){
@@ -138,10 +140,20 @@ class MigrationSourcePromotionIntegrationSpec extends Specification {
         managed.count('migration_banking_grants')==1
         managed.count('legacy_migration_final_completions')==1
         when:
+        assert new PostgresAuthStore(managed.database,true).findSession(com.arman.bank.authservice.application.AuthService.digest(prepared.original.token),Instant.now()).empty
         managed.auth.me('Bearer '+prepared.original.token)
         then:
         def denied=thrown(AuthFailure)
         denied.kind()==AuthFailure.Kind.UNAUTHORIZED
+        when:
+        // A historical digest reinsert cannot bypass the permanent migrated-source marker.
+        managed.database.transaction{sql->
+            sql.execute('insert into sessions(token_hash,identity_id,created_at,expires_at) select token_hash,identity_id,original_created_at,original_expires_at from legacy_migration_continuity where migration_id=?',prepared.original.admission.migrationId())
+        }
+        new PostgresAuthStore(managed.database,true).findSession(com.arman.bank.authservice.application.AuthService.digest(prepared.original.token),Instant.now())
+        then:
+        def historicalDenied=thrown(AuthFailure)
+        historicalDenied.kind()==AuthFailure.Kind.UNAUTHORIZED
         where:
         sso << [false,true]
     }
@@ -160,7 +172,7 @@ class MigrationSourcePromotionIntegrationSpec extends Specification {
         thrown(RuntimeException)
         when:
         boolean reached=managed.database.transaction{sql->sql.fetchOne('select is_called from migration_promotion_fault_witness').get(0,Boolean)}
-        def survivingOwner=managed.auth.me('Bearer '+prepared.original.token).id()
+        def survivingOwner=new PostgresAuthStore(managed.database,true).findSession(com.arman.bank.authservice.application.AuthService.digest(prepared.original.token),Instant.now()).orElseThrow().id()
         then:
         reached
         survivingOwner==prepared.original.identityId

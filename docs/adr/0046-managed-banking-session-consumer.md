@@ -17,6 +17,14 @@ managed issuer/client pairs. Preserve generic managed-principal denial in every
 configuration mode. Missing proof metadata, unknown pairs and absent markers never
 select a legacy fallback or allocate another identity.
 
+When the consumer is enabled, new banking admission is limited to its managed
+path. Public local registration/password login and explicit legacy SSO pairs
+cannot create or provision an identity or mint a bank session. Legacy pairs may
+still identify restricted migration account proofs; such OIDC tokens are not
+banking credentials. Default-off compatibility is distinct from this cutover.
+Restricted migration password proof and already stored live sessions remain
+available under their existing checks until successful atomic FINAL.
+
 Initial admission accepts a fresh authenticated INTERACTIVE event with exact
 issuer, subject, client and provider-session binding and bounded token issuance and
 expiry. REUSE and refreshed tokens cannot start another banking session without a

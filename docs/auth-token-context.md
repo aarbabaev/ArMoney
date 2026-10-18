@@ -7,7 +7,9 @@ issuer, client, active-token and expiry validation still precedes optional parsi
 Optional fields expose ABSENT, MALFORMED or PRESENT_VALID_FORMAT classification.
 Missing fields remain distinct from explicit null and invalid types. Legacy token
 constructors supply absent context. Malformed optional claims do not introduce a
-new login rejection for otherwise valid unmanaged legacy identities.
+new login rejection for otherwise valid unmanaged legacy identities in default-off
+compatibility mode. Enabled managed cutover separately denies legacy new banking
+admission; optional metadata never bypasses that policy.
 
 Session identifiers are bounded text without whitespace, controls, formatting
 characters or lone surrogates. Valid supplementary Unicode pairs remain allowed.

@@ -184,7 +184,13 @@ public final class PostgresAuthStore implements AuthStore {
             if(live==null||!live.get("expires_at",OffsetDateTime.class).toInstant().isAfter(now))return Optional.empty();
             if(PostgresLegacyMigrationStore.pending(sql,owner)!=null)
                 PostgresLegacyMigrationStore.requireContinuity(sql,owner,tokenHash,live.get("created_at",OffsetDateTime.class).toInstant(),live.get("expires_at",OffsetDateTime.class).toInstant(),eligibilityEnforced);
-            else requireBankingAccess(sql,owner);
+            else {
+                // Existing live sessions survive authority staging until atomic FINAL.
+                // Permanent managed classification still forbids historical bank sessions;
+                // requireBankingAccess remains the stricter gate for every new admission.
+                if (sql.fetchOne("select identity_id from managed_registration_principals where identity_id=? union all select identity_id from managed_identity_sources where identity_id=? limit 1", owner, owner) != null)
+                    throw new AuthFailure(AuthFailure.Kind.UNAUTHORIZED);
+            }
             return Optional.of(identity(row));
         });
     }

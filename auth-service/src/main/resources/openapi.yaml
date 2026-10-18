@@ -547,7 +547,7 @@ paths:
   /v1/auth/register:
     post:
       operationId: register
-      description: Reserves a unique canonical UAE mobile number and provisions its user-service claim. An identical email and phone retry preserves the identity and password. Conflicting email or phone claims return a generic conflict. A dependency failure may leave a durable identity for a later registration or credential-authenticated login retry.
+      description: Legacy compatibility registration only. When managed banking is enabled, returns 401 before identity or profile writes; registration must use the verified Keycloak flow. In default-off compatibility mode, reserves a unique canonical UAE mobile number and provisions its user-service claim. An identical email and phone retry preserves identity and password. Conflicting claims return a generic conflict. A dependency failure may leave a durable identity for a later authenticated retry.
       security: [{ServiceKey: []}]
       requestBody:
         $ref: '#/components/requestBodies/Registration'
@@ -578,7 +578,7 @@ paths:
   /v1/auth/login:
     post:
       operationId: login
-      description: Verifies credentials and reasserts the registered phone in user-service before issuing a session. Historical identities with no registered phone retain login compatibility without automatic enrollment.
+      description: Legacy compatibility login only. When managed banking is enabled, returns 401 without provisioning or session creation; restricted migration password proof remains separate. Default-off compatibility verifies credentials and reasserts the registered phone before issuing a session. Historical phone-less identities are not automatically enrolled.
       security: [{ServiceKey: []}]
       requestBody:
         $ref: '#/components/requestBodies/Credentials'
@@ -604,7 +604,7 @@ paths:
   /v1/auth/sso:
     post:
       operationId: exchangeSsoToken
-      description: Validates a Keycloak access token and creates an independent 30-minute opaque local session after user-service acknowledges the phone claim. New issuer/subject mappings require a canonical UAE phone_number from trusted introspection. An existing registered phone must match exactly and cannot be omitted. Historical phone-less mappings remain compatible without automatic enrollment. No email or phone account linking; phone possession is not verified. Trusted provider email and literal boolean email_verified refresh separate notification contact fields atomically with the subject mapping, before profile acknowledgement. Missing or invalid email clears contact; missing, false or malformed verification clears verified status. Login credentials are unchanged.
+      description: Validates a Keycloak access token. Enabled managed banking accepts only configured managed pairs through confirmed interactive proof and durable eligibility; ordinary legacy or migration-purpose tokens return 401 without identity, profile or session writes. Managed expiry is bounded by original evidence and never exceeds 1800 seconds. Default-off compatibility creates an independent local session after the phone claim is acknowledged; trusted issuer/subject mapping, immutable canonical phone matching and generic contact-update rules remain enforced. Contact equality never links accounts. Already stored sessions retain their separate validation/revocation contract.
       security: [{ServiceKey: []}]
       requestBody:
         required: true

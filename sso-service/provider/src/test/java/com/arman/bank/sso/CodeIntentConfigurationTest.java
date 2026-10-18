@@ -84,4 +84,22 @@ class CodeIntentConfigurationTest {
         assertThrows(IllegalArgumentException.class,()->CodeIntentConfiguration.from(Map.of(),Map.of("current",encoded,"binding",raw)));
         assertFalse(CodeIntentConfiguration.from(Map.of(),Map.of("current",raw)).enabled());
     }
+    @Test void allCanonicalBase64AlphabetsAndPaddingFormsCannotAliasDecodedRingMaterial(){
+        byte[] raw=new byte[32];Arrays.fill(raw,(byte)0xff);
+        for(var encoder:List.of(Base64.getEncoder(),Base64.getEncoder().withoutPadding(),Base64.getUrlEncoder(),Base64.getUrlEncoder().withoutPadding())){
+            String alias=encoder.encodeToString(raw);
+            for(String name:List.of("OTHER_KEY","OTHER_PASSWORD","OTHER_SECRET","OTHER_TOKEN")){
+                var failure=assertThrows(IllegalArgumentException.class,()->CodeIntentConfiguration.from(Map.of(name,alias),Map.of("current",raw)));
+                assertEquals("Invalid code-intent configuration",failure.getMessage());assertNull(failure.getCause());assertFalse(failure.toString().contains(alias));
+            }
+            assertThrows(IllegalArgumentException.class,()->CodeIntentConfiguration.from(Map.of(),Map.of("current",raw,"retained",alias.getBytes(java.nio.charset.StandardCharsets.US_ASCII))));
+        }
+    }
+    @Test void dedicatedAccountClientIsLegacyOnlyNeverManagedOrVerification(){
+        var env=valid();env.put("ARMONEY_SSO_LEGACY_PAIRS","["+pair("armoney-migration-account")+"]");
+        var parsed=CodeIntentConfiguration.from(env,material());assertTrue(parsed.legacyPairs().contains(new CodeIntentPair(ISSUER,"armoney-migration-account")));assertFalse(parsed.managed(ISSUER,"armoney-migration-account"));
+        env.put("SSO_VERIFICATION_CLIENT_IDS","armoney-ios,armoney-android,armoney-migration-account");assertThrows(IllegalArgumentException.class,()->CodeIntentConfiguration.from(env,material()));
+        var managed=valid();managed.put("ARMONEY_SSO_MANAGED_PAIRS","["+pair("armoney-migration-account")+"]");
+        assertThrows(IllegalArgumentException.class,()->CodeIntentConfiguration.from(managed,material()));
+    }
 }

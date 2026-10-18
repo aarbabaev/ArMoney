@@ -32,6 +32,10 @@ Auth accepts only armoney-ios or armoney-android, with matching azp when present
 Browser uses the same LAN HTTPS origin as the gateway; no localhost on a phone.
 
 Use AppAuth Android for browser flow, strict state/redirect handling and PKCE.
+Each authorization request asks for `prompt=login` and `max_age=0`. These are
+fresh-interaction requests, not proof of verification or banking eligibility;
+the provider and Auth must independently enforce those requirements. This
+source change does not establish native or deployed provider acceptance.
 Never persist provider refresh tokens or embed a client secret. Pending authorization
 must survive activity recreation without accepting an unsolicited/replayed callback.
 Bank session and pending immutable payment command use Keystore AES-GCM encryption

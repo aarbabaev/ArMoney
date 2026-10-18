@@ -27,7 +27,7 @@ final class EnrollmentObservationTest {
                 });
         var context = model(org.keycloak.authentication.RequiredActionContext.class,Map.of("form",form,
                 "challenge",(Call)(args,type)-> { rendered.set(true); ((jakarta.ws.rs.core.Response)args[0]).close(); return null; }));
-        new VerificationAction("REGISTRATION_EMAIL","email",()->true).requiredActionChallenge(context);
+        new VerificationAction("REGISTRATION_EMAIL","email",()->true,ignored->true).requiredActionChallenge(context);
         assertTrue(rendered.get());
     }
 

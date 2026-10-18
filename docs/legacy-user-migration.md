@@ -48,7 +48,7 @@ Phone registration/verification, ordinary verification-projection writes and pro
 
 ## Pending complete migration and acceptance
 
-Auth V15-V22 implement restricted account/provider admission, OTP persistence, retained publication decisions, immutable receipt snapshots and typed source authority in the integration source. Default-off Main composition selects the browser, private decision and User mutation routes, current-User client and source-aware native consumers. Integrated startup, positive cutover, unknown-outcome recovery and complete browser/native acceptance remain pending. Existing bank tokens keep their original expiry/logout/security-revocation behavior until successful final migration. Pending proof or an old token is not permission to issue a new ordinary bank session.
+Auth V15-V22 implement restricted account/provider admission, OTP persistence, retained publication decisions, immutable receipt snapshots and typed source authority in the integration source. Default-off Main composition selects the browser, private decision and User mutation routes, current-User client and source-aware native consumers. Isolated Main composition and positive core cutover/rollback evidence do not establish complete production browser/native acceptance or unknown-outcome recovery. Existing bank tokens keep their original expiry/logout/security-revocation behavior until successful final migration. Enabled managed cutover denies public local registration/password login and legacy-pair SSO new admission; the restricted migration proof endpoints remain separate. Pending proof or an old token cannot issue a new ordinary bank session.
 
 U2 `email_contact_version` and `email_digest` identify the immutable Auth-owned migration email binding; they do not independently assert possession. In the proposed passwordless-owner contact flow, candidate version 1 and its candidate-domain digest are permitted only after genuine existing-account admission. Publication must bind actual consumed EMAIL receipt evidence to that same original candidate. A resulting verified owner-contact generation belongs to a separate Auth namespace and cannot replace or reinterpret the original stage fields or refresh the ACK. This meaning does not change the absent-phone projection triple, permit zero/null email binding fields, or grant User email authority. The candidate flow is under implementation, not deployed functionality.
 
@@ -63,5 +63,36 @@ The source includes `MigrationBaselineSpec`, `MigrationBaselineRoutesSpec`, `Mig
 A new migration-backed contact mutation without supported original command custody returns unavailable before an Auth receipt or transition and before any User write. It is never treated as initial registration. This release does not introduce a new migration contact-command producer. See [ADR 0049](adr/0049-live-migration-contact-revisions.md) for the boundary and remaining acceptance.
 
 The browser resource graph additionally requires `AUTH_TO_USER_MIGRATION_PUBLICATION_KEY` and `USER_TO_AUTH_MIGRATION_DECISION_KEY` as separate purpose credentials. Enabling source flags does not itself establish external browser, provider, Mailtrap inbox or Android acceptance.
+
+### Opt-in edge ingress under verification
+
+The default edge configurations continue to deny `/migration`. The separate
+`compose.migration-ingress.yaml` and `compose.migration-web-ingress.yaml` overlays
+select candidate ingress files for API-only and web stacks respectively. Neither
+overlay enables Auth, Gateway or provider features. They require the separate
+private `MIGRATION_EDGE_TO_GATEWAY_KEY` and exact canonical HTTPS
+`MIGRATION_PUBLIC_ORIGIN`; these values must agree with Gateway configuration.
+Do not add these overlays to a persistent stack before integrated acceptance.
+
+Candidate ingress matches the original raw URI and exact fifteen method/path
+pairs, verifies actual TLS and configured authority, removes caller trust headers
+and supplies the two fixed migration-hop headers. Unknown HTTP authorities receive
+a local 404 without reaching migration, OIDC, API or web upstreams. A conflicting TLS server name
+is rejected. An absent server name is supported for certificate-validated LAN IP
+connections only with the exact configured authority. Browser Origin, cookies,
+CSRF and immutable callback/command binding remain independently checked by
+Gateway and Auth. No migration rewrite or access logging is introduced.
+Migration upstream requests use fresh connections so a replayable GET is not
+automatically retried after a pooled-connection read failure. The isolated TLS
+fixture requires one upstream attempt for each stalled phase. Other upstream
+routes retain their existing connection settings.
+
+Edge transport limits are phase/inactivity limits: two seconds for connection,
+five seconds for response headers and five seconds for individual reads/writes.
+They do not establish an absolute five-second normal HTTP stream deadline;
+continuous upstream drip may exceed that duration. The fixed trusted Gateway
+retains its own absolute request budget and finite response cap. Header/body
+stall, drip, client-abort, TLS and trust-header acceptance remain required;
+source configuration is not evidence those tests passed.
 
 Actual AuthMain/UserMain process acceptance requires an explicit isolated-fixture opt-in. CI supplies `-Darmoney.test.isolated.user.fixture=true` only to the affected Gradle step after the disposable-daemon guard succeeds. It is not a global runtime setting and must not be enabled against the persistent banking stack.

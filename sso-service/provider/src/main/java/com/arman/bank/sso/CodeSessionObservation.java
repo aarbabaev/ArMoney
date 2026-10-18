@@ -31,10 +31,23 @@ final class CodeSessionObservation {
         return text;
     }
     static ObjectNode observe(KeycloakSession session,Binding binding,Clock clock) {
+        Instant captured=clock.instant();
+        CodeIntentProviderConfiguration accountConfiguration=null;
+        if(CodeIntentConfiguration.MIGRATION_ACCOUNT_CLIENT.equals(binding.clientId())){
+            try{accountConfiguration=CodeIntentLoginProtocolFactory.owner(session).configuration();}catch(RuntimeException unavailable){throw new Bridge.Unavailable();}
+        }
+        return observeCaptured(session,binding,captured,accountConfiguration);
+    }
+    /** Validated immutable configuration seam; never changes the original three-client observations. */
+    static ObjectNode observe(KeycloakSession session,Binding binding,Clock clock,CodeIntentProviderConfiguration accountConfiguration) {
         Instant captured=clock.instant(); // Capture before any session validity/model checks.
+        return observeCaptured(session,binding,captured,accountConfiguration);
+    }
+    private static ObjectNode observeCaptured(KeycloakSession session,Binding binding,Instant captured,CodeIntentProviderConfiguration accountConfiguration){
         RealmModel realm=session.getContext().getRealm();
         String issuer=Urls.realmIssuer(session.getContext().getUri().getBaseUri(),realm.getName());
-        if(!issuer.equals(binding.issuer()) || !CLIENTS.contains(binding.clientId())) throw new Bridge.Unavailable();
+        boolean account=CodeIntentConfiguration.MIGRATION_ACCOUNT_CLIENT.equals(binding.clientId());
+        if(!issuer.equals(binding.issuer()) || !(CLIENTS.contains(binding.clientId())||account)) throw new Bridge.Unavailable();
         ClientModel client=realm.getClientByClientId(binding.clientId());
         UserModel user=session.users().getUserById(realm,binding.subject());
         UserSessionModel us=session.sessions().getUserSession(realm,binding.sessionId());
@@ -47,6 +60,7 @@ final class CodeSessionObservation {
         if(cs==null || cs.getClient()==null || !client.getId().equals(cs.getClient().getId())
                 || cs.getUserSession()==null || !us.getId().equals(cs.getUserSession().getId())
                 || !AuthenticationManager.isSessionValid(realm,us) || !AuthenticationManager.isClientSessionValid(realm,client,us,cs)) throw new Bridge.Unavailable();
+        if(account)requireAccountClient(client,cs,issuer,accountConfiguration);
         Instant until=deadline(captured,realm,client,us,cs);
         String username=user.getUsername();
         if(username==null || username.isBlank() || username.length()>255 || username.chars().anyMatch(Character::isISOControl)) throw new Bridge.Unavailable();
@@ -60,6 +74,14 @@ final class CodeSessionObservation {
         out.put("enabled",user.isEnabled()); out.put("user_session_active",true); out.put("client_session_active",true);
         out.put("observed_at",Instant.ofEpochSecond(captured.getEpochSecond()).toString()); out.put("valid_until",until.toString());
         return out;
+    }
+    private static void requireAccountClient(ClientModel client,AuthenticatedClientSessionModel session,String issuer,CodeIntentProviderConfiguration configuration){
+        try{
+            String redirect=session.getRedirectUri();
+            if(configuration==null||!configuration.enabled()||configuration.purpose(issuer,client.getClientId(),redirect)!=CodeIntentProviderConfiguration.Purpose.MIGRATION_ACCOUNT
+                    ||redirect==null||!Set.of(redirect).equals(client.getRedirectUris())||!client.isStandardFlowEnabled()||client.isImplicitFlowEnabled()
+                    ||client.isDirectAccessGrantsEnabled()||client.isServiceAccountsEnabled()||!"S256".equals(client.getAttribute("pkce.code.challenge.method")))throw new Bridge.Unavailable();
+        }catch(RuntimeException unavailable){throw new Bridge.Unavailable();}
     }
     private static boolean persistent(KeycloakSession session,RealmModel realm,UserSessionModel live,Binding binding) {
         var state=live.getPersistenceState();

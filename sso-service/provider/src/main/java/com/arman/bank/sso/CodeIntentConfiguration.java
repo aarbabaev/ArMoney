@@ -12,6 +12,7 @@ import java.util.*;
 /** Pure, unwired configuration. Allocates no HTTP/DB resources and reads no process environment. */
 final class CodeIntentConfiguration {
     private static final Set<String> PUBLIC_CLIENTS=Set.of("armoney-ios","armoney-android","armoney-web");
+    static final String MIGRATION_ACCOUNT_CLIENT="armoney-migration-account";
     private final boolean enabled;
     private final Set<CodeIntentPair> managed,legacy;
     private CodeIntentConfiguration(boolean enabled,Set<CodeIntentPair> managed,Set<CodeIntentPair> legacy) {
@@ -34,7 +35,8 @@ final class CodeIntentConfiguration {
         String issuer=required(values,"SSO_ISSUER");
         var verification=csv(required(values,"SSO_VERIFICATION_CLIENT_IDS"),16,"[A-Za-z0-9_-]{1,128}");
         if(!PUBLIC_CLIENTS.containsAll(verification)) CodeIntentPair.invalid();
-        for(var pair:all) if(!issuer.equals(pair.issuer()) || !PUBLIC_CLIENTS.contains(pair.clientId())) CodeIntentPair.invalid();
+        for(var pair:managed)if(!PUBLIC_CLIENTS.contains(pair.clientId()))CodeIntentPair.invalid();
+        for(var pair:all) if(!issuer.equals(pair.issuer()) || !(PUBLIC_CLIENTS.contains(pair.clientId())||legacy.contains(pair)&&MIGRATION_ACCOUNT_CLIENT.equals(pair.clientId()))) CodeIntentPair.invalid();
         for(var pair:managed) if(!verification.contains(pair.clientId())) CodeIntentPair.invalid();
         if(!"/sso/realms/armoney".equals(CodeIntentPair.parseUri(issuer).getPath())) CodeIntentPair.invalid();
         base(required(values,"ARMONEY_AUTH_BRIDGE_URL"));
@@ -110,9 +112,13 @@ final class CodeIntentConfiguration {
     }
     private static void addSecret(List<byte[]> seen,byte[] raw) {
         List<byte[]> variants=new ArrayList<>(); variants.add(raw);
-        try { String value=new String(raw,StandardCharsets.UTF_8); byte[] decoded=Base64.getDecoder().decode(value);
-            if(decoded.length==32&&Base64.getEncoder().encodeToString(decoded).equals(value)) variants.add(decoded);
-        } catch(IllegalArgumentException notBase64) { }
+        String value=new String(raw,StandardCharsets.UTF_8);
+        for(boolean url:List.of(false,true)) try {
+            var decoder=url?Base64.getUrlDecoder():Base64.getDecoder();var encoder=url?Base64.getUrlEncoder():Base64.getEncoder();
+            byte[] decoded=decoder.decode(value);
+            if(decoded.length==32&&(encoder.encodeToString(decoded).equals(value)||encoder.withoutPadding().encodeToString(decoded).equals(value)))
+                if(variants.stream().noneMatch(previous->MessageDigest.isEqual(previous,decoded)))variants.add(decoded);
+        }catch(IllegalArgumentException notBase64){ }
         for(byte[] variant:variants) for(byte[] previous:seen) if(MessageDigest.isEqual(variant,previous)) CodeIntentPair.invalid();
         seen.addAll(variants);
     }

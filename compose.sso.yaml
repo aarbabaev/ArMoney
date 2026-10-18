@@ -7,7 +7,10 @@ services:
       SSO_CLIENT_ID: armoney-auth
       SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET:?Set a random SSO_CLIENT_SECRET}
   sso-service:
-    image: quay.io/keycloak/keycloak:26.7.4
+    image: armoney-sso:local
+    build:
+      context: .
+      dockerfile: sso-service/Dockerfile
     command: ["start", "--import-realm"]
     environment:
       KC_DB: postgres

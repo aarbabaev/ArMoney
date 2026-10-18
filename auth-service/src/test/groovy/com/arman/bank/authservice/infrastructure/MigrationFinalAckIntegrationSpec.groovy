@@ -6,6 +6,14 @@ import spock.lang.Specification
 /** Actual User process + actual Auth decision routes and real producer-owned PG receipts.
  * Reuses explicit synthetic token/JWKS/OTP delivery fixture; no genuine Keycloak/SMTP/native claim. */
 class MigrationFinalAckIntegrationSpec extends Specification {
+    private static final class SyntheticFinalConsumerFailure extends RuntimeException {
+        SyntheticFinalConsumerFailure(){super('synthetic downstream final consumer failure')}
+    }
+    private static void assertImmutable(Map value){
+        boolean rejected=false
+        try{value.put('synthetic_mutation',true)}catch(UnsupportedOperationException expected){rejected=true}
+        assert rejected
+    }
     LegacyMigrationFinalizationIntegrationSpec fixture
     io.javalin.Javalin authRead
     PostgresMigrationFinalAckStore producer
@@ -54,10 +62,44 @@ class MigrationFinalAckIntegrationSpec extends Specification {
         managed.database.transaction{sql->sql.fetch('select row_to_json(t)::text from legacy_migration_final_commands t').getValues(0,String)}==commandBefore
         managed.count('managed_identity_sources')==0
         when:
-        new PostgresLoginRequestScope(managed.database).inRequest(managed.ACTOR){owned->producer.withFinalDecision(owned,original.admission.migrationId(),original.admission.ownerCapability(),reserved,{sql,d,a,e->throw new AssertionError('missing source native consumer must prevent callback')} as PostgresMigrationFinalAckStore.FinalWork)}
-        then:def notReady=thrown(F.Failure);notReady.error()==F.Error.UNAVAILABLE
+        def sessionsBefore=managed.database.transaction{sql->sql.fetch('select row_to_json(t)::text from sessions t order by token_hash').getValues(0,String)}
+        boolean callbackObserved=false
+        boolean rollbackWriteObserved=false
+        def downstreamFailure=new SyntheticFinalConsumerFailure()
+        new PostgresLoginRequestScope(managed.database).inRequest(managed.ACTOR){owned->
+            producer.withFinalDecision(owned,original.admission.migrationId(),original.admission.ownerCapability(),reserved,{sql,d,a,e->
+                d.requireCurrent(sql);a.requireCurrent(sql);e.requireObservation(sql)
+                def journal=d.journal()
+                assert journal.migration_id==original.admission.migrationId()
+                assert journal.identity_id==original.identityId
+                assert journal.decision_id.toString()==decision.fields().decision_id
+                assert d.finalCommandId()==reserved
+                assert d.finalCommandHash().length==32
+                assert a.acknowledgement()==ack
+                assert a.journalHash()==journal.journal_hash
+                assert e.receiptId()==journal.managed_receipt_id
+                assertImmutable(journal);assertImmutable(a.acknowledgement())
+                callbackObserved=true
+                // Probe actual rollback inside the downstream transaction, without promotion.
+                assert sql.execute('delete from sessions where identity_id=?',original.identityId)==sessionsBefore.size()
+                assert sql.fetchOne('select count(*) from sessions where identity_id=?',original.identityId).get(0,Long)==0L
+                rollbackWriteObserved=true
+                throw downstreamFailure
+            } as PostgresMigrationFinalAckStore.FinalWork)
+        }
+        then:
+        def failed=thrown(SyntheticFinalConsumerFailure)
+        failed.is(downstreamFailure)
+        callbackObserved
+        rollbackWriteObserved
+        managed.database.transaction{sql->sql.fetch('select row_to_json(t)::text from sessions t order by token_hash').getValues(0,String)}==sessionsBefore
+        managed.database.transaction{sql->sql.fetch('select row_to_json(t)::text from legacy_migration_verified_final_acks t').getValues(0,String)}==before
+        managed.database.transaction{sql->sql.fetch('select row_to_json(t)::text from legacy_migration_final_commands t').getValues(0,String)}==commandBefore
         managed.count('legacy_migration_final_completions')==0
         managed.count('managed_identity_sources')==0
+        managed.count('migration_banking_authority_current')==0
+        managed.count('migration_banking_authorities')==0
+        managed.count('migration_banking_grants')==0
         managed.auth.me('Bearer '+original.token).id()==original.identityId
         cleanup:wrong?.close()
         where:sso << [false,true]

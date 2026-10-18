@@ -1,4 +1,4 @@
-# Disabled Keycloak verification provider
+# Keycloak verification provider under integration
 
 This standalone Java 21 module targets Keycloak **26.7.4**. It is implementation
 for integration and isolated acceptance, not an activated or end-to-end verified
@@ -7,12 +7,70 @@ Its standalone settings avoid changing the root service dependency graph.
 
 ## Implemented adapters
 
+The current production source registers seven SPI descriptor types, including
+the code-intent OIDC protocol, token-response policy, introspection adapter and
+genuine registration-creation action. These replace neither the durable Auth
+authority nor its separate managed-session admission checks. Historical proof
+factories and acceptance/control resources are excluded from the production
+package inventory. The isolated 130-case provider suite and seven-descriptor
+package check passed for the frozen dedicated-account candidate. Its optimized
+image built and a fresh isolated realm was provisioned through the actual Admin
+API with banking disabled. Production-browser acceptance remains pending; these
+results do not clear later source changes or authorize persistent activation.
+
+Production configuration uses `ARMONEY_LOGIN_PROOF_ENABLED` (default false),
+`ARMONEY_CODE_INTENT_CODE_HMAC_KEYS` and
+`ARMONEY_CODE_INTENT_PURPOSE_MANIFEST`, alongside the existing distinct transport,
+binding, actor and pair settings. The bounded key ring accepts canonical 32-byte
+keys and checks standard/URL Base64 aliases across roles. Unknown nonempty secret
+containers are rejected. The exact issuer/client/original-redirect manifest
+separates native banking, managed migration and legacy account migration.
+The dedicated public `armoney-migration-account` client is accepted only for the
+exact account callback's `MIGRATION_ACCOUNT` purpose and strict read-only code
+observation. It cannot enter managed banking, registration or verification
+allowlists. This additional configuration and its runtime acceptance remain pending.
+See [ADR 0050](../../../docs/adr/0050-production-provider-code-intent.md).
+
+### Separate production-provider acceptance topology
+
+`compose.production-provider-acceptance.yaml` is an explicit disposable topology,
+not a persistent-stack overlay. Root must establish a fresh owned Docker daemon,
+verify image identities and inherited volume shadows, enforce an outer deadline,
+and stage service readiness before starting its opt-in controller and edge
+profiles. No host ports, host sockets or persistent volumes are declared.
+
+`scripts/production-provider-fixture-environment.py` generates eleven new private
+configuration files from fresh random material. It never reads the operator's
+`.env`. Caller assertions do not attest isolation. The provisioning helper refuses
+an existing realm; it does not import, reset or update the operator's realm.
+
+The separate disposable controller image includes only six explicitly selected
+test-class families and production Auth dependencies. It must never replace the
+production Auth service or be packaged into the provider JAR. Its version-2
+protocol reports a bounded, sorted inventory of genuine confirmed events, rather
+than selecting a latest event or treating multiple ordinary logins as ambiguous.
+Delivery observations come from actual SMTP/SMS transport and successful fenced
+outbox completion. The controller neither creates registration authority nor
+substitutes an acceptance response for a financial result.
+
+The browser driver under `acceptance-fixture` requires genuine registration,
+both OTP forms, projected completion and a subsequent fresh password login.
+Portable driver tests are not service acceptance. Full migration callbacks,
+pre-FINAL continuity, unknown-outcome recovery and device acceptance remain
+separate gates. No emulator is started by these checks.
+
 - `armoney-verify-email-code` and `armoney-verify-phone-code` are required-action
-  factories. They re-enroll/read auth state against the current server user on
+  factories selected only for genuine server-marked registration creation, never
+  blanket obligations for existing or migration users. They re-enroll/read auth state against the current server user on
   each request, issue/resend challenges and consume six ASCII digits. Only auth
   owns OTP receipts, expiry, attempts, cooldown, delivery and contact versions.
   Email completion requires the authoritative email receipt; the final phone
-  step requires both receipts and auth state `ACTIVE`, including projection ACK.
+  step requires both receipts and the strict `PROJECTED` wire state, including
+  projection ACK. This is registration projection completion, not banking ACTIVE
+  authority. A genuine new registration then shows a fixed sign-in page before
+  code issuance and requires a fresh password flow; no registration password
+  action return is treated as authentication proof. Production browser/restart
+  acceptance remains pending.
 - The flow binding is HMAC-SHA-256 over a domain-separated, length-prefixed tuple
   of realm ID, root authentication-session ID, tab ID and client internal ID.
   Both required actions derive the same opaque binding. No browser field selects
@@ -33,7 +91,14 @@ Its standalone settings avoid changing the root service dependency graph.
   These are observations, never OTP receipts or eligibility proof. Auth must
   compare them to its own verified candidate versions/epoch on all entry paths.
 
-## Live enrollment observation and disabled accounts
+## Historical component checkpoints
+
+The sections below retain evidence and limitations at their named earlier
+revisions. Statements about unwired components or three-descriptor packaging
+describe those snapshots, not the current production composition above. They do
+not establish a successful current image, enabled flow or native banking login.
+
+### Live enrollment observation and disabled accounts
 
 The separate enrollment observer keeps its exact twelve-field response. An
 existing disabled account may return `enabled: false` and `authentication_session_active: true`

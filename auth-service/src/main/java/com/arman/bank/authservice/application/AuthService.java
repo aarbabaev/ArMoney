@@ -44,6 +44,7 @@ public final class AuthService {
     }
 
     public void register(String email, String password, String phone) {
+        requireLegacyAdmission();
         email = normalizeEmail(email);
         validatePassword(password);
         if (!canonicalPhone(phone)) throw new AuthFailure(BAD_INPUT);
@@ -78,6 +79,7 @@ public final class AuthService {
     }
 
     public Session login(String email, String password) {
+        requireLegacyAdmission();
         email = normalizeEmail(email);
         validatePassword(password);
         limit(email);
@@ -99,6 +101,7 @@ public final class AuthService {
                 var session=managed.exchange(token,principal);return new Session(session.accessToken(),session.expiresAt(),true);
             }
             if(!legacyPairs.test(principal.issuer(),client.value()))throw new AuthFailure(UNAUTHORIZED);
+            requireLegacyAdmission();
         }
         var identity = store.externalIdentity(principal);
         provision(identity);
@@ -117,6 +120,11 @@ public final class AuthService {
         store.requireBankingAccess(identity.id());
         // Historical identities remain compatible. Never enroll them from an unverified retry.
         if (identity.registrationPhone() != null) profiles.provision(identity.id(), identity.registrationPhone());
+    }
+
+    /** Cutover restricts new banking admission; stored-session continuity is checked separately. */
+    private void requireLegacyAdmission() {
+        if (managed != null && managed.enabled()) throw new AuthFailure(UNAUTHORIZED);
     }
 
     public java.util.Optional<AuthStore.EmailContact> emailContact(UUID identityId) {

@@ -69,6 +69,28 @@ final class CodeSessionObservationTest {
             assertThrows(Bridge.Unavailable.class,()->CodeSessionObservation.observe(invalid.session(),invalid.binding,Clock.systemUTC()));
         }
     }
+    @Test void dedicatedAccountObservationRequiresEnabledExactAccountManifestAndRestrictedClient(){
+        var config=CodeIntentProviderConfiguration.from(CodeIntentProviderConfigurationTest.accountEnvironment());
+        Fixture f=accountFixture();var result=CodeSessionObservation.observe(f.session(),f.binding,Clock.systemUTC(),config);
+        assertEquals(12,result.size());assertEquals("armoney-migration-account",result.path("client_id").textValue());
+        assertThrows(Bridge.Unavailable.class,()->CodeSessionObservation.observe(f.session(),f.binding,Clock.systemUTC(),null));
+        assertThrows(Bridge.Unavailable.class,()->CodeSessionObservation.observe(f.session(),f.binding,Clock.systemUTC(),CodeIntentProviderConfiguration.from(Map.of())));
+        for(String fault:List.of("redirect","redirects","standard","implicit","direct","service","pkce","confidential")){
+            Fixture invalid=accountFixture();switch(fault){
+                case "redirect"->invalid.cs.put("getRedirectUri","https://bank.example/other");
+                case "redirects"->invalid.clientOverrides.put("getRedirectUris",Set.of("https://bank.example/migration/legacy/account-oidc/callback","https://bank.example/other"));
+                case "standard"->invalid.clientOverrides.put("isStandardFlowEnabled",false);
+                case "implicit"->invalid.clientOverrides.put("isImplicitFlowEnabled",true);
+                case "direct"->invalid.clientOverrides.put("isDirectAccessGrantsEnabled",true);
+                case "service"->invalid.clientOverrides.put("isServiceAccountsEnabled",true);
+                case "pkce"->invalid.clientOverrides.put("getAttribute",(Call)args->"plain");
+                case "confidential"->invalid.publicClient=false;
+            }
+            assertThrows(Bridge.Unavailable.class,()->CodeSessionObservation.observe(invalid.session(),invalid.binding,Clock.systemUTC(),config),fault);
+        }
+    }
+    private static Fixture accountFixture(){var f=new Fixture();f.clientId="armoney-migration-account";f.base=java.net.URI.create("https://issuer.example/sso/");f.binding=new CodeSessionObservation.Binding("https://issuer.example/sso/realms/armoney","subject",f.clientId,"session");
+        f.clientOverrides.putAll(Map.of("isStandardFlowEnabled",true,"isImplicitFlowEnabled",false,"isDirectAccessGrantsEnabled",false,"isServiceAccountsEnabled",false,"getRedirectUris",Set.of("https://bank.example/migration/legacy/account-oidc/callback"),"getAttribute",(Call)args->"S256"));f.cs.put("getRedirectUri","https://bank.example/migration/legacy/account-oidc/callback");return f;}
     @Test void nullReloadRequiresExactDurableOnlineTupleAndNeverQueriesForExplicitTransient() {
         Fixture trusted=new Fixture(); trusted.us.put("getPersistenceState",null);
         assertTrue(CodeSessionObservation.observe(trusted.session(),trusted.binding,Clock.systemUTC()).path("user_session_active").booleanValue());
@@ -85,17 +107,19 @@ final class CodeSessionObservationTest {
     }
     private static Set<String> keys(com.fasterxml.jackson.databind.JsonNode node) { Set<String> keys=new HashSet<>(); node.fieldNames().forEachRemaining(keys::add); return keys; }
     static final class Fixture {
-        final Map<String,Object> user=new HashMap<>(),us=new HashMap<>(),cs=new HashMap<>();
+        final Map<String,Object> user=new HashMap<>(),us=new HashMap<>(),cs=new HashMap<>(),clientOverrides=new HashMap<>();
+        String clientId="armoney-ios";java.net.URI base=java.net.URI.create("https://issuer.example/");
         boolean publicClient=true;
         String durableFault="";
         int durableReads;
-        final CodeSessionObservation.Binding binding=new CodeSessionObservation.Binding("https://issuer.example/realms/armoney","subject","armoney-ios","session");
+        CodeSessionObservation.Binding binding=new CodeSessionObservation.Binding("https://issuer.example/realms/armoney","subject","armoney-ios","session");
         KeycloakSession session() {
             int now=org.keycloak.common.util.Time.currentTime();
             var realmValues=new HashMap<String,Object>();
             realmValues.putAll(Map.of("getId","realm","getName","armoney","isRememberMe",false,
                     "getSsoSessionMaxLifespan",1000,"getSsoSessionIdleTimeout",1000,"getClientSessionMaxLifespan",0,"getClientSessionIdleTimeout",0));
-            var client=model(ClientModel.class,Map.of("getId","internal","getClientId","armoney-ios","isEnabled",true,"isPublicClient",publicClient,"getAttribute",(Call)args->null));
+            var clientValues=new HashMap<String,Object>(Map.of("getId","internal","getClientId",clientId,"isEnabled",true,"isPublicClient",publicClient,"getAttribute",(Call)args->null));clientValues.putAll(clientOverrides);
+            var client=model(ClientModel.class,clientValues);
             realmValues.put("getClientByClientId",(Call)args->client);
             var realm=model(RealmModel.class,realmPolicy(realmValues));
             user.putIfAbsent("getId","subject"); user.putIfAbsent("getUsername","legacy-user"); user.putIfAbsent("isEnabled",true); if(!user.containsKey("getEmail")) user.put("getEmail",null);
@@ -109,9 +133,9 @@ final class CodeSessionObservationTest {
             cs.putIfAbsent("getClient",client); cs.putIfAbsent("getUserSession",userSession); cs.putIfAbsent("getStarted",now); cs.putIfAbsent("getTimestamp",now);
             var clientSession=model(AuthenticatedClientSessionModel.class,cs);
             us.putIfAbsent("getAuthenticatedClientSessionByClient",(Call)args->clientSession);
-            var hostname=model(org.keycloak.urls.HostnameProvider.class,Map.of("getBaseUri",java.net.URI.create("https://issuer.example/")));
+            var hostname=model(org.keycloak.urls.HostnameProvider.class,Map.of("getBaseUri",base));
             var hostSession=model(KeycloakSession.class,Map.of("getProvider",hostname));
-            var delegate=model(jakarta.ws.rs.core.UriInfo.class,Map.of("getBaseUri",java.net.URI.create("https://issuer.example/"),"getRequestUri",java.net.URI.create("https://issuer.example/")));
+            var delegate=model(jakarta.ws.rs.core.UriInfo.class,Map.of("getBaseUri",base,"getRequestUri",base));
             var uri=new KeycloakUriInfo(hostSession,org.keycloak.urls.UrlType.FRONTEND,delegate);
             var context=model(KeycloakContext.class,Map.of("getRealm",realm,"getUri",uri));
             var users=model(UserProvider.class,Map.of("getUserById",(Call)args->userModel));

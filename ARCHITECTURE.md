@@ -1,20 +1,19 @@
 # ArMoney  -  System and Agent Team Architecture
 
-> The main project map, updated 2026-10-13 from main
-> `ce5175bbf2d4183b16f76977ef6f7627c2ed5ee2`, including the assistant release in PR #46.
-> Exact-head checks and deployment evidence are recorded separately in that PR.
+> Source map for main and the current managed-banking integration in PR #96.
+> Exact-head checks and deployment evidence are recorded separately in the delivery PR.
 > Describes the source code, not the guaranteed state of running containers.
 > This revision adds the #30 Saga design and #31 optional Kafka infrastructure
 > source; Kafka cluster acceptance and deployment remain unverified.
 
-The staged internal proof-creation consumer described in
-[ADR 0042](docs/adr/0042-staged-proof-eligibility-consumption.md) now rereads
-current eligibility evidence after persistence work. Its source security review
-and execution audits are clear: the local Auth check passed 766 tests across 43
-suites on 2026-10-16 with no failures, errors or skips. Exact integration-head CI
-and runtime acceptance remain pending. Production proof routes
-retain UNAVAILABLE, managed banking denial remains unconditional, and no
-provider adapter, ACTIVE status or session activation is added.
+The integration implements registration completion, durable code-intent
+confirmation and strict managed-session admission behind default-off configuration.
+The staged consumer described in [ADR 0042](docs/adr/0042-staged-proof-eligibility-consumption.md)
+rereads current eligibility evidence after persistence work. Production provider
+packaging and fresh-realm configuration have isolated evidence; complete browser,
+migration and native acceptance and exact-head CI remain pending. Unsupported
+migration contact mutations still fail closed. Existing stored sessions retain
+their original expiry and revocation behavior until successful atomic FINAL.
 
 ## Navigation
 
@@ -38,7 +37,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | Area | Current state | Next steps |
 | --- | --- | --- |
 | Auth | Password login and Keycloak exchange, stable local identities, opaque sessions | Global provider logout/revocation integration |
-| SSO | Optional Keycloak realm, browser authorization code + PKCE | Production identity controls, MFA, email verification |
+| SSO | Optional Keycloak realm, browser authorization code + PKCE; registration verification and code-confirmation provider under integration | Complete provider/browser acceptance and deployment; MFA |
 | iOS | Existing native SwiftUI login, wallets/balances, transfers/history, notifications and profile (iOS 18+); feature development paused | Physical iPhone validation and regression CI paused by owner |
 | Android | Native Kotlin/Compose SSO, wallets/balances, phone transfers/history, inbox and profile (API26+) | Physical-device/LAN acceptance; exact-revision CI evidence in the delivery PR |
 | User | Profile, optional immutable email-prefix sharding and central unique UAE registration-phone directory | Prefixes do not guarantee uniform load; automated ownership proof requires a separate approved provider |
@@ -1296,7 +1295,7 @@ PR #70 passed exact-head CI and was deployed at af1f7975 with the bridge disable
 
 ### Default-off banking eligibility barrier
 
-Auth includes the independent strict AUTH_BANKING_ELIGIBILITY_ENFORCED switch, default false. Its deny-only path rejects all authority-associated V9 staging identities before profile provisioning and during session creation/validation under the shared control prefix. Off preserves compatibility for unmanaged historical identities, including populated staging. Permanent V10 managed-principal denial applies in every flag mode, as described below. This is not complete dual-OTP enforcement, provider proof or activation. Source and checks are tracked separately; no deployment enables the switch. See [ADR 0038](docs/adr/0038-default-off-banking-eligibility.md).
+Auth includes the independent strict AUTH_BANKING_ELIGIBILITY_ENFORCED switch, default false. Its deny-only path rejects authority-associated V9 staging identities before profile provisioning and new session creation under the shared control prefix. Existing stored live sessions retain original expiry, logout and security revocation behavior before successful atomic migration FINAL, including when enforcement is enabled. Pending migration lookup additionally checks its original continuity snapshot; permanent managed classification still denies historical sessions in every flag mode. This is not complete dual-OTP enforcement, provider proof or activation. Source and checks are tracked separately; no deployment enables the switch. See [ADR 0038](docs/adr/0038-default-off-banking-eligibility.md) and the proposed [production provider composition](docs/adr/0050-production-provider-code-intent.md).
 
 ### Managed registration completion: source implemented, default-disabled
 
@@ -1688,6 +1687,10 @@ The separate Auth managed-session consumer and V14 persistence are now wired int
 Main behind `AUTH_MANAGED_BANKING_ENABLED`, disabled by default. Configuration is
 validated before database allocation. Managed and legacy issuer/client pairs are
 explicit and disjoint; missing managed proof never selects a legacy fallback.
+When managed admission is enabled, public local registration/password login and
+legacy-pair SSO new banking admission deny before identity/profile/session writes.
+The restricted migration proof routes and already stored live sessions remain
+separate; migration-purpose OIDC tokens do not authorize a new banking session.
 The historical SSO constructor remains available only when the consumer is off,
 both pair lists are empty and no managed key material is configured. This narrow
 compatibility mode retains generic permanent-managed-principal denial; configuring
@@ -1708,7 +1711,8 @@ Auth V15–V20 source adds generation/session fences, restricted account admissi
 server-owned PKCE custody, durable provider claims and migration-specific OTP
 evidence, retained publication decisions, strict User ACK custody and typed
 migration-source metadata. These components are not a completed migration:
-positive atomic cutover and subsequent native-login acceptance remain unverified.
+isolated positive atomic cutover and rollback evidence does not establish the
+complete production browser flow or subsequent native-login acceptance.
 Default-off browser ingress, provider adapters and resource composition are
 present in the integration source. Auth Main selects the browser and private
 decision handlers, genuine registration authority, current-User observation and

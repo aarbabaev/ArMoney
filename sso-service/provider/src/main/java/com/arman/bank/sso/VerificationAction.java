@@ -12,22 +12,31 @@ final class VerificationAction implements RequiredActionProvider {
     private final String purpose;
     private final String id;
     private final java.util.function.BooleanSupplier enabled;
-    VerificationAction(String purpose, String id) { this(purpose, id, Bridge::enabled); }
+    private final java.util.function.Predicate<RequiredActionContext> registration;
+    private final java.util.function.Consumer<RequiredActionContext> continuation;
+    VerificationAction(String purpose, String id) { this(purpose, id, Bridge::enabled,CodeIntentRegistrationGuard::permits); }
     VerificationAction(String purpose, String id, java.util.function.BooleanSupplier enabled) {
-        this.purpose = purpose; this.id = id; this.enabled = enabled;
+        this(purpose,id,enabled,CodeIntentRegistrationGuard::permits);
+    }
+    /** Explicit synthetic guard seam; production factories always use the genuine creation guard. */
+    VerificationAction(String purpose,String id,java.util.function.BooleanSupplier enabled,java.util.function.Predicate<RequiredActionContext> registration){
+        this(purpose,id,enabled,registration,CodeIntentRegistrationContinuation::show);
+    }
+    VerificationAction(String purpose,String id,java.util.function.BooleanSupplier enabled,java.util.function.Predicate<RequiredActionContext> registration,java.util.function.Consumer<RequiredActionContext> continuation){
+        this.purpose = purpose; this.id = id; this.enabled = enabled;this.registration=registration;this.continuation=continuation;
     }
     @Override public void evaluateTriggers(RequiredActionContext context) {
-        if (enabled.getAsBoolean()) context.getAuthenticationSession().addRequiredAction(id);
+        if (enabled.getAsBoolean()&&registration.test(context)) context.getAuthenticationSession().addRequiredAction(id);
     }
     @Override public void requiredActionChallenge(RequiredActionContext context) {
-        if (!enabled.getAsBoolean()) { context.failure(); return; }
+        if (!enabled.getAsBoolean()||!registration.test(context)) { context.failure(); return; }
         // A separate private HTTP request can only observe committed state. Do not
         // bootstrap authority inside the request which first renders this action.
         render(context, null);
     }
 
     @Override public void processAction(RequiredActionContext context) {
-        if (!enabled.getAsBoolean()) { context.failure(); return; }
+        if (!enabled.getAsBoolean()||!registration.test(context)) { context.failure(); return; }
         try {
             var session = context.getAuthenticationSession();
             var bridge = Bridge.configured();
@@ -80,16 +89,19 @@ final class VerificationAction implements RequiredActionProvider {
         var body = command(context, "status"); body.remove("command_id");
         return bridge.enrollment("/internal/enrollments/" + enrollment + "/status", body);
     }
-    private boolean complete(RequiredActionContext context, JsonNode status) {
+    boolean complete(RequiredActionContext context, JsonNode status) {
         boolean done = permitsCompletion(purpose, status);
-        if (done) context.success();
+        if(done){
+            if(!registration.test(context))throw new Bridge.Unavailable();
+            if("REGISTRATION_PHONE".equals(purpose))continuation.accept(context);else context.success();
+        }
         return done;
     }
     static boolean permitsCompletion(String purpose, JsonNode status) {
         boolean email = status.path("email_verified").isBoolean() && status.path("email_verified").booleanValue();
         boolean phone = status.path("phone_verified").isBoolean() && status.path("phone_verified").booleanValue();
         return purpose.equals("REGISTRATION_EMAIL") ? email
-                : purpose.equals("REGISTRATION_PHONE") && email && phone && "ACTIVE".equals(status.path("state").asText());
+                : purpose.equals("REGISTRATION_PHONE") && email && phone && "PROJECTED".equals(status.path("state").asText());
     }
 
     private JsonNode enroll(RequiredActionContext context, Bridge bridge) {
