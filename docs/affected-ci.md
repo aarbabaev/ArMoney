@@ -58,3 +58,10 @@ Selector/Gradle safety tests run on every PR. Full mode is also required when th
 selector or workflow changes, so this optimization validates its own deployment
 with the existing complete suite. iOS remains paused; emulator execution is never
 part of these jobs.
+
+When SSO checks are selected, the existing backend job also runs the isolated
+registration-fixture module's unfiltered `check jar` and its JAR-profile guard,
+plus offline realm-provisioning, private-configuration and native-controller unit
+tests. The browser is not launched by those unit tests. This adds no parallel job
+and does not establish native acceptance. Local backend artifacts retain JUnit
+XML as well as HTML test reports, including the standalone fixture module.

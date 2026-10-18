@@ -164,6 +164,13 @@ jobs:
       - name: Check and package disabled Keycloak provider
         if: needs.impact.outputs.sso == 'true'
         run: bash sso-service/provider/package-provider.sh
+      - name: Check isolated registration fixture artifacts and offline helpers
+        if: needs.impact.outputs.sso == 'true'
+        run: |
+          bash ./gradlew --project-dir sso-service/provider/acceptance-fixture --no-daemon --console=plain --max-workers=1 check jar
+          python3 -B -m unittest discover -s sso-service/provider/acceptance-fixture -p test_provision_code_intent_realm.py
+          python3 -B -m unittest discover -s auth-service/src/test/fixtures -p test_build_code_intent_env.py
+          python3 -B scripts/test-sso-code-intent-native.py
       - name: Validate local baseline tool safety (offline)
         if: needs.impact.outputs.baseline == 'true'
         run: |

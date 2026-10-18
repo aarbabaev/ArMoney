@@ -6,7 +6,7 @@ kind=${1:?backend, android or web}
 output=/artifacts/$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT
 mkdir -p "$output"
 if [[ "$kind" == backend ]]; then
-  find . -type d -path '*/build/reports/tests' -print0 | tar --null -T - -czf "$output/backend-tests.tgz"
+  find . \( -type d -path '*/build/reports/tests' -o -type f -path '*/build/test-results/*/*.xml' \) -print0 | tar --null -T - -czf "$output/backend-tests.tgz"
 elif [[ "$kind" == web ]]; then
   find web -type d \( -name playwright-report -o -name test-results -o -name coverage \) -print0 | tar --null -T - -czf "$output/web-results.tgz"
 else
