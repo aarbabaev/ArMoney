@@ -1577,8 +1577,14 @@ disposable PostgreSQL database and Caddy. Both Keycloak nodes exited with a
 build-time `kc.http-relative-path` mismatch before realm provisioning. The run
 failed at OFF readiness in 313.921 seconds; owned resources were removed. The
 fixture Dockerfile now pins `/sso` before augmentation, matching optimized runtime
-configuration. This fix requires a fresh image/startup check; cluster behavior,
-realm provisioning and the complete native topology remain unverified. The companion has
+configuration. A fresh run at `f01ef2f3` rebuilt all four images and passed both-node
+HTTP and verified edge-TLS readiness. It then failed at provisioning in 232.078
+seconds; the runner exited 1, owned resources were removed and the CI controller
+restored. Provisioning cause remains unknown. The helper now records only a fixed
+checkpoint, optional node A/B and optional HTTP status on private failure output;
+14 synthetic tests passed. Success output remains unchanged. Diagnostic reporting
+does not fix provisioning. Cluster association, realm/user provisioning and the
+complete native topology remain unverified. The companion has
 no health endpoint; only Auth/User/SMS expose `/health/ready`.
 
 `provision-code-intent-realm.py` is the phase-one private-input helper. It accepts
