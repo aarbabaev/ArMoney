@@ -56,6 +56,8 @@ services:
     environment: {POSTGRES_DB: keycloak, POSTGRES_USER: keycloak}
   user-service:
     <<: *process
+    # Shadow the Gradle base image cache VOLUME with disposable memory.
+    tmpfs: ["/tmp:rw,nosuid,nodev,mode=1777", "/home/gradle/.gradle:rw,nosuid,nodev,uid=1000,gid=1000,mode=0700,size=16m"]
     image: ${CODE_INTENT_USER_IMAGE:?Supply fixture-user target image}
     env_file: ["${CODE_INTENT_USER_ENV:?Supply private User configuration}"]
     environment:
@@ -67,11 +69,15 @@ services:
       user-db: {condition: service_healthy}
   sms-sandbox:
     <<: *process
+    # Shadow the Gradle base image cache VOLUME with disposable memory.
+    tmpfs: ["/tmp:rw,nosuid,nodev,mode=1777", "/home/gradle/.gradle:rw,nosuid,nodev,uid=1000,gid=1000,mode=0700,size=16m"]
     image: ${CODE_INTENT_SMS_IMAGE:?Supply fixture-sms target image}
     env_file: ["${CODE_INTENT_SMS_ENV:?Supply independent private SMS credentials}"]
     environment: {PORT: "8080", SMS_SANDBOX_DATA_DIR: /tmp/sms-inbox}
   auth-service:
     <<: *process
+    # Shadow the Gradle base image cache VOLUME with disposable memory.
+    tmpfs: ["/tmp:rw,nosuid,nodev,mode=1777", "/home/gradle/.gradle:rw,nosuid,nodev,uid=1000,gid=1000,mode=0700,size=16m"]
     image: ${CODE_INTENT_AUTH_IMAGE:?Supply verified Auth authority image}
     entrypoint: [java, -Xms32m, -Xmx256m, -cp, "/opt/auth/lib/*", com.arman.bank.authservice.Main]
     env_file: ["${CODE_INTENT_AUTH_ENV:?Supply private Auth Main configuration}"]
@@ -90,6 +96,8 @@ services:
       sms-sandbox: {condition: service_started}
   auth-code-intent-fixture:
     <<: *process
+    # Shadow the Gradle base image cache VOLUME with disposable memory.
+    tmpfs: ["/tmp:rw,nosuid,nodev,mode=1777", "/home/gradle/.gradle:rw,nosuid,nodev,uid=1000,gid=1000,mode=0700,size=16m"]
     image: ${CODE_INTENT_AUTH_IMAGE:?Supply verified Auth authority image}
     env_file: ["${CODE_INTENT_AUTHORITY_ENV:?Supply private companion configuration}"]
     environment:

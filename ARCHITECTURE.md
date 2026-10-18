@@ -1570,6 +1570,16 @@ must not be weakened. No realm import, secrets or enablement are baked into
 images. Phase-specific private SSO inputs select disabled provisioning, then the
 root stops both nodes before restarting enabled with the read-back UUID.
 
+The four Gradle-based fixture runtime services explicitly mount a bounded 16 MiB
+tmpfs at `/home/gradle/.gradle`, with UID/GID 1000, mode 0700 and `nosuid,nodev`,
+while retaining their separate `/tmp` tmpfs. This shadows the Gradle base image's
+cache volume without permitting anonymous volumes in the lifecycle guard. The
+combined run at `c8917b6c` passed prerequisites and OFF provisioning, then failed
+closed at `dependencies / service-mounts / sms-sandbox` in 260.406 seconds.
+The rejected mount destination was not retained; the inherited cache volume is
+the source-supported explanation. The tmpfs correction still requires isolated
+runtime verification; ON readiness and native confirmation remain unverified.
+
 The companion image Dockerfile also defines separate `fixture-user` and
 `fixture-sms` targets using real production service distributions without test
 classes. A bounded isolated run at `d579ebbf` built all four targets and started the
