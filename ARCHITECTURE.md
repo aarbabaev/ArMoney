@@ -1621,6 +1621,14 @@ took 93.5 seconds and owned resources were removed. Fresh augmentation/startup
 and actual native acceptance remain required. Production and Auth wire contracts
 are unchanged.
 
+Provider preparation now waits one second after each PREPARING response before
+polling Auth STATE. Waiting is bounded by the original setup and experiment
+cutoffs, with cancellation checked before and after. This avoids exhausting the
+existing Auth control budget; no rate limit, mutation retry or deadline renewal
+was added. Readiness observation can be delayed by up to one polling interval.
+Four new pacing/cutoff/rate-rejection/cancellation regressions are source-ready
+but unexecuted; the earlier 165-test result does not cover them.
+
 ## Private fixture configuration
 
 `auth-service/src/test/fixtures/build-code-intent-env.py` creates a fresh private
