@@ -1778,6 +1778,14 @@ credentials or response bodies. An HTTP-success category does not establish
 successful decoding, valid evidence or banking authority. These diagnostics do
 not resolve the pending two-node enrollment acceptance gate by themselves.
 
+The Auth observer's separate `AUTH_ENROLLMENT_TRANSPORT` trace classifies HTTP
+version, content type, body framing and a fixture-router marker using fixed enums.
+It records subscriber state once before forced cleanup; it never records header
+values or body content. A marker is diagnostic only and grants no authority.
+Real loopback tests cover completed, chunked, stalled and dripping response bodies.
+The multi-process login test retains its readiness deadline and admission checks;
+startup failures expose only bounded process/status categories, never child logs.
+
 ```mermaid
 flowchart LR
   Root[Owned disposable test runner] -->|Independent one-shot control| Peer[Fixture peer: auth-service]

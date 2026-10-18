@@ -29,6 +29,12 @@ public final class HttpVerificationObservations implements Observations, AutoClo
         CONTENT_TYPE, UTF8, JSON_SCHEMA, ECHO, FLAGS, LIFETIME, CONTACT_FIELDS, CONTACTS, ACCEPTED }
     private static final System.Logger LOG=System.getLogger(HttpVerificationObservations.class.getName());
     private final java.util.function.Consumer<Diagnostic> diagnostics;
+    enum Trace { VERSION_HTTP_1_1, VERSION_HTTP_2, TYPE_JSON, TYPE_OTHER, TYPE_MISSING, TYPE_MULTIPLE,
+        LENGTH_ZERO, LENGTH_POSITIVE, LENGTH_ABSENT, LENGTH_INVALID, LENGTH_MULTIPLE,
+        TRANSFER_CHUNKED, TRANSFER_ABSENT, TRANSFER_OTHER, TRANSFER_MULTIPLE,
+        ROUTER_NODE_A, ROUTER_NODE_B, ROUTER_ABSENT, ROUTER_OTHER,
+        SUBSCRIBED, NOT_SUBSCRIBED, NEXT, NO_NEXT, COMPLETE, NOT_COMPLETE, ERROR, NO_ERROR }
+    private final java.util.function.Consumer<Trace> traces;
     private final URI endpoint;
     private final String credential;
     private final Policy policy;
@@ -38,6 +44,7 @@ public final class HttpVerificationObservations implements Observations, AutoClo
     public HttpVerificationObservations(URI origin,String credential,Policy policy){
         origin(origin,false);credential(credential);this.endpoint=origin.resolve(PATH);this.credential=credential;this.policy=Objects.requireNonNull(policy);
         diagnostics=HttpVerificationObservations::log;
+        traces=HttpVerificationObservations::logTrace;
         client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).followRedirects(HttpClient.Redirect.NEVER).build();
     }
     /** Isolated loopback fixture only; never selected by environment configuration. Owns the supplied client. */
@@ -46,6 +53,10 @@ public final class HttpVerificationObservations implements Observations, AutoClo
     }
     /** Fixed enum-only sink seam; cannot observe request/response objects or exception data. */
     HttpVerificationObservations(URI origin,String credential,Policy policy,HttpClient client,java.util.function.Consumer<Diagnostic> diagnostics){
+        this(origin,credential,policy,client,diagnostics,HttpVerificationObservations::logTrace);
+    }
+    HttpVerificationObservations(URI origin,String credential,Policy policy,HttpClient client,java.util.function.Consumer<Diagnostic> diagnostics,java.util.function.Consumer<Trace> traces){
+        this.traces=Objects.requireNonNull(traces);
         this.diagnostics=Objects.requireNonNull(diagnostics);
         origin(origin,true);credential(credential);this.endpoint=origin.resolve(PATH);this.credential=credential;this.policy=Objects.requireNonNull(policy);this.client=Objects.requireNonNull(client);
         if(client.followRedirects()!=HttpClient.Redirect.NEVER||!client.connectTimeout().orElse(Duration.ZERO).equals(Duration.ofSeconds(2)))throw new IllegalArgumentException("Invalid observation fixture client");
@@ -79,7 +90,7 @@ public final class HttpVerificationObservations implements Observations, AutoClo
             var request=HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(4)).header("Content-Type","application/json")
                 .header("X-ArMoney-Auth-Status-Key",credential).POST(HttpRequest.BodyPublishers.ofByteArray(requestBytes)).build();
             phase=Diagnostic.TRANSPORT;
-            pending=client.sendAsync(request,info->{diagnostic(httpStatus(info.statusCode()));return body;});exchanges.add(pending);if(closed)pending.cancel(true);
+            pending=client.sendAsync(request,info->{diagnostic(httpStatus(info.statusCode()));headerTrace(info).forEach(this::trace);return body;});exchanges.add(pending);if(closed)pending.cancel(true);
             var response=pending.get(4,TimeUnit.SECONDS);responseBytes=response.body();
             var types=response.headers().allValues("Content-Type");
             if(response.statusCode()!=200){phase=null;throw unavailable();}
@@ -93,6 +104,7 @@ public final class HttpVerificationObservations implements Observations, AutoClo
         catch(ExecutionException rejected){var kind=transportFailure(rejected);diagnostic(kind!=Diagnostic.TRANSPORT?kind:body.failure!=null?body.failure:kind);throw unavailable();}
         catch(Exception rejected){if(phase!=null)diagnostic(phase==Diagnostic.TRANSPORT?transportFailure(rejected):phase);throw unavailable();}
         finally{
+            body.snapshot().forEach(this::trace);
             body.cancel();if(pending!=null){exchanges.remove(pending);if(!pending.isDone())pending.cancel(true);}
             if(requestBytes!=null)Arrays.fill(requestBytes,(byte)0);if(responseBytes!=null)Arrays.fill(responseBytes,(byte)0);
         }
@@ -141,15 +153,39 @@ public final class HttpVerificationObservations implements Observations, AutoClo
     static String diagnosticLine(Diagnostic value){return "AUTH_ENROLLMENT_OBSERVER "+value.name();}
     private static void log(Diagnostic value){LOG.log(System.Logger.Level.INFO,diagnosticLine(value));}
     private void diagnostic(Diagnostic value){try{diagnostics.accept(value);}catch(RuntimeException ignored){/* Logging cannot alter admission. */}}
+    static String traceLine(Trace value){return "AUTH_ENROLLMENT_TRANSPORT "+value.name();}
+    private static void logTrace(Trace value){LOG.log(System.Logger.Level.INFO,traceLine(value));}
+    private void trace(Trace value){try{traces.accept(value);}catch(RuntimeException ignored){/* Diagnostics cannot alter admission. */}}
+    static List<Trace> headerTrace(HttpResponse.ResponseInfo info){
+        var result=new ArrayList<Trace>();
+        result.add(info.version()==HttpClient.Version.HTTP_2?Trace.VERSION_HTTP_2:Trace.VERSION_HTTP_1_1);
+        var types=info.headers().allValues("Content-Type");
+        result.add(types.isEmpty()?Trace.TYPE_MISSING:types.size()!=1?Trace.TYPE_MULTIPLE:
+            types.getFirst().matches("(?i)application/json(?:\\s*;\\s*charset=utf-8)?")?Trace.TYPE_JSON:Trace.TYPE_OTHER);
+        var lengths=info.headers().allValues("Content-Length");
+        result.add(lengths.isEmpty()?Trace.LENGTH_ABSENT:lengths.size()!=1?Trace.LENGTH_MULTIPLE:
+            !lengths.getFirst().matches("[0-9]+")?Trace.LENGTH_INVALID:
+            lengths.getFirst().chars().allMatch(c->c=='0')?Trace.LENGTH_ZERO:Trace.LENGTH_POSITIVE);
+        var transfer=info.headers().allValues("Transfer-Encoding");
+        result.add(transfer.isEmpty()?Trace.TRANSFER_ABSENT:transfer.size()!=1?Trace.TRANSFER_MULTIPLE:
+            transfer.getFirst().equalsIgnoreCase("chunked")?Trace.TRANSFER_CHUNKED:Trace.TRANSFER_OTHER);
+        var router=info.headers().allValues("X-Fixture-Node");
+        result.add(router.isEmpty()?Trace.ROUTER_ABSENT:router.size()!=1?Trace.ROUTER_OTHER:
+            router.getFirst().equals("sso-a")?Trace.ROUTER_NODE_A:router.getFirst().equals("sso-b")?Trace.ROUTER_NODE_B:Trace.ROUTER_OTHER);
+        return List.copyOf(result);
+    }
     private static String text(JsonNode body,String field,int max){var value=body.get(field);if(value==null||!value.isTextual()||value.textValue().isBlank()||value.textValue().length()>max)throw unavailable();return value.textValue();}
     private static Verification.Failure unavailable(){return new Verification.Failure(Verification.Error.UNAVAILABLE);}
     private static final class BoundedBody implements HttpResponse.BodySubscriber<byte[]>{
+        private boolean subscribed,next,complete,error;
+        synchronized List<Trace> snapshot(){return List.of(subscribed?Trace.SUBSCRIBED:Trace.NOT_SUBSCRIBED,
+            next?Trace.NEXT:Trace.NO_NEXT,complete?Trace.COMPLETE:Trace.NOT_COMPLETE,error?Trace.ERROR:Trace.NO_ERROR);}
         private final CompletableFuture<byte[]> result=new CompletableFuture<>();private final byte[] bytes=new byte[LIMIT];private int size;private java.util.concurrent.Flow.Subscription subscription;private volatile Diagnostic failure;
         public CompletionStage<byte[]> getBody(){return result;}
-        public synchronized void onSubscribe(java.util.concurrent.Flow.Subscription value){if(subscription!=null||result.isDone()){value.cancel();return;}subscription=value;value.request(1);}
-        public synchronized void onNext(List<ByteBuffer> buffers){if(result.isDone())return;for(var buffer:buffers){int count=buffer.remaining();if(count>LIMIT-size){failure=Diagnostic.BODY_LIMIT;cancel();return;}buffer.get(bytes,size,count);size+=count;}subscription.request(1);}
-        public synchronized void onError(Throwable ignored){if(failure==null){var kind=transportFailure(ignored);failure=kind==Diagnostic.TRANSPORT?Diagnostic.BODY_FAILURE:kind;}cancel();}
-        public synchronized void onComplete(){result.complete(Arrays.copyOf(bytes,size));Arrays.fill(bytes,(byte)0);}
+        public synchronized void onSubscribe(java.util.concurrent.Flow.Subscription value){subscribed=true;if(subscription!=null||result.isDone()){value.cancel();return;}subscription=value;value.request(1);}
+        public synchronized void onNext(List<ByteBuffer> buffers){next=true;if(result.isDone())return;for(var buffer:buffers){int count=buffer.remaining();if(count>LIMIT-size){failure=Diagnostic.BODY_LIMIT;cancel();return;}buffer.get(bytes,size,count);size+=count;}subscription.request(1);}
+        public synchronized void onError(Throwable ignored){error=true;if(failure==null){var kind=transportFailure(ignored);failure=kind==Diagnostic.TRANSPORT?Diagnostic.BODY_FAILURE:kind;}cancel();}
+        public synchronized void onComplete(){complete=true;result.complete(Arrays.copyOf(bytes,size));Arrays.fill(bytes,(byte)0);}
         synchronized void cancel(){if(subscription!=null)subscription.cancel();result.completeExceptionally(unavailable());Arrays.fill(bytes,(byte)0);}
     }
     @Override public void close(){closed=true;for(var exchange:exchanges)exchange.cancel(true);client.shutdownNow();}

@@ -56,13 +56,41 @@ class LoginOperationProcessesIntegrationSpec extends Specification {
         def process=builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();processes.add(process)
         long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(30)
         boolean ready=false
+        String readinessStatus='NONE'
+        long readinessStarted=System.nanoTime()
         while(!ready&&process.alive&&System.nanoTime()<deadline){
-            try{ready=client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:${port}/health/ready")).timeout(Duration.ofSeconds(2)).GET().build(),HttpResponse.BodyHandlers.discarding()).statusCode()==200}
-            catch(IOException ignored){}
+            try{
+                int status=client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:${port}/health/ready")).timeout(Duration.ofSeconds(2)).GET().build(),HttpResponse.BodyHandlers.discarding()).statusCode()
+                readinessStatus=status in [200,400,401,403,404,503] ? "HTTP${status}" : 'OTHER'
+                ready=status==200
+            }
+            catch(java.net.http.HttpTimeoutException ignored){readinessStatus='TIMEOUT'}
+            catch(IOException ignored){readinessStatus='TRANSPORT'}
             if(!ready)Thread.sleep(50)
         }
-        assert ready:"Actual AuthMain failed readiness; private synthetic log: ${log}"
+        assert ready : "Actual AuthMain failed readiness: ${startupFailure(process,log,readinessStatus,TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-readinessStarted))}"
         port
+    }
+    /** Failure diagnostics contain only closed metadata; child text never leaves this helper. */
+    static Map startupFailure(Process process,Path log,String readinessStatus,long elapsedMillis){
+        boolean alive=process.alive
+        Integer exit=alive ? null : process.exitValue()
+        String category='OTHER'
+        // Read at most 64 KiB even if a child produced an unexpectedly large file.
+        try{
+            byte[] bytes
+            Files.newInputStream(log,LinkOption.NOFOLLOW_LINKS).withCloseable{bytes=it.readNBytes(65536)}
+            String text=new String(bytes,java.nio.charset.StandardCharsets.UTF_8).toLowerCase(Locale.ROOT)
+            if(text.contains('address already in use') || text.contains('bindexception'))category='BIND'
+            else if(text.contains('outofmemoryerror') || text.contains('unable to create native thread') || text.contains('insufficient memory for the java runtime'))category='JVM_RESOURCE'
+            else if(text.contains('flywayexception') || text.contains('flywaymigrateexception') || text.contains('flywayvalidateexception'))category='FLYWAY'
+            else if(text.contains('psqlexception') || text.contains('hikaripool$poolinitializationexception') || text.contains('connection refused'))category='DB_CONNECT'
+            else if(text.contains('illegalargumentexception') || text.contains('missing required environment variable'))category='CONFIG'
+        }catch(IOException ignored){}
+        [alive:alive,exit:exit==null ? 'RUNNING' : exit>=0 && exit<=255 ? exit.toString() : 'OTHER',
+         signalExit:exit!=null && exit>=128 && exit<=255,
+         readinessStatus:readinessStatus in ['NONE','HTTP200','HTTP400','HTTP401','HTTP403','HTTP404','HTTP503','OTHER','TIMEOUT','TRANSPORT'] ? readinessStatus : 'OTHER',
+         elapsedBucket:elapsedMillis<10000 ? 'BELOW_10S' : elapsedMillis<30000 ? '10_TO_30S' : 'AT_LEAST_30S',category:category]
     }
     HttpResponse<String> post(int port,String key=KEY,String body='not-json'){
         def builder=HttpRequest.newBuilder(URI.create("http://127.0.0.1:${port}/internal/sso-login-proofs"))
@@ -140,6 +168,33 @@ class LoginOperationProcessesIntegrationSpec extends Specification {
         }finally{
             blocker.rollback();blocker.close();workers.shutdownNow();assert workers.awaitTermination(3,TimeUnit.SECONDS)
         }
+    }
+    def 'startup diagnostics bound child text and expose only closed failure metadata'(){
+        given:
+        // Formatting-only process fixture: no bytecode/mock-maker dependency.
+        Process child=new Process(){
+            @Override OutputStream getOutputStream(){OutputStream.nullOutputStream()}
+            @Override InputStream getInputStream(){InputStream.nullInputStream()}
+            @Override InputStream getErrorStream(){InputStream.nullInputStream()}
+            @Override int waitFor(){137}
+            @Override int exitValue(){137}
+            @Override void destroy(){}
+            @Override boolean isAlive(){false}
+        }
+        Path privateLog=Files.createTempFile('armoney-startup-diagnostic-','.log')
+        String sentinel='synthetic-private-value-must-never-appear'
+        Files.writeString(privateLog,'OutOfMemoryError '+sentinel+' '+('x'*65536)+' BindException')
+        when:
+        def result=startupFailure(child,privateLog,'UNTRUSTED-'+sentinel,9959)
+        then:
+        result==[alive:false,exit:'137',signalExit:true,readinessStatus:'OTHER',elapsedBucket:'BELOW_10S',category:'JVM_RESOURCE']
+        !result.toString().contains(sentinel)
+        when:
+        Files.writeString(privateLog,sentinel)
+        then:
+        startupFailure(child,privateLog,'HTTP503',30000).category=='OTHER'
+        cleanup:
+        Files.deleteIfExists(privateLog)
     }
     def 'absolute inbound body deadline closes authenticated #mode despite traffic and releases database resources'(){
         given:
