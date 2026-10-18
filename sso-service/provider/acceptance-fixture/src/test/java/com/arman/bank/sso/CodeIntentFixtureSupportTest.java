@@ -17,12 +17,14 @@ import static org.junit.jupiter.api.Assertions.*;
 class CodeIntentFixtureSupportTest {
     static final String ISSUER="https://identity.fixture/sso/realms/armoney",CONTROL="c".repeat(40),BINDING="b".repeat(40);
     static final class Harness implements AutoCloseable {
-        final AtomicLong nanos=new AtomicLong();final CodeIntentFixtureTransportTest.Fake peer=new CodeIntentFixtureTransportTest.Fake(),production=new CodeIntentFixtureTransportTest.Fake();final CodeIntentFixtureSupport support;
-        Harness(){
+        final AtomicLong nanos;final CodeIntentFixtureTransportTest.Fake peer=new CodeIntentFixtureTransportTest.Fake(),production=new CodeIntentFixtureTransportTest.Fake();final CodeIntentFixtureSupport support;
+        Harness(){this(new AtomicLong(),TimeUnit.NANOSECONDS::sleep);}
+        Harness(AtomicLong nanos,CodeIntentFixtureSupport.Sleeper sleeper){
+            this.nanos=nanos;
             var env=new HashMap<String,String>();env.put("ARMONEY_LOGIN_PROOF_ENABLED","true");env.put("ARMONEY_SSO_MANAGED_PAIRS","[{\"issuer\":\""+ISSUER+"\",\"client_id\":\"armoney-ios\"}]");env.put("SSO_ISSUER",ISSUER);env.put("SSO_VERIFICATION_CLIENT_IDS","armoney-ios");env.put("ARMONEY_AUTH_BRIDGE_URL","http://auth-service:8080");env.put("SSO_LOGIN_PROOF_WRITE_KEY","w".repeat(40));env.put("SSO_LOGIN_PROOF_CONFIRM_KEY","f".repeat(40));env.put("SSO_CODE_INTENT_LOOKUP_KEY","l".repeat(40));env.put("ARMONEY_PROVIDER_BINDING_KEY",BINDING);env.put("SSO_LOGIN_PROOF_WRITER_ID","provider");env.put("SSO_CODE_INTENT_ACTORS","provider");env.put("SSO_CODE_INTENT_CODE_KEY_IDS","current");
             var keys=new byte[32];Arrays.fill(keys,(byte)7);
             var resources=CodeIntentResources.open(env,Map.of("current",keys),uri->new CodeIntentHttp(uri,production),null).orElseThrow();
-            support=new CodeIntentFixtureSupport(new CodeIntentFixtureSupport.Settings(CONTROL,CodeIntentFixtureTransportTest.PEER,CodeIntentFixtureTransportTest.PROVIDER,BINDING,ISSUER,"subject","armoney-ios"),resources,new CodeIntentFixtureTransport(CodeIntentFixtureTransportTest.PROVIDER,CodeIntentFixtureTransportTest.PEER,peer),nanos::get,Clock.systemUTC());
+            support=new CodeIntentFixtureSupport(new CodeIntentFixtureSupport.Settings(CONTROL,CodeIntentFixtureTransportTest.PEER,CodeIntentFixtureTransportTest.PROVIDER,BINDING,ISSUER,"subject","armoney-ios"),resources,new CodeIntentFixtureTransport(CodeIntentFixtureTransportTest.PROVIDER,CodeIntentFixtureTransportTest.PEER,peer),nanos::get,Clock.systemUTC(),sleeper);
         }
         String ready(){String handle=support.arm("subject","armoney-ios");var e=support.entry(handle);e.flow=new CodeIntentFixtureSupport.Flow(ISSUER,"subject","armoney-ios","root","tab",SessionBinding.derive(BINDING,"realm","root","tab","internal"),"11111111-1111-4111-8111-111111111111","2026-10-18T00:00:00Z");e.setupDeadline=90_000_000_000L;e.state="READY";return handle;}
         public void close(){support.close();}
@@ -163,6 +165,83 @@ class CodeIntentFixtureSupportTest {
         h.support.prepare(handle);try{e.work.get(2,java.util.concurrent.TimeUnit.SECONDS);}catch(java.util.concurrent.CancellationException expected){}
         assertEquals("FAILED",h.support.state(handle));assertEquals(2,h.peer.calls);
     }}
+    @Test void slowPreparationStaysWithinAuthControlBudgetWithReadinessAndCancelHeadroom()throws Exception{
+        var nanos=new AtomicLong();var sleeps=new ArrayList<Long>();
+        try(var h=new Harness(nanos,delay->{sleeps.add(delay);nanos.addAndGet(delay);})){
+            String handle=h.ready();var e=h.support.entry(handle);e.state="FLOW_BOUND";
+            long original=e.originalDeadline,deadline=e.deadline;String stage=CodeIntentFixtureSupport.handle();
+            var refilled=new AtomicLong();var credits=new AtomicLong(20_000_000_000L);var polls=new ArrayList<Long>();var operations=new HashMap<String,Integer>();
+            h.peer.beforeSend=request->{
+                long now=nanos.get(),elapsed=now-refilled.getAndSet(now);assertTrue(elapsed>=0);
+                long available=Math.min(20_000_000_000L,credits.get()+elapsed*2);
+                String operation=request.uri().getPath().substring(request.uri().getPath().lastIndexOf('/')+1);operations.merge(operation,1,Integer::sum);
+                if(available<1_000_000_000L){h.peer.status=429;h.peer.body="";return;}
+                credits.set(available-1_000_000_000L);h.peer.status=200;
+                switch(operation){
+                    case "prepare"->{h.peer.status=202;h.peer.body="{\"state\":\"ACCEPTED\"}";}
+                    case "state"->{polls.add(now);h.peer.body="{\"state\":\""+(now>=60_000_000_000L?"READY":"PREPARING")+"\"}";}
+                    case "readiness"->h.peer.body="{\"stage_handle\":\""+stage+"\"}";
+                    case "cancel"->{h.peer.status=204;h.peer.body="";}
+                    default->throw new AssertionError("Unexpected fixture operation");
+                }
+            };
+            h.support.prepare(handle);e.work.get(5,TimeUnit.SECONDS);
+            assertEquals("READY",h.support.state(handle));assertEquals(61,polls.size());assertEquals(60,sleeps.size());
+            for(int i=1;i<polls.size();i++)assertTrue(polls.get(i)-polls.get(i-1)>=1_000_000_000L);
+            assertEquals(60_000_000_000L,nanos.get());assertEquals(original,e.originalDeadline);assertEquals(deadline,e.deadline);assertEquals(90_000_000_000L,e.setupDeadline);
+            int pureReadCalls=h.peer.calls;assertEquals("READY",h.support.state(handle));assertEquals(pureReadCalls,h.peer.calls);
+            var command=UUID.randomUUID();assertEquals("STAGE_BOUND",h.support.bindStage(handle,command));
+            assertEquals("STAGE_BOUND",h.support.bindStage(handle,command));assertEquals("CANCELLED",h.support.cancel(handle));
+            assertEquals(Map.of("prepare",1,"state",61,"readiness",2,"cancel",1),operations);
+            assertTrue(credits.get()>=16_000_000_000L);assertEquals(original,e.originalDeadline);assertEquals(deadline,e.deadline);assertEquals(90_000_000_000L,e.setupDeadline);
+        }
+    }
+    @Test void pacedPreparationStopsAtOriginalSetupOrEarlierExperimentCutoff()throws Exception{
+        for(boolean shortExperiment:new boolean[]{false,true}){
+            var nanos=new AtomicLong();var sleeps=new ArrayList<Long>();
+            try(var h=new Harness(nanos,delay->{sleeps.add(delay);nanos.addAndGet(delay);})){
+                String handle=h.ready();var e=h.support.entry(handle);e.state="FLOW_BOUND";
+                if(shortExperiment)e.deadline=2_500_000_000L;
+                long original=e.originalDeadline,deadline=e.deadline,cutoff=shortExperiment?deadline:90_000_000_000L;
+                var polls=new ArrayList<Long>();var prepares=new AtomicInteger();
+                h.peer.beforeSend=request->{
+                    if(request.uri().getPath().endsWith("/prepare")){prepares.incrementAndGet();h.peer.status=202;h.peer.body="{\"state\":\"ACCEPTED\"}";}
+                    else{assertTrue(request.uri().getPath().endsWith("/state"));polls.add(nanos.get());h.peer.status=200;h.peer.body="{\"state\":\"PREPARING\"}";}
+                };
+                h.support.prepare(handle);awaitPreparation(e);
+                assertEquals(shortExperiment?"EXPIRED":"FAILED",e.state);assertEquals(1,prepares.get());assertEquals(cutoff,nanos.get());
+                assertTrue(polls.stream().allMatch(time->time<cutoff));assertEquals(shortExperiment?3:90,polls.size());
+                assertEquals(shortExperiment?500_000_000L:1_000_000_000L,sleeps.getLast().longValue());
+                assertEquals(original,e.originalDeadline);assertEquals(deadline,e.deadline);assertEquals(cutoff,e.setupDeadline);assertNull(e.stageHandle);
+            }
+        }
+    }
+    @Test void authRateRejectionFencesWithoutRetryingPrepareOrState()throws Exception{
+        var nanos=new AtomicLong();var sleeps=new AtomicInteger();try(var h=new Harness(nanos,delay->sleeps.incrementAndGet())){
+            String handle=h.ready();var e=h.support.entry(handle);e.state="FLOW_BOUND";
+            h.peer.beforeSend=request->{if(request.uri().getPath().endsWith("/prepare")){h.peer.status=202;h.peer.body="{\"state\":\"ACCEPTED\"}";}else{assertTrue(request.uri().getPath().endsWith("/state"));h.peer.status=429;h.peer.body="";}};
+            h.support.prepare(handle);awaitPreparation(e);
+            assertEquals("FAILED",h.support.state(handle));assertEquals(2,h.peer.calls);assertEquals(0,sleeps.get());
+            assertThrows(CodeIntentFixtureSupport.Rejected.class,()->h.support.prepare(handle));assertEquals(2,h.peer.calls);
+        }
+    }
+    @Test void cancellationInterruptsPacedPreparationWithoutAnotherStatePoll()throws Exception{
+        var entered=new CountDownLatch(1);var left=new CountDownLatch(1);var nanos=new AtomicLong();
+        try(var h=new Harness(nanos,delay->{entered.countDown();try{new CountDownLatch(1).await(5,TimeUnit.SECONDS);}finally{left.countDown();}})){
+            String handle=h.ready();var e=h.support.entry(handle);e.state="FLOW_BOUND";var states=new AtomicInteger();var cancels=new AtomicInteger();
+            h.peer.beforeSend=request->{switch(request.uri().getPath().substring(request.uri().getPath().lastIndexOf('/')+1)){
+                case "prepare"->{h.peer.status=202;h.peer.body="{\"state\":\"ACCEPTED\"}";}
+                case "state"->{states.incrementAndGet();h.peer.status=200;h.peer.body="{\"state\":\"PREPARING\"}";}
+                case "cancel"->{cancels.incrementAndGet();h.peer.status=204;h.peer.body="";}
+                default->throw new AssertionError("Unexpected fixture operation");
+            }};
+            h.support.prepare(handle);assertTrue(entered.await(5,TimeUnit.SECONDS));
+            assertEquals("CANCELLED",h.support.cancel(handle));assertTrue(left.await(5,TimeUnit.SECONDS));
+            assertEquals("CANCELLED",e.state);assertTrue(e.work.isCancelled());assertEquals(1,states.get());assertEquals(1,cancels.get());assertEquals(3,h.peer.calls);
+            assertEquals(0,nanos.get());assertEquals(90_000_000_000L,e.setupDeadline);assertNull(e.stageHandle);
+        }
+    }
+    private static void awaitPreparation(CodeIntentFixtureSupport.Experiment e)throws Exception{try{e.work.get(5,TimeUnit.SECONDS);}catch(CancellationException cancelled){assertTrue(e.work.isCancelled());}}
     private static void await(CountDownLatch latch){try{assertTrue(latch.await(2,TimeUnit.SECONDS));}catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new AssertionError(interrupted);}}
     /** Fresh native-context model double; never runtime/password-proof acceptance evidence. */
     private static RequiredActionContext nativeContext(Harness h,String handle,AtomicInteger successes){

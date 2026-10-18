@@ -17,6 +17,7 @@ import java.util.function.LongSupplier;
 
 /** Disposable singleton, explicitly installed by fixture bootstrap. All cross-request data is immutable. */
 public final class CodeIntentFixtureSupport implements AutoCloseable {
+    @FunctionalInterface interface Sleeper { void sleep(long nanos) throws InterruptedException; }
     public record Settings(String controllerKey,String peerKey,String providerKey,String bindingKey,String issuer,String subject,String clientId){
         public Settings{for(String key:new String[]{controllerKey,peerKey,providerKey,bindingKey})credential(key);if(new HashSet<>(Arrays.asList(controllerKey,peerKey,providerKey,bindingKey)).size()!=4)throw new Rejected(503);new CodeIntentPair(issuer,clientId);if(!CodeIntentPair.safe(subject,255)||!java.net.URI.create(issuer).getPath().equals("/sso/realms/armoney")||!Set.of("armoney-ios","armoney-android","armoney-web").contains(clientId))throw new Rejected(503);}
         @Override public String toString(){return "FixtureSettings[REDACTED]";}
@@ -35,13 +36,16 @@ public final class CodeIntentFixtureSupport implements AutoCloseable {
     record Command(UUID id,String payload,String result){@Override public String toString(){return "FixtureCommand[REDACTED]";}}
     private static volatile CodeIntentFixtureSupport installed;
     private final Settings settings;private final CodeIntentResources resources;private final CodeIntentFixtureTransport transport;
-    private final LongSupplier nanos;private final Clock clock;private final ThreadPoolExecutor worker;
+    private final LongSupplier nanos;private final Clock clock;private final ThreadPoolExecutor worker;private final Sleeper sleeper;
     private final Map<String,Experiment> entries=new LinkedHashMap<>();private boolean closed;
     public static synchronized void install(CodeIntentFixtureSupport support){if(installed!=null)throw new Rejected(503);installed=Objects.requireNonNull(support);}
     static CodeIntentFixtureSupport current(){var value=installed;if(value==null)throw new Rejected(503);return value;}
     public CodeIntentFixtureSupport(Settings settings,CodeIntentResources resources,CodeIntentFixtureTransport transport){this(settings,resources,transport,System::nanoTime,Clock.systemUTC());}
     CodeIntentFixtureSupport(Settings settings,CodeIntentResources resources,CodeIntentFixtureTransport transport,LongSupplier nanos,Clock clock){
-        this.settings=Objects.requireNonNull(settings);this.resources=Objects.requireNonNull(resources);this.transport=Objects.requireNonNull(transport);this.nanos=nanos;this.clock=clock;
+        this(settings,resources,transport,nanos,clock,TimeUnit.NANOSECONDS::sleep);
+    }
+    CodeIntentFixtureSupport(Settings settings,CodeIntentResources resources,CodeIntentFixtureTransport transport,LongSupplier nanos,Clock clock,Sleeper sleeper){
+        this.settings=Objects.requireNonNull(settings);this.resources=Objects.requireNonNull(resources);this.transport=Objects.requireNonNull(transport);this.nanos=nanos;this.clock=clock;this.sleeper=Objects.requireNonNull(sleeper);
         worker=new ThreadPoolExecutor(1,1,0,TimeUnit.SECONDS,new SynchronousQueue<>(),r->{var thread=new Thread(r,"armoney-fixture-preparation");thread.setDaemon(true);return thread;},new ThreadPoolExecutor.AbortPolicy());
     }
     static void credential(String value){if(value==null||value.length()<32||value.length()>256||value.chars().anyMatch(c->c<33||c>126))throw new Rejected(503);}
@@ -80,9 +84,16 @@ public final class CodeIntentFixtureSupport implements AutoCloseable {
         while(true){synchronized(this){entry(handle);if(!e.state.equals("PREPARING")||nanos.getAsLong()>=setup)throw new Rejected(410);}
             JsonNode result=remote(e,CodeIntentFixtureTransport.Call.STATE,association(e));LoginProof.fields(result,Set.of("state"));String state=LoginProof.text(result,"state");
             if(state.equals("READY")){publishReady(e);return;}
-            if(!state.equals("PREPARING"))throw new Rejected(503);Thread.sleep(100);
+            if(!state.equals("PREPARING"))throw new Rejected(503);pausePreparation(e);
         }
     }catch(Exception failure){synchronized(this){var e=entries.get(handle);if(e!=null&&!terminal(e.state))fence(e,"FAILED");}if(failure instanceof InterruptedException)Thread.currentThread().interrupt();}}
+    private void pausePreparation(Experiment e)throws InterruptedException{
+        long delay;synchronized(this){requireSetup(e);if(!e.state.equals("PREPARING"))throw new Rejected(503);
+            // Auth permits two controls/second. Poll at most once/second, leaving room for readiness/cancel.
+            delay=Math.min(TimeUnit.SECONDS.toNanos(1),Math.min(e.deadline,e.setupDeadline)-nanos.getAsLong());if(delay<=0)throw new Rejected(410);}
+        sleeper.sleep(delay);
+        synchronized(this){requireSetup(e);if(!e.state.equals("PREPARING"))throw new Rejected(503);}
+    }
     synchronized void publishReady(Experiment e){requireSetup(e);if(!e.state.equals("PREPARING"))throw new Rejected(503);e.state="READY";}
     private Map<String,Object> association(Experiment e){return Map.of("experiment_handle",e.handle,"command_id",e.prepare.toString());}
     private void requireSetup(Experiment e){entry(e.handle);if(e.setupDeadline<=0||nanos.getAsLong()>=e.setupDeadline)throw new Rejected(410);}
