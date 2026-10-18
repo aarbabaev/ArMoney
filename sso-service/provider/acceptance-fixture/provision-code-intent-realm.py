@@ -119,11 +119,17 @@ def text(value, maximum=256):
     return value
 
 
+def controller_key(value):
+    require(type(value) is str and 32 <= len(value) <= 256
+            and all(33 <= ord(character) <= 126 for character in value))
+    return value
+
+
 def configuration(raw):
     config = strict_json(raw)
     require(isinstance(config, dict) and set(config) == {
         "CI", "CODE_SESSION_ACCEPTANCE_ISOLATED", "ARMONEY_CODE_INTENT_FIXTURE_ENABLED",
-        "expected_issuer", "admin_username", "admin_password", "synthetic_user"})
+        "expected_issuer", "admin_username", "admin_password", "controller_key", "synthetic_user"})
     require(config["CI"] == "true" and config["CODE_SESSION_ACCEPTANCE_ISOLATED"] == "true"
             and config["ARMONEY_CODE_INTENT_FIXTURE_ENABLED"] == "false")
     issuer = text(config["expected_issuer"], 512)
@@ -138,6 +144,7 @@ def configuration(raw):
                 + "/sso/realms/armoney")
     except ValueError:
         raise Refused() from None
+    controller_key(config["controller_key"])
     text(config["admin_username"], 128)
     text(config["admin_password"])
     user = config["synthetic_user"]
@@ -151,7 +158,7 @@ def configuration(raw):
     return config
 
 
-def request(node, method, path, token=None, payload=None, form=None):
+def request(node, method, path, token=None, payload=None, form=None, control_key=None):
     """Fixed HTTP origins; no proxy, redirect or caller-selected destinations.
 
     A four-second socket timeout and owned shutdown timer bound connected I/O.
@@ -160,6 +167,10 @@ def request(node, method, path, token=None, payload=None, form=None):
     require(node in NODES and method in {"GET", "POST"} and path.startswith(BASE + "/")
             and not any(c in path for c in "\r\n#") and not (payload is not None and form is not None))
     headers = {"Accept": "application/json"}
+    if control_key is not None:
+        require(method == "POST" and path == BASE + "/realms/armoney/armoney-code-intent-fixture/state"
+                and token is None and form is None)
+        headers["X-ArMoney-Code-Intent-Fixture-Control-Key"] = controller_key(control_key)
     data = None
     if token is not None:
         headers["Authorization"] = "Bearer " + text(token, 16384)
@@ -255,10 +266,13 @@ def provision(config, transport=request, progress=None):
     mark("config")
     config = configuration(json.dumps(config).encode("utf-8"))
     realm = realm_source()
-    def call(checkpoint, node, method, path, expected, token=None, payload=None, form=None):
+    def call(checkpoint, node, method, path, expected, token=None, payload=None, form=None, control_key=None):
         node_label = {"sso-a": "A", "sso-b": "B"}[node]
         mark(checkpoint, node_label)
-        status, raw = transport(node, method, path, token=token, payload=payload, form=form)
+        arguments = {"token": token, "payload": payload, "form": form}
+        if control_key is not None:
+            arguments["control_key"] = control_key
+        status, raw = transport(node, method, path, **arguments)
         mark(checkpoint, node_label, status if type(status) is int and 100 <= status <= 599 else None)
         require(status == expected and isinstance(raw, bytes) and len(raw) <= LIMIT)
         return raw
@@ -319,7 +333,7 @@ def provision(config, transport=request, progress=None):
         checked(len(selected) == 1, "action", node, "action-selection")
         checked(selected[0].get("alias") == ACTION, "action", node, "action-alias")
         checked(selected[0].get("providerId") == ACTION, "action", node, "action-provider")
-        call("off-control", node, "POST", BASE + "/realms/armoney/armoney-code-intent-fixture/state", 503, payload={})
+        call("off-control", node, "POST", BASE + "/realms/armoney/armoney-code-intent-fixture/state", 503, payload={}, control_key=config["controller_key"])
     supplied = config["synthetic_user"]
     user = {k: supplied[k] for k in ("username", "email", "firstName", "lastName")}
     user.update({"enabled": True, "emailVerified": False, "requiredActions": [ACTION],
@@ -340,7 +354,7 @@ def provision(config, transport=request, progress=None):
         for field, predicate in (("username", "saved-username"), ("email", "saved-email"),
                                  ("firstName", "saved-first-name"), ("lastName", "saved-last-name")):
             checked(saved.get(field) == user[field], "user-readback", node, predicate)
-        call("off-control-after", node, "POST", BASE + "/realms/armoney/armoney-code-intent-fixture/state", 503, payload={})
+        call("off-control-after", node, "POST", BASE + "/realms/armoney/armoney-code-intent-fixture/state", 503, payload={}, control_key=config["controller_key"])
     return {"phase": "PHASE1", "status": "BOTH_NODES_STOP_AND_ENABLED_RESTART_REQUIRED", "subject": subject}
 
 

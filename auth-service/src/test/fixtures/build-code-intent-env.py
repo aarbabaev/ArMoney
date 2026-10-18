@@ -214,7 +214,7 @@ def initialize(output, phone, email, name, local_material=None):
     files = {"auth.env": encode_env(auth), "authority.env": encode_env(authority), "user.env": encode_env(user),
         "sms.env": encode_env({"SMS_SANDBOX_SEND_TOKEN": roles["sms-send"], "SMS_SANDBOX_READ_TOKEN": roles["sms-read"], "SMS_SANDBOX_DATA_DIR": "/tmp/sms-inbox", "PORT": "8080"}),
         "sso-off.env": encode_env(sso(roles, material)), "provision.json": packed({"CI": "true", "CODE_SESSION_ACCEPTANCE_ISOLATED": "true",
-            "ARMONEY_CODE_INTENT_FIXTURE_ENABLED": "false", "expected_issuer": ISSUER, "admin_username": "admin", "admin_password": roles["admin"],
+            "ARMONEY_CODE_INTENT_FIXTURE_ENABLED": "false", "expected_issuer": ISSUER, "admin_username": "admin", "admin_password": roles["admin"], "controller_key": roles["controller"],
             "synthetic_user": {"username": phone, "email": email, "firstName": name, "lastName": "Fixture", "password": roles["password"]}}),
         "inventory.json": packed({"format": 1, "roles": roles, "material": material})}
     for role in ("auth", "user", "sso"):

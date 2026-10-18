@@ -57,7 +57,9 @@ class EnvironmentTests(unittest.TestCase):
         self.assertTrue(auth["AUTH_TO_USER_VERIFICATION_PROJECTION_KEY"] == user["AUTH_TO_USER_VERIFICATION_PROJECTION_KEY"])
         provision = b.read_private(self.root / "provision.json")
         self.assertEqual(set(provision), {"CI", "CODE_SESSION_ACCEPTANCE_ISOLATED", "ARMONEY_CODE_INTENT_FIXTURE_ENABLED",
-            "expected_issuer", "admin_username", "admin_password", "synthetic_user"})
+            "expected_issuer", "admin_username", "admin_password", "controller_key", "synthetic_user"})
+        self.assertTrue(provision["controller_key"] == inventory["roles"]["controller"])
+        self.assertTrue(all(provision["controller_key"] != value for role, value in inventory["roles"].items() if role != "controller"))
         self.assertTrue(len(provision["synthetic_user"]["password"]) >= 32)
         self.assertFalse((self.root / "sso-on.env").exists())
 
@@ -88,9 +90,27 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(parsed["expected_issuer"], b.ISSUER)
         self.assertEqual(parsed["admin_username"], "admin")
         self.assertTrue(parsed["admin_password"] == env(self.root / "sso-off.env")["KC_BOOTSTRAP_ADMIN_PASSWORD"])
+        self.assertTrue(parsed["controller_key"] == b.read_private(self.root / "inventory.json")["roles"]["controller"])
         self.assertEqual(parsed["synthetic_user"]["username"], "+971501234567")
         self.assertEqual(parsed["synthetic_user"]["firstName"], "Synthetic Fixture")
         self.assertEqual(parsed["synthetic_user"]["lastName"], "Fixture")
+
+    def test_missing_controller_inventory_role_fails_closed_without_key_substitution(self):
+        self.generate()
+        inventory = b.read_private(self.root / "inventory.json")
+        del inventory["roles"]["controller"]
+        with self.assertRaises(ValueError) as refused:
+            b.validate_inventory(inventory["roles"], inventory["material"])
+        self.assertEqual(str(refused.exception), "Disposable configuration unavailable")
+
+    def test_controller_collision_with_provider_role_is_rejected_and_redacted(self):
+        self.generate()
+        inventory = b.read_private(self.root / "inventory.json")
+        inventory["roles"]["controller"] = inventory["roles"]["provider"]
+        with self.assertRaises(ValueError) as refused:
+            b.validate_inventory(inventory["roles"], inventory["material"])
+        self.assertEqual(str(refused.exception), "Disposable configuration unavailable")
+        self.assertFalse(inventory["roles"]["provider"] in str(refused.exception))
 
     def test_on_rejects_missing_noncanonical_and_nonuuid_without_creating_file(self):
         self.generate()

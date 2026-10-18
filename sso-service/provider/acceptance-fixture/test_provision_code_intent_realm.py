@@ -19,6 +19,7 @@ SUBJECT = "d14d7e29-80f7-41ed-a5b5-99d82bbba4df"
 def config():
     return {"CI": "true", "CODE_SESSION_ACCEPTANCE_ISOLATED": "true",
             "ARMONEY_CODE_INTENT_FIXTURE_ENABLED": "false", "expected_issuer": "https://fixture-edge/sso/realms/armoney",
+            "controller_key": "synthetic-controller-key-1234567890",
             "admin_username": "disposable-admin", "admin_password": "synthetic-admin-password",
             "synthetic_user": {"username": "+971501234567", "email": "synthetic@example.test",
                                "firstName": "Synthetic", "lastName": "Fixture", "password": "synthetic-permanent-password"}}
@@ -33,6 +34,7 @@ class FakeTransport:
         self.created = None
         self.client = copy.deepcopy(self.realm["clients"][0])
         self.subject = SUBJECT
+        self.control_calls = []
         self.off_status = 503
         self.issuer = config()["expected_issuer"]
         self.execution = {"id": EXECUTION, "providerId": "armoney-password-proof", "requirement": "REQUIRED", "authenticationFlow": False}
@@ -40,8 +42,10 @@ class FakeTransport:
                                 "requirement": "REQUIRED", "authenticatorFlow": False}
         self.saved_override = {}
 
-    def __call__(self, node, method, path, token=None, payload=None, form=None):
+    def __call__(self, node, method, path, token=None, payload=None, form=None, control_key=None):
         self.calls.append((node, method, path, token, copy.deepcopy(payload), copy.deepcopy(form)))
+        if control_key is not None:
+            self.control_calls.append((node, method, path, control_key, token, form))
         if path.endswith("/realms/master/protocol/openid-connect/token"):
             return 200, b'{"access_token":"synthetic-admin-token","token_type":"Bearer"}'
         if path == p.REALM:
@@ -60,7 +64,7 @@ class FakeTransport:
         if path.endswith("/authentication/required-actions"):
             return 200, json.dumps(self.realm["requiredActions"]).encode()
         if path.endswith("/armoney-code-intent-fixture/state"):
-            return self.off_status, b""
+            return (self.off_status if control_key == config()["controller_key"] else 401), b""
         if path == p.REALM + "/users" and method == "POST":
             self.created = payload
             return 201, b""
@@ -437,13 +441,77 @@ class ProvisionTests(unittest.TestCase):
             for forbidden in ("secret-response-body-and-token", SUBJECT, config()["admin_password"],
                               config()["synthetic_user"]["password"], config()["synthetic_user"]["username"],
                               config()["synthetic_user"]["email"], config()["synthetic_user"]["firstName"],
-                              config()["synthetic_user"]["lastName"], config()["expected_issuer"]):
+                              config()["synthetic_user"]["lastName"], config()["expected_issuer"], config()["controller_key"]):
                 self.assertNotIn(forbidden, raw)
             result = json.loads(raw)
             self.assertEqual({"phase", "status", "diagnostic"}, set(result))
             self.assertEqual("FAILED_NO_AUTOMATIC_RETRY", result["status"])
             self.assertTrue(set(result["diagnostic"]) <= {"checkpoint", "node", "http_status", "predicate"})
             return result
+
+    def test_controller_key_is_required_and_validated_before_transport(self):
+        for value in (None, True, 123, [], "x" * 31, "x" * 257, "x" * 31 + " ",
+                      "x" * 31 + "\n", "x" * 31 + "\u00e9"):
+            candidate = config()
+            candidate["controller_key"] = value
+            transport = FakeTransport()
+            with self.subTest(value_type=type(value).__name__), self.assertRaises(p.Refused):
+                p.provision(candidate, transport)
+            self.assertEqual([], transport.calls)
+        candidate = config()
+        del candidate["controller_key"]
+        transport = FakeTransport()
+        with self.assertRaises(p.Refused):
+            p.provision(candidate, transport)
+        self.assertEqual([], transport.calls)
+
+    def test_all_four_off_probes_use_only_controller_role_and_both_nodes(self):
+        transport = FakeTransport()
+        p.provision(config(), transport)
+        self.assertEqual(["sso-a", "sso-b", "sso-a", "sso-b"], [call[0] for call in transport.control_calls])
+        for node, method, path, key, token, form in transport.control_calls:
+            self.assertEqual("POST", method)
+            self.assertEqual(p.BASE + "/realms/armoney/armoney-code-intent-fixture/state", path)
+            self.assertEqual(config()["controller_key"], key)
+            self.assertIsNone(token)
+            self.assertIsNone(form)
+        transport = FakeTransport()
+        transport.off_status = 401
+        self.assertEqual({"checkpoint": "off-control", "node": "A", "http_status": 401},
+                         self.cli_failure(transport)["diagnostic"])
+
+    def test_control_header_is_exact_and_restricted_to_fixed_state_post(self):
+        observed = []
+        class Response:
+            status = 503
+            def read(self, limit): return b""
+        class Connection:
+            sock = None
+            def __init__(self, node, port, **kwargs):
+                observed.append((node, port))
+            def request(self, method, path, body=None, headers=None):
+                observed.append((method, path, body, headers))
+            def getresponse(self): return Response()
+            def close(self): pass
+        state = p.BASE + "/realms/armoney/armoney-code-intent-fixture/state"
+        key = config()["controller_key"]
+        with patch.object(p.http.client, "HTTPConnection", Connection):
+            self.assertEqual((503, b""), p.request("sso-a", "POST", state, payload={}, control_key=key))
+            headers = observed[-1][3]
+            self.assertEqual({"Accept": "application/json", "Content-Type": "application/json",
+                              "X-ArMoney-Code-Intent-Fixture-Control-Key": key}, headers)
+            for node, method, path, extra in (("attacker.invalid", "POST", state, {}),
+                                             ("sso-a", "GET", state, {}),
+                                             ("sso-a", "POST", state + "?key=" + key, {}),
+                                             ("sso-a", "POST", p.REALM, {}),
+                                             ("sso-a", "POST", state, {"token": "synthetic-admin-token"}),
+                                             ("sso-a", "POST", state, {"form": {"key": key}})):
+                count = len(observed)
+                with self.subTest(method=method), self.assertRaises(p.Refused):
+                    p.request(node, method, path, control_key=key, **extra)
+                self.assertEqual(count, len(observed))
+            p.request("sso-b", "GET", p.REALM, token="synthetic-admin-token")
+            self.assertEqual({"Accept": "application/json", "Authorization": "Bearer synthetic-admin-token"}, observed[-1][3])
 
     def test_transport_rejects_arbitrary_nodes_redirects_and_oversized_responses(self):
         with self.assertRaises(p.Refused):
