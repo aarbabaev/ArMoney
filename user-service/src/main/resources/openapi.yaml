@@ -314,8 +314,507 @@ paths:
               schema:
                 type: integer
               description: Seconds until retry (conservative 60)
+  "/v1/internal/migrations/legacy/user-stage":
+    post:
+      operationId: "stageLegacyMigrationBaseline"
+      description: "Private Auth-to-User migration port; never expose through public gateway ingress. Registered only when USER_MIGRATION_BASELINE_ENABLED=true (default false). Disabled routes use ordinary internal authentication and otherwise remain absent (404); missing ordinary authentication can return 401. Enabled exact POST uses only its dedicated writer credential, not ServiceKey or VerifiedIdentity. Strict JSON rejects duplicate/unknown fields, trailing tokens and noncanonical numeric tokens; raw request maximum is 12288 bytes. Not a public client API, Auth migration completion, provider ACTIVE status or banking-session grant. Stage an existing initialized profile and exact canonical central phone; allocate a new baseline generation, never fabricated projection history. Existing exact replay returns its original ACK. Authorization interval must be positive and at most 900000 milliseconds. Expiry never releases an unresolved reservation."
+      security: [{"LegacyMigrationStageKey": []}]
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/LegacyMigrationStageCommand"
+      responses:
+        '200':
+          description: "Exact command acknowledged or retained replay; grants no banking authority"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationStageAck"
+        '400':
+          description: "Malformed, noncanonical, hash-mismatched or oversized request"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '401':
+          description: "Missing, duplicate or invalid dedicated purpose credential"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '409':
+          description: "Stage baseline, writer, owner or immutable command binding conflict"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '429':
+          description: "Route admission/concurrency or stage storage capacity exhausted"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+            Retry-After:
+              description: "Fixed retry hint; never release a reservation or rotate command IDs on timeout."
+              schema:
+                type: "string"
+                enum: ["60"]
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '503':
+          description: "Missing publication ACK, unknown decision, inconsistent state or peer/database unavailable"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '423':
+          description: "Protected contact baseline is reserved or a fenced mutation was rejected"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+  "/v1/internal/migrations/legacy/user-publish":
+    post:
+      operationId: "publishLegacyMigrationBaseline"
+      description: "Private Auth-to-User migration port; never expose through public gateway ingress. Registered only when USER_MIGRATION_BASELINE_ENABLED=true (default false). Disabled routes use ordinary internal authentication and otherwise remain absent (404); missing ordinary authentication can return 401. Enabled exact POST uses only its dedicated writer credential, not ServiceKey or VerifiedIdentity. Strict JSON rejects duplicate/unknown fields, trailing tokens and noncanonical numeric tokens; raw request maximum is 12288 bytes. Not a public client API, Auth migration completion, provider ACTIVE status or banking-session grant. Publish only after original Auth PRIMARY decision and immutable email/phone receipt evidence. Set same-phone central verified flag and primary physical flag only; retain immutable final ACK. Does not insert or promote verification_projection_current. Publication replay never increments publication_revision."
+      security: [{"LegacyMigrationPublicationKey": []}]
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/LegacyMigrationTuple"
+      responses:
+        '200':
+          description: "Exact command acknowledged or retained replay; grants no banking authority"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationFinalAck"
+        '400':
+          description: "Malformed, noncanonical, hash-mismatched or oversized request"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '401':
+          description: "Missing, duplicate or invalid dedicated purpose credential"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '409':
+          description: "Stage baseline, writer, owner or immutable command binding conflict"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '429':
+          description: "Route admission/concurrency or stage storage capacity exhausted"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+            Retry-After:
+              description: "Fixed retry hint; never release a reservation or rotate command IDs on timeout."
+              schema:
+                type: "string"
+                enum: ["60"]
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '503':
+          description: "Missing publication ACK, unknown decision, inconsistent state or peer/database unavailable"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '423':
+          description: "Protected contact baseline is reserved or a fenced mutation was rejected"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+  "/v1/internal/migrations/legacy/user-publication-result":
+    post:
+      operationId: "readLegacyMigrationPublication"
+      description: "Private Auth-to-User migration port; never expose through public gateway ingress. Registered only when USER_MIGRATION_BASELINE_ENABLED=true (default false). Disabled routes use ordinary internal authentication and otherwise remain absent (404); missing ordinary authentication can return 401. Enabled exact POST uses only its dedicated writer credential, not ServiceKey or VerifiedIdentity. Strict JSON rejects duplicate/unknown fields, trailing tokens and noncanonical numeric tokens; raw request maximum is 12288 bytes. Not a public client API, Auth migration completion, provider ACTIVE status or banking-session grant. Read the retained final publication ACK for the exact owner/writer/command tuple. Missing ACK is unavailable, never inferred completion."
+      security: [{"LegacyMigrationPublicationKey": []}]
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/LegacyMigrationTuple"
+      responses:
+        '200':
+          description: "Exact command acknowledged or retained replay; grants no banking authority"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationFinalAck"
+        '400':
+          description: "Malformed, noncanonical, hash-mismatched or oversized request"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '401':
+          description: "Missing, duplicate or invalid dedicated purpose credential"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '409':
+          description: "Stage baseline, writer, owner or immutable command binding conflict"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '429':
+          description: "Route admission/concurrency or stage storage capacity exhausted"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+            Retry-After:
+              description: "Fixed retry hint; never release a reservation or rotate command IDs on timeout."
+              schema:
+                type: "string"
+                enum: ["60"]
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '503':
+          description: "Missing publication ACK, unknown decision, inconsistent state or peer/database unavailable"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+  "/v1/internal/migrations/legacy/user-resolve":
+    post:
+      operationId: "resolveLegacyMigrationBaseline"
+      description: "Private Auth-to-User migration port; never expose through public gateway ingress. Registered only when USER_MIGRATION_BASELINE_ENABLED=true (default false). Disabled routes use ordinary internal authentication and otherwise remain absent (404); missing ordinary authentication can return 401. Enabled exact POST uses only its dedicated writer credential, not ServiceKey or VerifiedIdentity. Strict JSON rejects duplicate/unknown fields, trailing tokens and noncanonical numeric tokens; raw request maximum is 12288 bytes. Not a public client API, Auth migration completion, provider ACTIVE status or banking-session grant. Resolve only durable Auth PRIMARY ABORTED for an unpublished reservation or COMPLETED for one with a retained publication ACK. Unknown/missing/timeout decisions are unavailable, never implicit abort; records are retained."
+      security: [{"LegacyMigrationPublicationKey": []}]
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/LegacyMigrationTuple"
+      responses:
+        '200':
+          description: "Exact command acknowledged or retained replay; grants no banking authority"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationResolution"
+        '400':
+          description: "Malformed, noncanonical, hash-mismatched or oversized request"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '401':
+          description: "Missing, duplicate or invalid dedicated purpose credential"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '409':
+          description: "Stage baseline, writer, owner or immutable command binding conflict"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '429':
+          description: "Route admission/concurrency or stage storage capacity exhausted"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+            Retry-After:
+              description: "Fixed retry hint; never release a reservation or rotate command IDs on timeout."
+              schema:
+                type: "string"
+                enum: ["60"]
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
+        '503':
+          description: "Missing publication ACK, unknown decision, inconsistent state or peer/database unavailable"
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/ProjectionNoStore"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/LegacyMigrationError"
 components:
   schemas:
+    LegacyMigrationUuid:
+      type: "string"
+      format: "uuid"
+      pattern: "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    LegacyMigrationDigest:
+      type: "string"
+      pattern: "^[0-9a-f]{64}$"
+    LegacyMigrationPositive:
+      type: "integer"
+      format: "int64"
+      minimum: 1
+      maximum: 9223372036854775807
+    LegacyMigrationNonnegative:
+      type: "integer"
+      format: "int64"
+      minimum: 0
+      maximum: 9223372036854775807
+    LegacyMigrationStageCommand:
+      type: "object"
+      additionalProperties: false
+      required: ["protocol_version", "migration_id", "stage_operation_id", "command_id", "decision_command_id", "identity_id", "profile_id", "canonical_phone", "email_contact_version", "email_digest", "policy_version", "created_at", "authorization_deadline", "payload_hash"]
+      properties:
+        protocol_version:
+          type: "integer"
+          enum: [1]
+        migration_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        stage_operation_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        command_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        decision_command_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        identity_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        profile_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        canonical_phone:
+          type: "string"
+          pattern: "^\\+9715[024568][0-9]{7}$"
+        email_contact_version:
+          "$ref": "#/components/schemas/LegacyMigrationPositive"
+        email_digest:
+          "$ref": "#/components/schemas/LegacyMigrationDigest"
+        policy_version:
+          "$ref": "#/components/schemas/LegacyMigrationPositive"
+        created_at:
+          "$ref": "#/components/schemas/LegacyMigrationNonnegative"
+        authorization_deadline:
+          "$ref": "#/components/schemas/LegacyMigrationNonnegative"
+        payload_hash:
+          "$ref": "#/components/schemas/LegacyMigrationDigest"
+      description: "protocol_version=1. Exact stage payload_hash uses SHA-256 over four-byte big-endian length-prefixed UTF-8 fields in the listed required-field order, excluding payload_hash, prefixed with armoney-user-migration-stage-v1. UUIDs and integers are canonical; timestamps are epoch milliseconds. authorization_deadline-created_at must be 1..900000. Email version/digest are opaque Auth attestations; no email address or name is accepted."
+    LegacyMigrationTuple:
+      type: "object"
+      additionalProperties: false
+      required: ["migration_id", "decision_id", "stage_operation_id", "command_id", "payload_hash"]
+      properties:
+        migration_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        decision_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        stage_operation_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        command_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        payload_hash:
+          "$ref": "#/components/schemas/LegacyMigrationDigest"
+      description: "payload_hash is the original stage payload hash. Publication command_id is stable and exact across publish/result/resolve; mismatch conflicts. No new owner/contact fields are accepted."
+    LegacyMigrationStageAck:
+      type: "object"
+      additionalProperties: false
+      required: ["protocol_version", "migration_id", "stage_operation_id", "identity_id", "profile_id", "baseline_generation", "contact_mutation_revision", "projection_present", "projection_revision", "phone_contact_version", "verification_epoch", "email_contact_version", "email_digest", "baseline_hash", "authorization_deadline", "payload_hash", "stage_ack_hash"]
+      properties:
+        protocol_version:
+          type: "integer"
+          enum: [1]
+        migration_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        stage_operation_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        identity_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        profile_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        baseline_generation:
+          "$ref": "#/components/schemas/LegacyMigrationPositive"
+        contact_mutation_revision:
+          "$ref": "#/components/schemas/LegacyMigrationNonnegative"
+        projection_present:
+          type: "boolean"
+          description: "False means no current projection at stage; no positive historical version is invented."
+        projection_revision:
+          type: "integer"
+          format: "int64"
+          minimum: 1
+          maximum: 9223372036854775807
+          nullable: true
+          description: "Explicit null if projection_present=false; positive observed value if true."
+        phone_contact_version:
+          type: "integer"
+          format: "int64"
+          minimum: 1
+          maximum: 9223372036854775807
+          nullable: true
+          description: "Explicit null if projection_present=false; positive observed value if true."
+        verification_epoch:
+          type: "integer"
+          format: "int64"
+          minimum: 1
+          maximum: 9223372036854775807
+          nullable: true
+          description: "Explicit null if projection_present=false; positive observed value if true."
+        email_contact_version:
+          "$ref": "#/components/schemas/LegacyMigrationPositive"
+        email_digest:
+          "$ref": "#/components/schemas/LegacyMigrationDigest"
+        baseline_hash:
+          "$ref": "#/components/schemas/LegacyMigrationDigest"
+        authorization_deadline:
+          "$ref": "#/components/schemas/LegacyMigrationNonnegative"
+        payload_hash:
+          "$ref": "#/components/schemas/LegacyMigrationDigest"
+        stage_ack_hash:
+          "$ref": "#/components/schemas/LegacyMigrationDigest"
+      description: "Exact immutable baseline ACK. stage_ack_hash uses domain armoney-user-migration-stage-ack-v1 and listed required-field order excluding stage_ack_hash. Hash fields use length-prefixed UTF-8 canonical decimal/boolean/null encoding. baseline_hash also binds immutable local shard placement, exact central phone and policy; these are not returned as new authority fields. No raw phone or display name is returned."
+      oneOf: [{"properties": {"projection_present": {"type": "boolean", "enum": [true]}, "projection_revision": {"type": "integer", "format": "int64", "minimum": 1, "maximum": 9223372036854775807, "nullable": false}, "phone_contact_version": {"type": "integer", "format": "int64", "minimum": 1, "maximum": 9223372036854775807, "nullable": false}, "verification_epoch": {"type": "integer", "format": "int64", "minimum": 1, "maximum": 9223372036854775807, "nullable": false}}}, {"properties": {"projection_present": {"type": "boolean", "enum": [false]}, "projection_revision": {"type": "integer", "nullable": true, "enum": [null]}, "phone_contact_version": {"type": "integer", "nullable": true, "enum": [null]}, "verification_epoch": {"type": "integer", "nullable": true, "enum": [null]}}}]
+    LegacyMigrationFinalAck:
+      type: "object"
+      additionalProperties: false
+      required: ["protocol_version", "migration_id", "decision_id", "stage_operation_id", "command_id", "identity_id", "profile_id", "baseline_generation", "contact_mutation_revision", "baseline_hash", "stage_ack_hash", "publication_revision", "email_contact_version", "email_receipt_id", "email_receipt_generation", "phone_receipt_id", "phone_receipt_generation", "receipt_snapshot_hash", "payload_hash", "final_ack_hash"]
+      properties:
+        protocol_version:
+          type: "integer"
+          enum: [1]
+        migration_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        decision_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        stage_operation_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        command_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        identity_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        profile_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        baseline_generation:
+          "$ref": "#/components/schemas/LegacyMigrationPositive"
+        contact_mutation_revision:
+          "$ref": "#/components/schemas/LegacyMigrationNonnegative"
+        baseline_hash:
+          "$ref": "#/components/schemas/LegacyMigrationDigest"
+        stage_ack_hash:
+          "$ref": "#/components/schemas/LegacyMigrationDigest"
+        publication_revision:
+          type: "integer"
+          format: "int64"
+          enum: [1]
+          description: "Per-migration publication revision; unchanged on retained replay."
+        email_contact_version:
+          "$ref": "#/components/schemas/LegacyMigrationPositive"
+        email_receipt_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        email_receipt_generation:
+          "$ref": "#/components/schemas/LegacyMigrationPositive"
+        phone_receipt_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        phone_receipt_generation:
+          "$ref": "#/components/schemas/LegacyMigrationPositive"
+        receipt_snapshot_hash:
+          "$ref": "#/components/schemas/LegacyMigrationDigest"
+        payload_hash:
+          "$ref": "#/components/schemas/LegacyMigrationDigest"
+        final_ack_hash:
+          "$ref": "#/components/schemas/LegacyMigrationDigest"
+      description: "Immutable migration publication evidence, not a normal verification-projection ACK or Auth migration completion. final_ack_hash uses domain armoney-user-migration-final-ack-v1 and listed required-field order excluding final_ack_hash. Receipt IDs/generations and receipt_snapshot_hash bind the immutable Auth publication decision; Auth owns email authority. No raw contacts, names or OTPs are returned."
+    LegacyMigrationResolution:
+      type: "object"
+      additionalProperties: false
+      required: ["migration_id", "decision_id", "state"]
+      properties:
+        migration_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        decision_id:
+          "$ref": "#/components/schemas/LegacyMigrationUuid"
+        state:
+          type: "string"
+          enum: ["ABORTED", "RELEASED_AFTER_COMPLETION"]
+    LegacyMigrationError:
+      type: "object"
+      additionalProperties: false
+      required: ["error"]
+      properties:
+        error:
+          type: "string"
+          enum: ["malformed", "rejected", "unavailable"]
     VerificationProjectionCommand:
       type: object
       additionalProperties: false
@@ -451,6 +950,16 @@ components:
         type: string
         enum: [no-store]
   securitySchemes:
+    LegacyMigrationStageKey:
+      type: "apiKey"
+      in: "header"
+      name: "X-ArMoney-Migration-Stage-Key"
+      description: "Private dedicated stage credential mapped to a configured Auth writer; default-off routes only."
+    LegacyMigrationPublicationKey:
+      type: "apiKey"
+      in: "header"
+      name: "X-ArMoney-Migration-Publication-Key"
+      description: "Independent private publication/result/resolve credential mapped to a configured Auth writer; never a bank token."
     VerificationProjectionKey:
       type: apiKey
       in: header

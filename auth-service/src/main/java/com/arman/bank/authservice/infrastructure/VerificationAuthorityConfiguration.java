@@ -65,14 +65,17 @@ public final class VerificationAuthorityConfiguration {
             var projections=completionEnabled?completionProjection.store(database,sql->(identity,now)->reader.projectionAuthorityInTransaction(sql,identity,now)):null;
             var store=new PostgresIdentityVerificationStore(database,crypto,retentionKey,policy,projections,completionEnabled?completionProjection.writer():null,eligibilityGrantsEnabled);
             var routes=new VerificationRoutes(new IdentityVerificationService(store,observer,policy),bridgeKey);
-            return new Resources(routes,observer,completionEnabled?completionProjection.worker(projections,store):null);
+            return new Resources(routes,observer,completionEnabled?completionProjection.worker(projections,store):null,projections,completionEnabled?completionProjection.writer():null);
         }catch(RuntimeException failure){observer.close();throw failure;}
     }
     public static final class Resources implements AutoCloseable {
         private final VerificationRoutes routes;private final HttpVerificationObservations observer;private final VerificationProjectionWorker projectionWorker;
-        private Resources(VerificationRoutes routes,HttpVerificationObservations observer,VerificationProjectionWorker projectionWorker){this.routes=routes;this.observer=observer;this.projectionWorker=projectionWorker;}
+        private final PostgresVerificationProjectionStore registrationProjections;private final String registrationProjectionWriter;
+        private Resources(VerificationRoutes routes,HttpVerificationObservations observer,VerificationProjectionWorker projectionWorker,PostgresVerificationProjectionStore registrationProjections,String registrationProjectionWriter){this.routes=routes;this.observer=observer;this.projectionWorker=projectionWorker;this.registrationProjections=registrationProjections;this.registrationProjectionWriter=registrationProjectionWriter;}
         public VerificationRoutes routes(){return routes;}
         public VerificationProjectionWorker projectionWorker(){return projectionWorker;}
+        PostgresVerificationProjectionStore registrationProjections(){if(registrationProjections==null)throw new IllegalStateException("Registration completion unavailable");return registrationProjections;}
+        String registrationProjectionWriter(){if(registrationProjectionWriter==null)throw new IllegalStateException("Registration completion unavailable");return registrationProjectionWriter;}
         @Override public void close(){try{if(projectionWorker!=null)projectionWorker.close();}finally{observer.close();}}
         @Override public String toString(){return "VerificationAuthorityResources[redacted]";}
     }

@@ -1681,3 +1681,59 @@ than real Mailtrap delivery.
 The provider's Auth companion destination is the fixed
 `http://auth-code-intent-fixture:8091`; the dedicated Compose service uses that
 name. Configuration and static Compose parsing do not establish DNS or startup.
+
+## Managed banking consumer and legacy migration integration
+
+The separate Auth managed-session consumer and V14 persistence are now wired into
+Main behind `AUTH_MANAGED_BANKING_ENABLED`, disabled by default. Configuration is
+validated before database allocation. Managed and legacy issuer/client pairs are
+explicit and disjoint; missing managed proof never selects a legacy fallback.
+The historical SSO constructor remains available only when the consumer is off,
+both pair lists are empty and no managed key material is configured. This narrow
+compatibility mode retains generic permanent-managed-principal denial; configuring
+any managed material or pair selects explicit routing and unknown-pair denial.
+Enabled mode owns its observer and cleanup worker; disabled mode allocates neither
+the managed database adapter nor those background resources. Sessions remain bound
+to their original proof expiry, which can be shorter than the legacy session TTL.
+See [ADR 0046](docs/adr/0046-managed-banking-session-consumer.md).
+
+User V7 supplies durable migration baselines, contact fences, publication evidence
+and immutable acknowledgements through default-off internal routes. Independent
+name changes remain permitted; a missing normal projection is represented explicitly,
+not as a fabricated verified contact version. Publication does not grant banking
+authority. See [ADR 0047](docs/adr/0047-legacy-user-migration-baseline.md) and the
+[migration guide](docs/legacy-user-migration.md).
+
+Auth V15–V20 source adds generation/session fences, restricted account admission,
+server-owned PKCE custody, durable provider claims and migration-specific OTP
+evidence, retained publication decisions, strict User ACK custody and typed
+migration-source metadata. These components are not a completed migration:
+positive atomic cutover and subsequent native-login acceptance remain unverified.
+Default-off browser ingress, provider adapters and resource composition are
+present in the integration source. Auth Main selects the browser and private
+decision handlers, genuine registration authority, current-User observation and
+source-aware native consumers explicitly. Integrated startup and positive
+acceptance are still pending; this does not describe an enabled deployment. The
+web edge explicitly rejects the migration namespace rather than serving the SPA.
+
+Passwordless historical SSO identities cannot acquire an email in the credential
+row under the existing credentials-pair constraint. The proposed separate owner
+contact flow uses genuine existing-account proof, an explicit email candidate
+and actual OTP consumption; a provider email claim is not contact ownership.
+This extension remains under implementation. User's staged email version/digest
+are immutable opaque Auth attestations, distinct from a verified-contact generation.
+
+Retained publication decisions and scoped uncertainty recovery have component
+acceptance evidence. Atomic classification/session revocation and source-aware
+native consumers have source implementations, with positive readiness disabled
+pending integrated acceptance. Browser OTP continuation is still being connected.
+The accepted live-contact design adds a fresh User observation and durable Auth
+classification before a relevant User mutation. The current integration denies
+unsupported new migration contact commands without a write; it does not add a
+new command producer or claim successful migration-suspension race acceptance.
+This integration is not deployed.
+See [ADR 0049](docs/adr/0049-live-migration-contact-revisions.md).
+Existing owners must retain UUIDs, wallets, balances and history; old sessions may
+be revoked only after successful migration. Component test results do not establish
+complete browser, deployment or feature-activation readiness. Full acceptance
+remains required.

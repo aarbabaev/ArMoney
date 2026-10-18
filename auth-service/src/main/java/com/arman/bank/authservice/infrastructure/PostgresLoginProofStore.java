@@ -165,14 +165,15 @@ public final class PostgresLoginProofStore implements LoginProofStore {
             same(event.get("recipient_digest", byte[].class), recipientDigest(retentionKey, active.verifiedEmail()));
             if (!now.isBefore(time(event, "recipient_expires_at")) || event.get("verified_email", String.class) == null
                     || !time(event, "password_authenticated_at").equals(input.passwordAuthenticatedAt())
-                    || active.emailContactVersion() != event.get("email_contact_version", Integer.class)
-                    || active.phoneContactVersion() != event.get("phone_contact_version", Integer.class)
+                    || !Objects.equals(active.emailContactVersion(),event.get("email_contact_version", Integer.class))
+                    || !Objects.equals(active.phoneContactVersion(),event.get("phone_contact_version", Integer.class))
                     || active.verificationEpoch() != event.get("verification_epoch", Long.class)
-                    || active.projectionRevision() != event.get("projection_revision", Integer.class)) throw new Failure(Error.CONFLICT);
-            return;
+                    || !Objects.equals(active.projectionRevision(),event.get("projection_revision", Integer.class))) throw new Failure(Error.CONFLICT);
+            requireEventSource(event,active);return;
         }
         if (!mayCreate) throw new Failure(Error.UNAVAILABLE);
         if (count(sql, "select count(*) as n from sso_login_events") >= policy.maxProofs()) throw new Failure(Error.RATE_LIMITED);
+        if(active.isMigration()){insertMigrationEvent(sql,input,active,now);return;}
         sql.execute("""
             insert into sso_login_events(issuer, event_id, binding_hash, authentication_hash, identity_id, identity_digest,
                 password_authenticated_at, verified_email, recipient_digest, email_contact_version, phone_contact_version,
@@ -183,6 +184,25 @@ public final class PostgresLoginProofStore implements LoginProofStore {
             recipientDigest(retentionKey, active.verifiedEmail()), active.emailContactVersion(), active.phoneContactVersion(),
             active.verificationEpoch(), active.projectionRevision(), at(now.plusSeconds(86400)), at(now), at(now.plusSeconds(604800)));
     }
+    private static void requireEventSource(Record event,Authority active){
+        if(!active.isMigration()){if(!"REGISTRATION_DUAL_CONTACT".equals(event.get("eligibility_source")))throw new Failure(Error.CONFLICT);return;}
+        var grant=active.current().migrationGrant();
+        if(!SourceEligibilitySql.MIGRATION.equals(event.get("eligibility_source"))||!grant.decisionId().equals(event.get("eligibility_source_id"))||!grant.decisionId().equals(event.get("migration_decision_id"))
+            ||!Long.valueOf(grant.classificationGeneration()).equals(event.get("classification_generation"))||!Long.valueOf(grant.sourceRevision()).equals(event.get("source_revision"))
+            ||!Long.valueOf(grant.emailReceiptGeneration()).equals(event.get("migration_email_receipt_generation"))||!Long.valueOf(grant.phoneReceiptGeneration()).equals(event.get("migration_phone_receipt_generation"))
+            ||!Objects.equals(grant.verifiedContactGeneration(),event.get("migration_verified_contact_generation")))throw new Failure(Error.CONFLICT);
+        same(event.get("source_stamp",byte[].class),HexFormat.of().parseHex(grant.authorityStamp()));
+    }
+    private void insertMigrationEvent(DSLContext sql,Write input,Authority active,Instant now){
+        var grant=active.current().migrationGrant();
+        sql.execute("""
+            insert into sso_login_events(issuer,event_id,binding_hash,authentication_hash,identity_id,identity_digest,password_authenticated_at,verified_email,recipient_digest,
+              email_contact_version,phone_contact_version,verification_epoch,projection_revision,recipient_expires_at,created_at,retained_until,
+              eligibility_source,eligibility_source_id,classification_generation,source_revision,source_stamp,migration_decision_id,migration_email_receipt_generation,migration_phone_receipt_generation,migration_verified_contact_generation)
+            values(?,?,?,?,?,?,cast(? as timestamptz),?,?,null,null,?,null,cast(? as timestamptz),cast(? as timestamptz),cast(? as timestamptz),?,?,?,?,?,?,?,?,?)
+            """,input.issuer(),input.eventId(),LoginProof.bindingHash(input.binding()),LoginProof.authenticationHash(input.authenticationSessionId()),active.identityId(),LoginProof.identityHash(active.identityId()),at(input.passwordAuthenticatedAt()),active.verifiedEmail(),recipientDigest(retentionKey,active.verifiedEmail()),grant.verificationEpoch(),at(now.plusSeconds(86400)),at(now),at(now.plusSeconds(604800)),
+            SourceEligibilitySql.MIGRATION,grant.decisionId(),grant.classificationGeneration(),grant.sourceRevision(),HexFormat.of().parseHex(grant.authorityStamp()),grant.decisionId(),grant.emailReceiptGeneration(),grant.phoneReceiptGeneration(),grant.verifiedContactGeneration());
+    }
     private void reserveCommand(DSLContext sql, byte[] requester, UUID command, byte[] payload, UUID proof, Instant now) {
         if (count(sql, "select count(*) as n from sso_login_proof_commands") >= policy.maxCommands()) throw new Failure(Error.RATE_LIMITED);
         sql.execute("""
@@ -191,11 +211,12 @@ public final class PostgresLoginProofStore implements LoginProofStore {
             """, requester, command, payload, proof, at(now), at(now.plusSeconds(604800)));
     }
     private record Authority(Activation legacy,CurrentEvidence current) {
-        UUID identityId(){return current==null?legacy.identityId():current.grant().identityId();}
-        int emailContactVersion(){return current==null?legacy.emailContactVersion():current.grant().emailContactVersion();}
-        int phoneContactVersion(){return current==null?legacy.phoneContactVersion():current.grant().phoneContactVersion();}
-        long verificationEpoch(){return current==null?legacy.verificationEpoch():current.grant().verificationEpoch();}
-        int projectionRevision(){return current==null?legacy.projectionRevision():current.grant().projectionRevision();}
+        boolean isMigration(){return current!=null&&current.migrationGrant()!=null;}
+        UUID identityId(){return current==null?legacy.identityId():isMigration()?current.migrationGrant().identityId():current.grant().identityId();}
+        Integer emailContactVersion(){return isMigration()?null:current==null?legacy.emailContactVersion():current.grant().emailContactVersion();}
+        Integer phoneContactVersion(){return isMigration()?null:current==null?legacy.phoneContactVersion():current.grant().phoneContactVersion();}
+        long verificationEpoch(){return current==null?legacy.verificationEpoch():isMigration()?current.migrationGrant().verificationEpoch():current.grant().verificationEpoch();}
+        Integer projectionRevision(){return isMigration()?null:current==null?legacy.projectionRevision():current.grant().projectionRevision();}
         String verifiedEmail(){return current==null?legacy.verifiedEmail():current.verifiedEmail();}
         boolean completeFor(Binding binding,Instant now){return current==null?legacy.completeFor(binding,now):current.completeFor(binding,now);}
     }

@@ -63,13 +63,15 @@ public final class LoginProof {
                               boolean sessionActive,Instant sessionDeadline,Instant observationStartedAt) {
         @Override public String toString(){return "LoginProofObservation[redacted]";}
     }
-    public record CurrentEvidence(Binding binding,BankingEligibility.Grant grant,String verifiedEmail,
+    public record CurrentEvidence(Binding binding,BankingEligibility.Grant grant,BankingEligibility.MigrationGrant migrationGrant,String verifiedEmail,
                                   Instant observationStartedAt,Instant validUntil) {
+        public CurrentEvidence(Binding binding,BankingEligibility.Grant grant,String verifiedEmail,Instant started,Instant until){this(binding,grant,null,verifiedEmail,started,until);}
+        public ManagedEligibilitySource source(){if((grant==null)==(migrationGrant==null))fail(Error.UNAVAILABLE);return migrationGrant==null?ManagedEligibilitySource.REGISTRATION_DUAL_CONTACT:ManagedEligibilitySource.LEGACY_MIGRATION_DUAL_CONTACT;}
         public boolean completeFor(Binding expected,Instant now){
-            return expected!=null&&expected.equals(binding)&&grant!=null&&canonicalEmail(verifiedEmail)
+            return expected!=null&&expected.equals(binding)&&(grant!=null ^ migrationGrant!=null)&&canonicalEmail(verifiedEmail)
                 &&observationStartedAt!=null&&!observationStartedAt.isAfter(now)
                 &&!observationStartedAt.isBefore(now.minusSeconds(5))&&validUntil!=null&&now.isBefore(validUntil)
-                &&now.isBefore(grant.expiresAt());
+                &&now.isBefore(grant!=null?grant.expiresAt():migrationGrant.expiresAt());
         }
         @Override public String toString(){return "LoginProofCurrentEvidence[redacted]";}
     }

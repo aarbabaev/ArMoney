@@ -1,6 +1,7 @@
 package com.arman.bank.authservice.infrastructure;
 
 import com.arman.bank.authservice.application.CodeConfirmationService;
+import com.arman.bank.authservice.application.MigrationUserCurrentPort;
 import com.arman.bank.authservice.domain.LoginProof;
 import com.arman.bank.runtime.Database;
 import io.javalin.config.JavalinConfig;
@@ -21,14 +22,20 @@ public final class CodeConfirmationResources implements AutoCloseable {
         this.cleanup=cleanup;this.observer=observer;this.stageRoutes=stageRoutes;this.lookupRoutes=lookupRoutes;this.confirmationRoutes=confirmationRoutes;
     }
     public static Optional<CodeConfirmationResources> open(Database database,CodeConfirmationConfiguration configuration){
+        return open(database,configuration,null,null);
+    }
+    /** Migration crypto and User-current observation are borrowed; the caller closes their owner after C2. */
+    public static Optional<CodeConfirmationResources> open(Database database,CodeConfirmationConfiguration configuration,
+            LegacyMigrationManagedProofCrypto migrationCrypto,MigrationUserCurrentPort userCurrent){
         Objects.requireNonNull(configuration);
         if(!configuration.enabled)return Optional.empty();
+        if((migrationCrypto==null)!=(userCurrent==null))throw new IllegalArgumentException("Incomplete migration observation dependencies");
         Objects.requireNonNull(database);
         CodeIntentCleanupWorker cleanup=null;HttpCodeSessionObservations observer=null;
         try{
             var stage=configuration.stageConfiguration();var policy=stage.policy();
             // One borrowed Database; one set of original retention/AEAD objects and one maintenance owner.
-            var intents=new PostgresCodeIntentStore(database,policy,stage.retentionKeys(),stage.detailCrypto());
+            var intents=new PostgresCodeIntentStore(database,policy,stage.retentionKeys(),stage.detailCrypto(),migrationCrypto,userCurrent);
             cleanup=new CodeIntentCleanupWorker(intents);
             PostgresLoginProofStore proofs;
             byte[] proofKey=configuration.proofRetentionKey();
@@ -37,7 +44,7 @@ public final class CodeConfirmationResources implements AutoCloseable {
                 throw new LoginProof.Failure(LoginProof.Error.UNAVAILABLE);
             });}finally{Arrays.fill(proofKey,(byte)0);}
             var lookup=new PostgresCodeIntentKeyLookupStore(database,policy,configuration.scopes(),stage.retentionKeys());
-            var confirmations=new PostgresCodeConfirmationStore(database,intents,proofs,policy);
+            var confirmations=new PostgresCodeConfirmationStore(database,intents,proofs,policy,migrationCrypto,userCurrent);
             observer=HttpCodeSessionObservations.open(configuration).orElseThrow(()->new IllegalStateException("Code confirmation observer unavailable"));
             var service=new CodeConfirmationService(confirmations,observer);
             var stageRoutes=new CodeIntentRoutes(intents,policy,configuration.actor(),stage.stageCredential(),configuration.scopes());

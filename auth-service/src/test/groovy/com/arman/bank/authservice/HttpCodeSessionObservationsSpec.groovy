@@ -74,6 +74,59 @@ class HttpCodeSessionObservationsSpec extends Specification {
     def 'default false creates no observer resource and does not contact a peer'(){
         expect:HttpCodeSessionObservations.open(new CodeConfirmationConfiguration([:])).isEmpty();calls.get()==0
     }
+    static CodeIntentPairScopes migrationScopes(String issuer='https://issuer.example/sso/realms/armoney'){
+        new CodeIntentPairScopes(JsonOutput.toJson([[issuer:issuer,client_id:'managed-client']]),
+            JsonOutput.toJson([[issuer:issuer,client_id:'legacy-client']]))
+    }
+    def 'validated migration factory permits its two purpose pairs without enabling C2 or relabeling legacy'(){
+        given:
+        def classification=migrationScopes()
+        def input=new HttpCodeSessionObservations.ValidatedMigrationObservation(URI.create('http://sso-service:8080'+PATH),KEY,classification)
+        HttpCodeSessionObservations migration
+        when:migration=HttpCodeSessionObservations.openMigration(input)
+        then:
+        !new CodeConfirmationConfiguration([:]).enabled
+        input.classification().is(classification)
+        classification.classify('https://issuer.example/sso/realms/armoney','legacy-client')==CodeIntentPairScopes.Classification.LEGACY
+        classification.classify('https://issuer.example/sso/realms/armoney','managed-client')==CodeIntentPairScopes.Classification.MANAGED
+        !input.toString().contains(KEY)&&!input.toString().contains('issuer.example')
+        when:
+        // Check the private binding boundary without issuing HTTP to a production-style endpoint.
+        def validate=HttpCodeSessionObservations.getDeclaredMethod('validate',L.Binding)
+        validate.accessible=true
+        validate.invoke(migration,new L.Binding('https://issuer.example/sso/realms/armoney','subject','legacy-client','session'))
+        validate.invoke(migration,new L.Binding('https://issuer.example/sso/realms/armoney','subject','managed-client','session'))
+        then:noExceptionThrown()
+        when:migration.observe(new L.Binding('https://issuer.example/sso/realms/armoney','subject','unknown-client','session'),Instant.now())
+        then:thrown(L.Failure);calls.get()==0
+        cleanup:migration?.close()
+    }
+    def 'migration construction rejects raw path origin credential and classification violations with generic errors'(){
+        given:
+        def valid=URI.create('http://sso-service:8080'+PATH)
+        def bothManaged=new CodeIntentPairScopes(JsonOutput.toJson([[issuer:'https://issuer.example/sso/realms/armoney',client_id:'managed-client'],
+            [issuer:'https://issuer.example/sso/realms/armoney',client_id:'legacy-client']]),'[]')
+        def wrongIssuer=new CodeIntentPairScopes('[{"issuer":"https://issuer.example/sso/realms/armoney","client_id":"managed-client"}]',
+            '[{"issuer":"https://foreign.example/sso/realms/armoney","client_id":"legacy-client"}]')
+        def candidates=[
+            [URI.create('http://127.0.0.1:8080'+PATH),KEY,migrationScopes()],
+            [URI.create('http://sso-service:9090'+PATH),KEY,migrationScopes()],
+            [URI.create('https://sso-service/wrong'),KEY,migrationScopes()],
+            [URI.create('https://sso-service'+PATH+'?key=synthetic-private-canary'),KEY,migrationScopes()],
+            [URI.create('https://user:synthetic-private-canary@sso-service'+PATH),KEY,migrationScopes()],
+            [valid,'x'*31,migrationScopes()],[valid,'x'*513,migrationScopes()],[valid,'x'*31+' ',migrationScopes()],
+            [valid,KEY,bothManaged],[valid,KEY,wrongIssuer],[valid,KEY,migrationScopes('https://issuer.example/wrong-realm')]]
+        expect:
+        candidates.every{candidate ->
+            try{new HttpCodeSessionObservations.ValidatedMigrationObservation(candidate[0],candidate[1],candidate[2]);false}
+            catch(IllegalArgumentException rejected){
+                assert rejected.message=='Invalid migration observation settings'
+                assert rejected.cause==null
+                true
+            }
+        }
+        calls.get()==0
+    }
     def 'fixed endpoint and credential send exactly four fields and decode twelve facts without absolute clock comparison'(){
         when:def result=adapter.observe(BINDING,Instant.parse('2026-10-17T00:00:00Z'))
         then:result.binding()==BINDING;result.enabled();result.userSessionActive();result.clientSessionActive()
@@ -124,6 +177,22 @@ class HttpCodeSessionObservationsSpec extends Specification {
         when:adapter.observe(BINDING,Instant.now())
         then:def late=thrown(L.Failure);late.error()==L.Error.UNAVAILABLE;calls.get()==1
         TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started)<5500
+    }
+    def 'caller remaining budget uses original anchor and strict decoder without a fresh four seconds'(){
+        given:def original=Instant.parse('2026-10-17T00:00:00Z')
+        when:def result=adapter.observe(BINDING,original,Duration.ofSeconds(1))
+        then:result.binding()==BINDING;calls.get()==1
+        when:
+        delay.set(1200);long started=System.nanoTime()
+        adapter.observe(BINDING,original,Duration.ofMillis(150))
+        then:def expired=thrown(L.Failure);expired.error()==L.Error.UNAVAILABLE
+        TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started)<1000
+        calls.get()<=2 // At most one extra request, never an inline retry.
+    }
+    def 'invalid remaining budget is unavailable before observer network'(){
+        when:adapter.observe(BINDING,Instant.now(),budget)
+        then:def invalid=thrown(L.Failure);invalid.error()==L.Error.UNAVAILABLE;calls.get()==0
+        where:budget << [null,Duration.ZERO,Duration.ofNanos(-1),Duration.ofSeconds(5),Duration.ofSeconds(Long.MAX_VALUE)]
     }
     def 'close cancels in-flight owned exchange and prevents further fanout'(){
         given:delay.set(5000);def pool=Executors.newSingleThreadExecutor()

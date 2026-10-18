@@ -91,7 +91,8 @@ public final class PostgresVerificationStore implements VerificationStore {
                     if ((last != null && now.isBefore(last.toInstant().plusSeconds(60)))
                             || recent.get("hourly", Long.class) >= 3 || recent.get("daily", Long.class) >= 10
                             || count(sql, "select count(*) as n from verification_challenges where created_at > cast(? as timestamptz)", at(now.minusSeconds(3600))) >= 1_000
-                            || count(sql, "select count(*) as n from verification_challenges") >= 100_000)
+                            || count(sql, "select count(*) as n from verification_challenges") >= 100_000
+                            || !PostgresOtpIssuanceBudget.available(sql,now))
                         return Result.rejected(Error.RATE_LIMITED);
                     sql.execute("""
                         update verification_challenges set state = 'SUPERSEDED', digest = null
@@ -102,6 +103,7 @@ public final class PostgresVerificationStore implements VerificationStore {
                         where enrollment_id = ? and purpose = ? and state in ('PENDING','LEASED','RETRY_WAIT')
                         """, input.enrollmentId(), input.purpose().name());
                     UUID challenge = UUID.randomUUID(), delivery = UUID.randomUUID();
+                    PostgresOtpIssuanceBudget.reserve(sql,challenge,"REGISTRATION",now);
                     String contact = e.get(input.purpose() == Purpose.REGISTRATION_PHONE ? "phone" : "email", String.class);
                     String code = crypto.newCode();
                     var encrypted = crypto.encrypt(input.enrollmentId(), challenge, input.purpose(), input.contactVersion(), contact, code);
