@@ -35,7 +35,7 @@ x-sso: &sso
     KC_DB_URL: jdbc:postgresql://sso-db:5432/keycloak
     KC_HTTP_ENABLED: "true"
     KC_HTTP_RELATIVE_PATH: /sso
-    KC_HOSTNAME: https://sso-edge:8443
+    KC_HOSTNAME: https://sso-edge:8443/sso
     KC_PROXY_HEADERS: xforwarded
   tmpfs: ["/tmp:rw,nosuid,nodev,mode=1777", "/opt/keycloak/data:rw,nosuid,nodev,uid=1000,gid=0,mode=0700"]
   depends_on:
@@ -113,7 +113,7 @@ services:
       KC_DB_URL: jdbc:postgresql://sso-db:5432/keycloak
       KC_HTTP_ENABLED: "true"
       KC_HTTP_RELATIVE_PATH: /sso
-      KC_HOSTNAME: https://sso-edge:8443
+      KC_HOSTNAME: https://sso-edge:8443/sso
       KC_PROXY_HEADERS: xforwarded
       KC_NODE_NAME: code-intent-a
   sso-b:
@@ -123,7 +123,7 @@ services:
       KC_DB_URL: jdbc:postgresql://sso-db:5432/keycloak
       KC_HTTP_ENABLED: "true"
       KC_HTTP_RELATIVE_PATH: /sso
-      KC_HOSTNAME: https://sso-edge:8443
+      KC_HOSTNAME: https://sso-edge:8443/sso
       KC_PROXY_HEADERS: xforwarded
       KC_NODE_NAME: code-intent-b
     networks:

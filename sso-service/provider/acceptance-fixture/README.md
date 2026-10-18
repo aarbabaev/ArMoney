@@ -256,7 +256,7 @@ fixture Dockerfile now pins `/sso` before augmentation, matching optimized runti
 configuration. A fresh run at `f01ef2f3` rebuilt all four images and passed both-node
 HTTP and verified edge-TLS readiness. It then failed at provisioning in 232.078
 seconds; the runner exited 1, owned resources were removed and the CI controller
-restored. Provisioning cause remains unknown. The helper now records only a fixed
+restored. A diagnostic run at `64d007c0` failed at discovery validation on node A despite HTTP 200, in 229.093 seconds; owned resources were removed. Source analysis identified the full `KC_HOSTNAME` URL missing `/sso`. All three fixture hostname settings now include that path; strict issuer validation is preserved. This correction still requires fresh runtime verification. The helper now records only a fixed
 checkpoint, optional node A/B and optional HTTP status on private failure output;
 14 synthetic tests passed. Success output remains unchanged. Diagnostic reporting
 does not fix provisioning. Cluster association, realm/user provisioning and the
@@ -302,8 +302,11 @@ polling Auth STATE. Waiting is bounded by the original setup and experiment
 cutoffs, with cancellation checked before and after. This avoids exhausting the
 existing Auth control budget; no rate limit, mutation retry or deadline renewal
 was added. Readiness observation can be delayed by up to one polling interval.
-Four new pacing/cutoff/rate-rejection/cancellation regressions are source-ready
-but unexecuted; the earlier 165-test result does not cover them.
+All four new pacing/cutoff/rate-rejection/cancellation regressions executed at
+`64d007c0`: 169 tests across 29 suites, zero failures, errors or skips, with
+`verifyFixtureJars` executed. Independent artifact verification matched all 857
+archived source files to that revision. Native acceptance and mandatory CI
+remain separate gates; this result is not evidence for later source changes.
 
 ## Private fixture configuration
 
