@@ -54,10 +54,25 @@ paths:
         expose through public gateway ingress. Does not grant ACTIVE eligibility,
         create banking sessions, attest operator verification or activate notices.
         Strict JSON rejects duplicate/unknown fields, nulls and trailing tokens.
-        Raw request maximum is 12288 bytes; oversized requests return 400.
+        Raw request maximum is 12288 bytes, including unknown-length bodies.
+        Purpose authentication and admission precede body reading. HTTP/1.1 body
+        reading has an absolute four-second endpoint deadline; an oversized or
+        stalled body may be physically disconnected before an error response.
+        The original ingress budget is passed through commit without renewal.
         Revision CAS and strictly increasing epoch apply to new operations;
         same phone preserves contact version, replacement increases it.
         Retained exact replay returns its original ACK without state mutation.
+        With live revision selected, a new operation first retains an immutable
+        preflight request, then obtains an authenticated durable Auth suspension
+        or conclusive source response outside User transactions, then repeats
+        the original tuple or complete-absence CAS before mutation. Preflight
+        storage is capped globally at 100000 rows with no TTL or eviction;
+        existing exact custody and committed replay are checked before the cap.
+        Unknown or conservative Auth source classification returns 503 without
+        business mutation; absence is never inferred as NOT_MIG. Pre-profile
+        bootstrap requires complete absence and a conclusive genuine REG result.
+        Without a live client, retained migration history denies new mutations
+        with 503. This does not create an Auth producer or banking authority.
       security:
       - VerificationProjectionKey: []
       requestBody:
@@ -314,6 +329,89 @@ paths:
               schema:
                 type: integer
               description: Seconds until retry (conservative 60)
+  /v1/internal/migrations/legacy/user-current:
+    post:
+      operationId: observeLegacyMigrationUserCurrent
+      description: >-
+        Private Auth-to-User current-state read; never expose through public
+        gateway ingress. Registered only when USER_LIVE_REVISION_ENABLED=true
+        (default false), independently of the four V7 migration routes. Disabled
+        wiring retains ordinary internal authentication and an absent handler:
+        valid business credentials reach 404, otherwise 401. Enabled exact POST
+        authenticates exactly one X-ArMoney-Migration-User-Current-Key before any
+        body read, mapping configured current or previous keys to the same writer.
+        Ordinary service, projection, publication and bearer credentials cannot
+        authorize it. Request and response maximum is 4096 bytes. At most 16
+        requests enter concurrently; capacity exhaustion returns 503, not 429.
+        HTTP/1.1 body reads use an absolute four-second physical endpoint deadline;
+        oversized or stalled bodies may be disconnected without a JSON response.
+        The original monotonic ingress budget also bounds successful response
+        exposure after the database read. No new deadline is sampled after waits.
+        Strict exact JSON rejects duplicate, missing or extra keys, trailing data,
+        fraction/exponent/boolean integer tokens and signed-64-bit overflow.
+        User serializes the read on its existing central contact lock and requires
+        the exact owner/migration/decision with a unique retained
+        RELEASED_AFTER_COMPLETION baseline and matching immutable publication
+        linkage. RESERVED/PUBLISHED, absent or inconsistent history denies.
+        Every request recomputes current state, including repeated operation IDs;
+        no retained observation is a cache, authorization lease or bank grant.
+        Auth epoch/source fields are echoed correlation only at User. The current
+        tuple may differ from immutable historical ACKs after later mutations.
+        No contact plaintext, cookie, token or account capability is returned.
+      security:
+      - LiveUserCurrentKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LiveUserCurrentCommand'
+      responses:
+        '200':
+          description: Fresh serialized User-owned tuple; not Auth eligibility or migration completion
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/ProjectionNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveUserCurrentResponse'
+        '400':
+          description: Rejected exact schema, hash, numeric token, UUID or unsupported body protocol
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/ProjectionNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveUserRejectedError'
+        '401':
+          description: Missing, duplicate or invalid dedicated purpose key; body is not read
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/ProjectionNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveUserRejectedError'
+        '409':
+          description: Owner or decision mismatch, unresolved baseline, absent profile or inconsistent current tuple
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/ProjectionNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveUserConflictError'
+        '503':
+          description: Admission full, closed resource, deadline, ambiguous history or unavailable database
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/ProjectionNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveUserUnavailableError'
   "/v1/internal/migrations/legacy/user-stage":
     post:
       operationId: "stageLegacyMigrationBaseline"
@@ -618,6 +716,152 @@ paths:
                 "$ref": "#/components/schemas/LegacyMigrationError"
 components:
   schemas:
+    LiveUserCurrentCommand:
+      type: object
+      additionalProperties: false
+      required: [protocol_version, operation_id, identity_id, migration_id, decision_id, classification_generation, auth_epoch, auth_source_revision, payload_hash]
+      properties:
+        protocol_version:
+          type: integer
+          format: int64
+          enum: [1]
+        operation_id:
+          $ref: '#/components/schemas/LegacyMigrationUuid'
+        identity_id:
+          $ref: '#/components/schemas/LegacyMigrationUuid'
+        migration_id:
+          $ref: '#/components/schemas/LegacyMigrationUuid'
+        decision_id:
+          $ref: '#/components/schemas/LegacyMigrationUuid'
+        classification_generation:
+          $ref: '#/components/schemas/LegacyMigrationPositive'
+        auth_epoch:
+          $ref: '#/components/schemas/LegacyMigrationPositive'
+        auth_source_revision:
+          $ref: '#/components/schemas/LegacyMigrationPositive'
+        payload_hash:
+          $ref: '#/components/schemas/LegacyMigrationDigest'
+      description: >-
+        Exactly nine fields. Auth derives the owner and source fields from its
+        admitted current MIG authority; no public requester chooses them. Hash is
+        H(current-request, writer_id then all preceding required fields in listed
+        order), excluding payload_hash. H hashes ASCII ArMoney-LiveUser-v1 plus
+        zero byte, frame(domain), then frame(field-name)+typed(value) for each
+        named field. frame is unsigned32 big-endian UTF-8 length then bytes;
+        typed string is byte1+frame, integer byte2+signed64 big-endian, null byte0,
+        boolean byte3+byte0/1, object byte4+unsigned32 count+ordered named values.
+        This flat request uses strings and integers only. writer_id is selected
+        by purpose-key authentication and never supplied in JSON. JSON property
+        order is irrelevant; canonical hash order is fixed. This does not replace
+        the older armoney-user-migration-baseline-v1 length-prefixed text hash.
+    LiveUserCurrentResponse:
+      type: object
+      additionalProperties: false
+      required: [protocol_version, operation_id, identity_id, payload_hash, migration_id, decision_id, classification_generation, auth_epoch, auth_source_revision, status, current, observed_at_us]
+      properties:
+        protocol_version:
+          type: integer
+          format: int64
+          enum: [1]
+        operation_id:
+          $ref: '#/components/schemas/LegacyMigrationUuid'
+        identity_id:
+          $ref: '#/components/schemas/LegacyMigrationUuid'
+        payload_hash:
+          $ref: '#/components/schemas/LegacyMigrationDigest'
+        migration_id:
+          $ref: '#/components/schemas/LegacyMigrationUuid'
+        decision_id:
+          $ref: '#/components/schemas/LegacyMigrationUuid'
+        classification_generation:
+          $ref: '#/components/schemas/LegacyMigrationPositive'
+        auth_epoch:
+          $ref: '#/components/schemas/LegacyMigrationPositive'
+        auth_source_revision:
+          $ref: '#/components/schemas/LegacyMigrationPositive'
+        status:
+          type: string
+          enum: [CURRENT]
+        current:
+          $ref: '#/components/schemas/LiveUserCurrentTuple'
+        observed_at_us:
+          $ref: '#/components/schemas/LegacyMigrationNonnegative'
+      description: >-
+        Exactly twelve fields. All request correlation fields echo their original
+        values. observed_at_us is integer Unix epoch microseconds from the User
+        database read, for correlation only; it is not a freshness lease or expiry.
+    LiveUserCurrentTuple:
+      type: object
+      additionalProperties: false
+      required: [profile_id, shard_id, baseline_generation, contact_mutation_revision, projection_present, projection_revision, phone_contact_version, verification_epoch]
+      properties:
+        profile_id:
+          $ref: '#/components/schemas/LegacyMigrationUuid'
+        shard_id:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+        baseline_generation:
+          $ref: '#/components/schemas/LegacyMigrationNonnegative'
+        contact_mutation_revision:
+          $ref: '#/components/schemas/LegacyMigrationNonnegative'
+        projection_present:
+          type: boolean
+        projection_revision:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+          nullable: true
+        phone_contact_version:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+          nullable: true
+        verification_epoch:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+          nullable: true
+      oneOf:
+      - properties:
+          projection_present: {type: boolean, enum: [false]}
+          projection_revision: {type: integer, nullable: true, enum: [null]}
+          phone_contact_version: {type: integer, nullable: true, enum: [null]}
+          verification_epoch: {type: integer, nullable: true, enum: [null]}
+      - properties:
+          projection_present: {type: boolean, enum: [true]}
+          projection_revision: {$ref: '#/components/schemas/LegacyMigrationPositive'}
+          phone_contact_version: {$ref: '#/components/schemas/LegacyMigrationPositive'}
+          verification_epoch: {$ref: '#/components/schemas/LegacyMigrationPositive'}
+      description: >-
+        Exact User8 tuple in listed order. Absent projection requires all three
+        trailing values to be JSON null; never substitute zero or version one.
+        Present projection requires three positive current values. Profile UUID
+        is distinct from identity UUID and shard is immutable placement. Generation
+        and contact revision are current User counters, not contact verification.
+        Narrow V7 publication and completion release preserve the staged tuple;
+        later protected mutations advance revision according to actual triggers,
+        not an assumed increment of one. Historical ACKs remain immutable.
+    LiveUserRejectedError:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error: {type: string, enum: [rejected]}
+    LiveUserConflictError:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error: {type: string, enum: [conflict]}
+    LiveUserUnavailableError:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error: {type: string, enum: [unavailable]}
     LegacyMigrationUuid:
       type: "string"
       format: "uuid"
@@ -950,6 +1194,11 @@ components:
         type: string
         enum: [no-store]
   securitySchemes:
+    LiveUserCurrentKey:
+      type: apiKey
+      in: header
+      name: X-ArMoney-Migration-User-Current-Key
+      description: Dedicated Auth-to-User current-read credential mapped to a configured writer; exactly one header, independent of projection/publication/service keys. Default-off live routes only.
     LegacyMigrationStageKey:
       type: "apiKey"
       in: "header"

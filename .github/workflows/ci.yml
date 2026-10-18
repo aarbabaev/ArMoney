@@ -158,6 +158,8 @@ jobs:
       - name: Compile, Spock, ArchUnit and PostgreSQL Testcontainers
         if: needs.impact.outputs.build == 'true'
         env:
+          # The preceding isolation step must pass before actual-process fixtures can run.
+          JAVA_TOOL_OPTIONS: -Dapi.version=1.44 -Darmoney.test.isolated.user.fixture=true
           AFFECTED_MODULES: ${{ needs.impact.outputs.modules }}
           NEED_BANK_IMAGES: ${{ needs.impact.outputs.bank_smoke == 'true' || needs.impact.outputs.sso == 'true' || needs.impact.outputs.sharding == 'true' || needs.impact.outputs.assistant_smoke == 'true' }}
         run: python3 -B scripts/run-affected-gradle.py

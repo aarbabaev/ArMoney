@@ -133,6 +133,23 @@ class WorkflowGuards(unittest.TestCase):
                 process=self.shell(body,{'IMPACT_RESULT':'success','SELECTION':json.dumps(value)})
                 self.assertEqual(process.returncode,0,(name,process.stderr))
 
+    def test_actual_main_fixture_opt_in_is_scoped_after_successful_isolation(self):
+        selected = steps(self.jobs['build'])
+        guard_index = next(i for i, (_, step) in enumerate(selected)
+                           if re.search(r'^        run:', step, re.M) and 'bash scripts/check-local-ci.sh' in run_body(step))
+        gradle_index = next(i for i, (_, step) in enumerate(selected)
+                            if re.search(r'^        run:', step, re.M) and 'scripts/run-affected-gradle.py' in run_body(step))
+        guard, gradle = selected[guard_index][1], selected[gradle_index][1]
+        self.assertLess(guard_index, gradle_index)
+        self.assertIn("if: needs.impact.outputs.build == 'true'", guard)
+        self.assertIn("if: needs.impact.outputs.build == 'true'", gradle)
+        self.assertNotIn('continue-on-error:', guard)
+        self.assertNotIn('always()', gradle)
+        marker = '-Darmoney.test.isolated.user.fixture=true'
+        self.assertIn('JAVA_TOOL_OPTIONS: -Dapi.version=1.44 ' + marker, gradle)
+        self.assertEqual(WORKFLOW.read_text(encoding='utf-8').count(marker), 1)
+        self.assertNotIn(marker, guard)
+
     def test_every_selected_flag_has_executable_consumer_not_only_summary(self):
         consumers = {}
         for name in JOBS:

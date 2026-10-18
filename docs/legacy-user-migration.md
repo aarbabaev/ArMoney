@@ -63,3 +63,5 @@ The source includes `MigrationBaselineSpec`, `MigrationBaselineRoutesSpec`, `Mig
 A new migration-backed contact mutation without supported original command custody returns unavailable before an Auth receipt or transition and before any User write. It is never treated as initial registration. This release does not introduce a new migration contact-command producer. See [ADR 0049](adr/0049-live-migration-contact-revisions.md) for the boundary and remaining acceptance.
 
 The browser resource graph additionally requires `AUTH_TO_USER_MIGRATION_PUBLICATION_KEY` and `USER_TO_AUTH_MIGRATION_DECISION_KEY` as separate purpose credentials. Enabling source flags does not itself establish external browser, provider, Mailtrap inbox or Android acceptance.
+
+Actual AuthMain/UserMain process acceptance requires an explicit isolated-fixture opt-in. CI supplies `-Darmoney.test.isolated.user.fixture=true` only to the affected Gradle step after the disposable-daemon guard succeeds. It is not a global runtime setting and must not be enabled against the persistent banking stack.
