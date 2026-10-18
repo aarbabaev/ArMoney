@@ -7,6 +7,8 @@ input gates are assertions, not proof of isolation or the running nodes' flags.
 Only master/admin-cli obtains an admin token; the synthetic user never does.
 Failures after import leave the owned realm in place: no retry, rollback/delete,
 or modification of an existing realm is attempted. Root owns disposal/restart.
+Private failure results add only the last fixed checkpoint, optional node A/B,
+and optional HTTP status 100..599. Success remains exactly phase/status/subject.
 """
 import argparse
 import http.client
@@ -29,6 +31,29 @@ FLOW = "armoney-code-intent-password-only"
 LIMIT = 131072
 TIMEOUT = 4.0
 PHONE = re.compile(r"\+9715[024568][0-9]{7}", re.ASCII)
+CHECKPOINTS = frozenset({"config", "token", "preexisting", "import", "realm", "discovery", "client",
+                         "flow", "action", "off-control", "create-user", "query-user", "user-readback",
+                         "off-control-after"})
+
+
+class Progress:
+    """Per-invocation allowlist only; never retain request/response or exceptions."""
+    def __init__(self):
+        self.mark("config")
+
+    def mark(self, checkpoint, node=None, http_status=None):
+        require(type(checkpoint) is str and checkpoint in CHECKPOINTS)
+        require(node is None or type(node) is str and node in {"A", "B"})
+        require(http_status is None or type(http_status) is int and 100 <= http_status <= 599)
+        value = {"checkpoint": checkpoint}
+        if node is not None:
+            value["node"] = node
+        if http_status is not None:
+            value["http_status"] = http_status
+        self._last = value
+
+    def snapshot(self):
+        return dict(self._last)
 
 
 class Refused(Exception):
@@ -188,57 +213,62 @@ def realm_source():
     return realm
 
 
-def provision(config, transport=request):
+def provision(config, transport=request, progress=None):
     """Returns only phase/status/actual persisted UUID; never a token or profile."""
+    mark = Progress().mark if progress is None else progress
+    mark("config")
     config = configuration(json.dumps(config).encode("utf-8"))
     realm = realm_source()
-    def call(node, method, path, expected, token=None, payload=None, form=None):
+    def call(checkpoint, node, method, path, expected, token=None, payload=None, form=None):
+        node_label = {"sso-a": "A", "sso-b": "B"}[node]
+        mark(checkpoint, node_label)
         status, raw = transport(node, method, path, token=token, payload=payload, form=form)
+        mark(checkpoint, node_label, status if type(status) is int and 100 <= status <= 599 else None)
         require(status == expected and isinstance(raw, bytes) and len(raw) <= LIMIT)
         return raw
-    auth = strict_json(call("sso-a", "POST", BASE + "/realms/master/protocol/openid-connect/token", 200,
+    auth = strict_json(call("token", "sso-a", "POST", BASE + "/realms/master/protocol/openid-connect/token", 200,
                            form={"client_id": "admin-cli", "grant_type": "password",
                                  "username": config["admin_username"], "password": config["admin_password"]}))
     require(isinstance(auth, dict) and auth.get("token_type", "").lower() == "bearer")
     token = text(auth.get("access_token"), 16384)
     # Check both nodes before the first mutating call. Never patch an existing realm.
     for node in NODES:
-        call(node, "GET", REALM, 404, token)
-    call("sso-a", "POST", BASE + "/admin/realms", 201, token, realm)
+        call("preexisting", node, "GET", REALM, 404, token)
+    call("import", "sso-a", "POST", BASE + "/admin/realms", 201, token, realm)
     for node in NODES:
-        actual = strict_json(call(node, "GET", REALM, 200, token))
+        actual = strict_json(call("realm", node, "GET", REALM, 200, token))
         require(actual.get("realm") == "armoney" and actual.get("browserFlow") == FLOW
                 and actual.get("loginTheme") == "armoney-code-intent-fixture")
-        discovery = strict_json(call(node, "GET", BASE + "/realms/armoney/.well-known/openid-configuration", 200))
+        discovery = strict_json(call("discovery", node, "GET", BASE + "/realms/armoney/.well-known/openid-configuration", 200))
         require(discovery.get("issuer") == config["expected_issuer"])
-        clients = strict_json(call(node, "GET", REALM + "/clients?clientId=armoney-android", 200, token))
+        clients = strict_json(call("client", node, "GET", REALM + "/clients?clientId=armoney-android", 200, token))
         require(isinstance(clients, list) and len(clients) == 1)
         check_client(clients[0])
-        executions = strict_json(call(node, "GET", REALM + "/authentication/flows/" + FLOW + "/executions", 200, token))
+        executions = strict_json(call("flow", node, "GET", REALM + "/authentication/flows/" + FLOW + "/executions", 200, token))
         require(isinstance(executions, list) and len(executions) == 1
                 and executions[0].get("providerId") == "armoney-password-proof"
                 and executions[0].get("requirement") == "REQUIRED"
                 and executions[0].get("authenticationFlow") is False)
-        actions = strict_json(call(node, "GET", REALM + "/authentication/required-actions", 200, token))
+        actions = strict_json(call("action", node, "GET", REALM + "/authentication/required-actions", 200, token))
         require(isinstance(actions, list))
         selected = [a for a in actions if a.get("enabled") is True and a.get("defaultAction") is True]
         require(len(selected) == 1 and selected[0].get("alias") == ACTION and selected[0].get("providerId") == ACTION)
-        call(node, "POST", BASE + "/realms/armoney/armoney-code-intent-fixture/state", 503, payload={})
+        call("off-control", node, "POST", BASE + "/realms/armoney/armoney-code-intent-fixture/state", 503, payload={})
     supplied = config["synthetic_user"]
     user = {k: supplied[k] for k in ("username", "email", "firstName", "lastName")}
     user.update({"enabled": True, "emailVerified": False, "requiredActions": [ACTION],
                  "credentials": [{"type": "password", "value": supplied["password"], "temporary": False}]})
-    call("sso-a", "POST", REALM + "/users", 201, token, user)
+    call("create-user", "sso-a", "POST", REALM + "/users", 201, token, user)
     query = urllib.parse.urlencode({"username": supplied["username"], "exact": "true"})
-    users = strict_json(call("sso-a", "GET", REALM + "/users?" + query, 200, token))
+    users = strict_json(call("query-user", "sso-a", "GET", REALM + "/users?" + query, 200, token))
     require(isinstance(users, list) and len(users) == 1 and isinstance(users[0], dict))
     subject = canonical_uuid(users[0].get("id"))
     for node in NODES:
-        saved = strict_json(call(node, "GET", REALM + "/users/" + subject, 200, token))
+        saved = strict_json(call("user-readback", node, "GET", REALM + "/users/" + subject, 200, token))
         require(saved.get("id") == subject and saved.get("enabled") is True
                 and saved.get("emailVerified") is False and saved.get("requiredActions") == [ACTION]
                 and all(saved.get(k) == user[k] for k in ("username", "email", "firstName", "lastName")))
-        call(node, "POST", BASE + "/realms/armoney/armoney-code-intent-fixture/state", 503, payload={})
+        call("off-control-after", node, "POST", BASE + "/realms/armoney/armoney-code-intent-fixture/state", 503, payload={})
     return {"phase": "PHASE1", "status": "BOTH_NODES_STOP_AND_ENABLED_RESTART_REQUIRED", "subject": subject}
 
 
@@ -248,6 +278,7 @@ def main(argv=None):
     parser.add_argument("--result", required=True)
     args = parser.parse_args(argv)
     output = None
+    progress = Progress()
     try:
         # Exclusive creation prevents replacing prior evidence or following an existing symlink.
         fd = os.open(args.result, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -257,7 +288,7 @@ def main(argv=None):
         else:
             with open(args.input, "rb") as source:
                 raw = source.read(LIMIT + 1)
-        result = provision(configuration(raw))
+        result = provision(configuration(raw), progress=progress.mark)
         json.dump(result, output, separators=(",", ":"))
         output.write("\n")
         output.flush()
@@ -268,7 +299,8 @@ def main(argv=None):
             try:
                 output.seek(0)
                 output.truncate()
-                json.dump({"phase": "PHASE1", "status": "FAILED_NO_AUTOMATIC_RETRY"}, output)
+                json.dump({"phase": "PHASE1", "status": "FAILED_NO_AUTOMATIC_RETRY",
+                           "diagnostic": progress.snapshot()}, output)
                 output.write("\n")
             except Exception:
                 pass  # Storage failure must not emit a sensitive exception chain.

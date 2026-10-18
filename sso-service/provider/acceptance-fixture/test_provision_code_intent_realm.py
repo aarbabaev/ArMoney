@@ -174,6 +174,7 @@ class ProvisionTests(unittest.TestCase):
                 self.assertEqual(0, p.main(["--input", str(source), "--result", str(target)]))
             self.assertEqual("", stdout.getvalue() + stderr.getvalue())
             self.assertNotIn("password", target.read_text())
+            self.assertEqual({"phase", "status", "subject"}, set(json.loads(target.read_text())))
             original = target.read_bytes()
             with contextlib.redirect_stderr(stderr):
                 self.assertEqual(1, p.main(["--input", str(source), "--result", str(target)]))
@@ -182,7 +183,90 @@ class ProvisionTests(unittest.TestCase):
             with patch.object(p, "provision", side_effect=RuntimeError("sensitive-response-body")), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                 self.assertEqual(1, p.main(["--input", str(source), "--result", str(target)]))
             self.assertNotIn("sensitive-response-body", stdout.getvalue() + stderr.getvalue() + target.read_text())
-            self.assertEqual({"phase": "PHASE1", "status": "FAILED_NO_AUTOMATIC_RETRY"}, json.loads(target.read_text()))
+            self.assertEqual({"phase": "PHASE1", "status": "FAILED_NO_AUTOMATIC_RETRY",
+                              "diagnostic": {"checkpoint": "config"}}, json.loads(target.read_text()))
+
+    def test_progress_has_exact_enums_and_never_retains_arbitrary_values(self):
+        progress = p.Progress()
+        for args in (("secret-response-body",), ("token", "secret-identity"),
+                     ("token", "A", "secret-token"), ("token", "A", 99),
+                     ("token", "A", 600), ("token", "A", True), ("token", "A", 200.0)):
+            with self.subTest(argument_types=[type(a).__name__ for a in args]), self.assertRaises(p.Refused):
+                progress.mark(*args)
+            self.assertEqual({"checkpoint": "config"}, progress.snapshot())
+        progress.mark("token", "A", 200)
+        progress.mark("discovery", "B")
+        self.assertEqual({"checkpoint": "discovery", "node": "B"}, progress.snapshot())
+        self.assertEqual({"checkpoint": "config"}, p.Progress().snapshot())
+
+    def test_success_callback_covers_every_stage_but_does_not_change_success_schema(self):
+        observed = []
+        progress = p.Progress()
+        def callback(*args):
+            progress.mark(*args)
+            observed.append(progress.snapshot())
+        result = p.provision(config(), FakeTransport(), progress=callback)
+        self.assertEqual({"phase", "status", "subject"}, set(result))
+        self.assertEqual(p.CHECKPOINTS, {event["checkpoint"] for event in observed})
+        self.assertEqual({"checkpoint": "off-control-after", "node": "B", "http_status": 503}, observed[-1])
+
+    def test_cli_http_mismatch_keeps_only_fixed_checkpoint_node_and_status(self):
+        transport = FakeTransport()
+        def failure(node, method, path, **kwargs):
+            if method == "POST" and path == p.BASE + "/admin/realms":
+                transport.calls.append((node, method, path))
+                return 400, b'{"secret":"secret-response-body-and-token"}'
+            return transport(node, method, path, **kwargs)
+        result = self.cli_failure(failure)
+        self.assertEqual({"checkpoint": "import", "node": "A", "http_status": 400}, result["diagnostic"])
+        self.assertFalse(transport.imported)
+        self.assertIsNone(transport.created)
+        self.assertEqual(4, len(transport.calls))  # No automatic repeat of the refused import.
+
+    def test_cli_schema_failure_and_transport_exception_never_serialize_private_data(self):
+        transport = FakeTransport()
+        transport.execution["providerId"] = "secret-response-body-and-token"
+        result = self.cli_failure(transport)
+        self.assertEqual({"checkpoint": "flow", "node": "A", "http_status": 200}, result["diagnostic"])
+        transport = FakeTransport()
+        def failure(node, method, path, **kwargs):
+            if node == "sso-b" and path.endswith("/.well-known/openid-configuration"):
+                raise RuntimeError("secret-response-body-and-token " + SUBJECT)
+            return transport(node, method, path, **kwargs)
+        result = self.cli_failure(failure)
+        self.assertEqual({"checkpoint": "discovery", "node": "B"}, result["diagnostic"])
+
+    def test_cli_invalid_input_stays_at_config_without_network(self):
+        transport = FakeTransport()
+        candidate = config()
+        candidate["CI"] = "false"
+        result = self.cli_failure(transport, candidate)
+        self.assertEqual({"checkpoint": "config"}, result["diagnostic"])
+        self.assertEqual([], transport.calls)
+
+    def cli_failure(self, transport, candidate=None):
+        actual_provision = p.provision
+        def selected(configured, progress=None):
+            return actual_provision(configured, transport, progress=progress)
+        with tempfile.TemporaryDirectory() as directory:
+            source, target = Path(directory) / "input.json", Path(directory) / "result.json"
+            source.write_text(json.dumps(config() if candidate is None else candidate), encoding="utf-8")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with patch.object(p, "provision", side_effect=selected), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                self.assertEqual(1, p.main(["--input", str(source), "--result", str(target)]))
+            raw = target.read_text()
+            self.assertEqual("", stdout.getvalue())
+            self.assertEqual("Provisioning unavailable.\n", stderr.getvalue())
+            for forbidden in ("secret-response-body-and-token", SUBJECT, config()["admin_password"],
+                              config()["synthetic_user"]["password"], config()["synthetic_user"]["username"],
+                              config()["synthetic_user"]["email"], config()["synthetic_user"]["firstName"],
+                              config()["synthetic_user"]["lastName"], config()["expected_issuer"]):
+                self.assertNotIn(forbidden, raw)
+            result = json.loads(raw)
+            self.assertEqual({"phase", "status", "diagnostic"}, set(result))
+            self.assertEqual("FAILED_NO_AUTOMATIC_RETRY", result["status"])
+            self.assertTrue(set(result["diagnostic"]) <= {"checkpoint", "node", "http_status"})
+            return result
 
     def test_transport_rejects_arbitrary_nodes_redirects_and_oversized_responses(self):
         with self.assertRaises(p.Refused):
