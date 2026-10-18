@@ -13,6 +13,34 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Synthetic model tests establish boundaries, not committed-state/cluster visibility. */
 final class EnrollmentObservationTest {
+    @Test void rejectionDiagnosticsContainOnlyClosedEnumsWithoutProviderInputsOrExceptionDetails(){
+        var records=new ArrayList<java.util.logging.LogRecord>();
+        var logger=java.util.logging.Logger.getLogger(EnrollmentObservation.class.getName());
+        var handler=new java.util.logging.Handler(){
+            @Override public void publish(java.util.logging.LogRecord record){records.add(record);}
+            @Override public void flush(){}
+            @Override public void close(){}
+        };
+        logger.addHandler(handler);
+        try{
+            var fixture=new Fixture();fixture.fault="missing-root";
+            assertThrows(Bridge.Unavailable.class,()->EnrollmentObservation.observe(fixture.session(),binding(),KEY));
+            fixture.fault="wrong-phase";
+            assertThrows(Bridge.Unavailable.class,()->EnrollmentObservation.observe(fixture.session(),binding(),KEY));
+            fixture.fault="";
+            assertThrows(Bridge.Unavailable.class,()->EnrollmentObservation.observe(fixture.session(),binding(),KEY+"UNTRUSTED_PRIVATE_KEY"));
+            fixture.fault="noncanonical-email";
+            assertThrows(Bridge.Unavailable.class,()->EnrollmentObservation.observe(fixture.session(),binding(),KEY));
+            assertEquals(List.of("ROOT_MISSING","ACTION","HMAC","EMAIL"),records.stream().map(java.util.logging.LogRecord::getMessage).toList());
+            for(var record:records){
+                assertDoesNotThrow(()->EnrollmentObservation.Rejection.valueOf(record.getMessage()));
+                assertNull(record.getThrown());
+                assertTrue(record.getParameters()==null||record.getParameters().length==0);
+                for(String privateValue:List.of(KEY,"UNTRUSTED_PRIVATE_KEY","Upper@example.test",binding().digest(),"subject"))
+                    assertFalse(record.getMessage().contains(privateValue));
+            }
+        }finally{logger.removeHandler(handler);}
+    }
     private static final String KEY = "synthetic-binding-key-for-isolated-fixtures";
     private static final String ISSUER = "https://issuer.example/realms/armoney";
     private static final String RESULT = "{\"enrollment_id\":\"00000000-0000-0000-0000-000000000001\",\"version\":9,\"state\":\"PROJECTED\",\"email_contact_version\":2,\"phone_contact_version\":3,\"email_verified\":true,\"phone_verified\":true}";

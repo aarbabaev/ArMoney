@@ -70,8 +70,11 @@ public final class LegacyMigrationConfiguration {
         managed=new LegacyMigrationManagedProviderClient.Settings(issuer,endpoint(e,"AUTH_MIGRATION_MANAGED_TOKEN_ENDPOINT",issuer,"token"),endpoint(e,"AUTH_MIGRATION_MANAGED_JWKS_URI",issuer,"certs"),target,mc);
         browser=new LegacyMigrationBrowserConfiguration(true,ingress.publicOrigin(),lc,mc,la,legacy,ma,target);
         URI origin=URI.create(required(e,"SSO_ENROLLMENT_STATUS_ORIGIN"));HttpVerificationObservations.origin(origin,false);
-        var pairs=new ArrayList<Map<String,String>>();pairs.add(Map.of("issuer",issuer.toString(),"client_id",legacy));pairs.add(Map.of("issuer",issuer.toString(),"client_id",target));
-        observation=new ObservationSettings(origin.resolve("/sso/realms/armoney/armoney-status/code-session"),credential(e,"AUTH_TO_SSO_STATUS_KEY"),scopes);
+        // Validate the global inventory above, then select exactly this migration's two transport purposes.
+        var managedObservation=JSON.createArrayNode();managedObservation.addObject().put("issuer",issuer.toString()).put("client_id",target);
+        var accountObservation=JSON.createArrayNode();accountObservation.addObject().put("issuer",issuer.toString()).put("client_id",legacy);
+        var observationScopes=new CodeIntentPairScopes(managedObservation.toString(),accountObservation.toString());
+        observation=new ObservationSettings(origin.resolve("/sso/realms/armoney/armoney-status/code-session"),credential(e,"AUTH_TO_SSO_STATUS_KEY"),observationScopes);
         userOrigin=URI.create(required(e,"USER_BASE_URL"));if(!userOrigin.toString().equals("http://user-service:8080"))throw rejected();
         readKey=credential(e,"INTERNAL_AUTH_KEY");stageKey=credential(e,"AUTH_TO_USER_MIGRATION_STAGE_KEY");
         publicationKey=credential(e,"AUTH_TO_USER_MIGRATION_PUBLICATION_KEY");decisionKey=credential(e,"USER_TO_AUTH_MIGRATION_DECISION_KEY");

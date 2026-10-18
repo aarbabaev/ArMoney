@@ -95,7 +95,9 @@ public final class LegacyMigrationBrowserRoutes {
                 require(request.getQueryString() == null);
                 verification(context, service.status(requiredCookie(cookies, ACCOUNT_COOKIE)));
             } else if ("GET".equals(method)) {
-                Callback parsed = callback(request.getQueryString());
+                Callback parsed = callback(request.getQueryString(),
+                    path.equals(LegacyMigrationBrowserConfiguration.LEGACY_CALLBACK)
+                        ? configuration.legacyAuthorizationEndpoint() : configuration.managedAuthorizationEndpoint());
                 String originalCookie = requiredCookie(cookies, ATTEMPT_COOKIE);
                 var callback = new MigrationManagedProofPort.Callback(parsed.code(), parsed.state(), originalCookie);
                 // The producer resolves original purpose/state/cookie BEFORE claim/exchange.
@@ -300,12 +302,33 @@ public final class LegacyMigrationBrowserRoutes {
         return new Fields(fields(query.getBytes(StandardCharsets.US_ASCII), Set.of("client_id", "redirect_uri",
             "response_type", "scope", "state", "nonce", "code_challenge", "code_challenge_method", "prompt", "max_age")));
     }
-    static Callback callback(String query) {
-        require(query != null && query.length() <= 4096 && query.chars().allMatch(c -> c >= 33 && c <= 126));
-        Map<String,String> value = fields(query.getBytes(StandardCharsets.US_ASCII), Set.of("state", "code"));
-        require(token(value.get("state")));
+    static Callback callback(String query) { return callback(query, null); }
+    /** Provider metadata is syntax checked only; original state/cookie proof remains producer-owned. */
+    static Callback callback(String query, java.net.URI authorizationEndpoint) {
+        require(query != null && query.length() <= 4096 && query.indexOf('#') < 0
+            && query.chars().allMatch(c -> c >= 33 && c <= 126));
+        var value = new LinkedHashMap<String,String>();
+        var allowed = Set.of("state", "code", "iss", "session_state");
+        for (String field : query.split("&", -1)) {
+            int separator = field.indexOf('='); require(separator > 0);
+            String key = decode(field.substring(0, separator)), decoded = decode(field.substring(separator + 1));
+            require(allowed.contains(key) && !value.containsKey(key) && !decoded.isEmpty());
+            value.put(key, decoded);
+        }
+        require(value.containsKey("state") && value.containsKey("code") && token(value.get("state")));
         String code = value.get("code");
-        require(!code.isEmpty() && code.length() <= 2048 && code.chars().allMatch(c -> c >= 33 && c <= 126));
+        require(code.length() <= 2048 && code.chars().allMatch(c -> c >= 33 && c <= 126));
+        if (value.containsKey("iss")) {
+            String suffix = "/protocol/openid-connect/auth";
+            require(authorizationEndpoint != null);
+            String endpoint = authorizationEndpoint.toASCIIString();
+            require(endpoint.endsWith(suffix));
+            require(value.get("iss").equals(endpoint.substring(0, endpoint.length() - suffix.length())));
+        }
+        if (value.containsKey("session_state")) {
+            String metadata = value.get("session_state");
+            require(metadata.length() <= 512 && metadata.chars().allMatch(c -> c >= 33 && c <= 126));
+        }
         return new Callback(value.get("state"), code);
     }
     private static Map<String,String> fields(byte[] raw, Set<String> expected) {

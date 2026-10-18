@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 import urllib.parse
 from unittest.mock import patch
@@ -14,6 +15,70 @@ spec.loader.exec_module(driver)
 
 
 class ProductionHarnessTest(unittest.TestCase):
+    def concurrency_receipt(self):
+        return {'case': 'concurrent_same_client_callbacks', 'status': 'scoped_passed',
+            'positive_confirmations': 2, 'positive_bank_sessions': 2,
+            'negative_no_side_effects': True, 'whole_migration_acceptance': False}
+
+    def test_ten_required_cases_and_six_pending(self):
+        self.assertEqual(len(driver.CASES), 10)
+        self.assertEqual(driver.CASES[-2:], ('policy_removed_after_issue_denied', 'concurrent_same_client_callbacks'))
+        self.assertEqual(driver.UNIMPLEMENTED, ('stage_response_loss', 'confirmation_response_loss',
+            'node_replacement', 'master_stock', 'disabled_stock', 'full_migration_callbacks_pre_final'))
+
+    def test_concurrency_runs_after_restoration_with_original_deadline(self):
+        completed, order = list(driver.CASES[:-2]), []
+        wire = SimpleNamespace(data={'synthetic': 'private'}, deadline=123.25)
+        def policy(actual, cases):
+            self.assertIs(actual, wire)
+            order.append('restored')
+            cases.append('policy_removed_after_issue_denied')
+        def run(data, *, deadline):
+            self.assertEqual(order, ['restored'])
+            self.assertIs(data, wire.data)
+            self.assertEqual(deadline, 123.25)
+            self.assertEqual(completed, list(driver.CASES[:-1]))
+            order.append('concurrent')
+            return self.concurrency_receipt()
+        with patch.object(driver, 'policy_removed', side_effect=policy), \
+                patch.object(driver, 'load_concurrency', return_value=SimpleNamespace(execute=run)):
+            driver.final_cases(wire, completed)
+        self.assertEqual(completed, list(driver.CASES))
+        self.assertEqual(order, ['restored', 'concurrent'])
+
+    def test_policy_failure_never_starts_concurrency(self):
+        completed = list(driver.CASES[:-2])
+        with patch.object(driver, 'policy_removed', side_effect=driver.Rejected('policy_restore')), \
+                patch.object(driver, 'load_concurrency') as load:
+            with self.assertRaisesRegex(driver.Rejected, '^policy_restore$'):
+                driver.final_cases(object(), completed)
+        load.assert_not_called()
+        self.assertEqual(completed, list(driver.CASES[:-2]))
+
+    def test_concurrency_failure_or_open_receipt_withholds_case(self):
+        invalid = [None, dict(self.concurrency_receipt(), extra=True),
+            dict(self.concurrency_receipt(), positive_confirmations=True),
+            dict(self.concurrency_receipt(), positive_bank_sessions=1),
+            dict(self.concurrency_receipt(), negative_no_side_effects=False),
+            dict(self.concurrency_receipt(), whole_migration_acceptance=True),
+            dict(self.concurrency_receipt(), status='not_verified')]
+        for result in invalid:
+            with self.subTest(result=result):
+                completed = list(driver.CASES[:-2])
+                def policy(wire, cases):
+                    cases.append('policy_removed_after_issue_denied')
+                with patch.object(driver, 'policy_removed', side_effect=policy), \
+                        patch.object(driver, 'load_concurrency', return_value=SimpleNamespace(execute=lambda *a, **k: result)):
+                    with self.assertRaisesRegex(driver.Rejected, '^concurrent_case$'):
+                        driver.final_cases(SimpleNamespace(data={}, deadline=1), completed)
+                self.assertEqual(completed, list(driver.CASES[:-1]))
+        completed = list(driver.CASES[:-2])
+        with patch.object(driver, 'policy_removed', side_effect=lambda w, c: c.append('policy_removed_after_issue_denied')), \
+                patch.object(driver, 'load_concurrency', side_effect=RuntimeError('private error must not escape')):
+            with self.assertRaisesRegex(driver.Rejected, '^concurrent_case$'):
+                driver.final_cases(SimpleNamespace(data={}, deadline=1), completed)
+        self.assertEqual(completed, list(driver.CASES[:-1]))
+
     def config(self):
         return {'version': 1, 'isolated': True, 'origin': 'https://sso.example.test',
             'account_client': 'armoney-migration-account',

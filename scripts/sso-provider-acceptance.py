@@ -13,7 +13,9 @@ import http.client
 import http.server
 import json
 import os
+import re
 import secrets
+import socket
 import ssl
 import sys
 import threading
@@ -38,7 +40,8 @@ TARGETS = {
 }
 PHASES = frozenset({"START", "KEY_VALIDATION", "READINESS", "ADMIN_LOGIN", "REALM_SETUP",
                     "CLIENT_SETUP", "ACTION_SETUP", "ACTION_LIST", "ACTION_AVAILABLE", "ACTION_REGISTER",
-                    "ACTION_CONFIG", "USER_SETUP", "BROWSER_RENDER", "SEND_RPC",
+                    "ACTION_CONFIG", "USER_SETUP", "BROWSER_RENDER", "NEGATIVE_AUTH_PAGE", "NEGATIVE_FORM_SUBMIT",
+                    "NEGATIVE_DENIAL_RESULT", "NEGATIVE_NO_SEND", "NEGATIVE_NO_RPC", "SEND_RPC",
                     "CROSS_NODE", "READ_ONLY", "READ_ONLY_RPC", "READ_ONLY_EXPIRY", "READ_ONLY_DTO",
                     "READ_ONLY_INSPECT", "READ_ONLY_TIMESTAMP", "READ_ONLY_HMAC_DENIAL",
                     "READ_ONLY_SUBJECT_DENIAL", "READ_ONLY_KEY_DENIAL", "EXPIRY", "TAB_REMOVAL", "ROOT_REMOVAL",
@@ -174,7 +177,7 @@ def provision_realm(admin, authorization):
     target = admin + "/admin/realms/armoney"
     expect(404, request("GET", target, headers=authorization), "fixture requires absent realm")
     expect(201, request("POST", admin + "/admin/realms", {
-        "realm": "armoney", "enabled": True, "registrationAllowed": False, "loginTheme": "armoney",
+        "realm": "armoney", "enabled": True, "registrationAllowed": True, "loginTheme": "armoney",
         "sslRequired": "none", "accessCodeLifespanUserAction": 30,
         "accessCodeLifespanLogin": 300, "accessCodeLifespan": 60,
         "ssoSessionIdleTimeout": 300, "ssoSessionMaxLifespan": 600,
@@ -219,6 +222,212 @@ def provision_client_and_action(admin, authorization):
         action["defaultAction"] = False
         expect(204, request("PUT", actions_url + "/" + urllib.parse.quote(action["alias"], safe=""),
                             action, authorization), "enable only email action")
+    provision_registration_flow(target, authorization)
+
+
+def provision_registration_flow(target, authorization):
+    alias, form = "observer-genuine-registration", "observer-genuine-registration-form"
+    expect(201, request("POST", target + "/authentication/flows", {"alias": alias, "providerId": "basic-flow",
+        "topLevel": True, "builtIn": False}, authorization), "create genuine registration flow")
+    expect(201, request("POST", target + "/authentication/flows/" + alias + "/executions/flow", {
+        "alias": form, "type": "form-flow", "provider": "registration-page-form"}, authorization), "registration form flow")
+    for provider in ("armoney-registration-creation", "registration-password-action"):
+        expect(201, request("POST", target + "/authentication/flows/" + form + "/executions/execution", {
+            "provider": provider}, authorization), "genuine registration leaf")
+    rows = expect(200, request("GET", target + "/authentication/flows/" + alias + "/executions", headers=authorization), "registration readback")
+    require(type(rows) is list and len(rows) == 3, "exact registration cardinality")
+    providers = {"registration-page-form": 10, "armoney-registration-creation": 20, "registration-password-action": 30}
+    require({x.get("providerId") for x in rows} == set(providers), "exact registration providers")
+    seen = set()
+    for row in rows:
+        identifier = row.get("id")
+        require(type(identifier) is str and str(uuid.UUID(identifier)) == identifier and identifier not in seen, "canonical execution")
+        seen.add(identifier)
+        row["requirement"] = "REQUIRED"
+        expect(204, request("PUT", target + "/authentication/flows/" + alias + "/executions", row, authorization), "require genuine registration execution")
+    # Creation MUST run before password persistence; use the same proven ordering API as the production fixture.
+    leaves = expect(200, request("GET", target + "/authentication/flows/" + form + "/executions", headers=authorization), "registration leaf readback")
+    require([x.get("providerId") for x in leaves] == ["armoney-registration-creation", "registration-password-action"], "creation then password")
+    expect(204, request("PUT", target, {"registrationFlow": alias}, authorization), "bind genuine registration")
+
+
+def canonical_user(users, authorization, phone):
+    listed = expect(200, request("GET", users + "?username=" + urllib.parse.quote(phone), headers=authorization), "synthetic user lookup")
+    require(type(listed) is list and len(listed) == 1 and listed[0].get("username") == phone, "unique canonical synthetic user")
+    identifier = listed[0].get("id")
+    require(type(identifier) is str and str(uuid.UUID(identifier)) == identifier, "canonical persisted user")
+    return identifier
+
+
+def unmarked_user(phone, email, password):
+    # Complete stock user-profile data; this never creates a registration marker.
+    return {"username": phone, "email": email, "firstName": "Synthetic", "lastName": "Observer", "enabled": True,
+            "emailVerified": False, "requiredActions": ["armoney-verify-email-code"],
+            "credentials": [{"type": "password", "value": password, "temporary": False}]}
+
+
+def denied_callback_diagnostic(url, state, issuer):
+    facts = {"reason": "SYNTAX", "target_matches": False, "duplicate_keys": False,
+             "error_description_present": False, "session_state_present": False, "access_denied": False,
+             "state_matches": False, "issuer_matches": False, "code_or_token_present": False, "other_key_count": 0}
+    try:
+        if type(url) is not str or len(url) > 8192 or not all(32 < ord(c) < 127 for c in url): return facts
+        parsed = urllib.parse.urlsplit(url)
+        facts["target_matches"] = parsed.scheme == "http" and parsed.netloc == "127.0.0.1:18766" and parsed.path == "/observer-callback" and not parsed.fragment
+        if re.search(r"%(?![0-9A-Fa-f]{2})", parsed.query): return facts
+        pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True, max_num_fields=16, encoding="utf-8", errors="strict")
+        values = dict(pairs)
+        facts.update(duplicate_keys=len(values) != len(pairs), error_description_present="error_description" in values,
+            session_state_present="session_state" in values, access_denied=values.get("error") == "access_denied",
+            state_matches=type(state) is str and type(values.get("state")) is str and hmac.compare_digest(values["state"], state),
+            issuer_matches="iss" not in values or values["iss"] == issuer,
+            code_or_token_present=bool(set(values) & {"code", "access_token", "id_token", "refresh_token"}),
+            other_key_count=min(16, len(set(values) - {"error", "state", "iss", "error_description", "session_state", "code", "access_token", "id_token", "refresh_token"})))
+        facts["reason"] = ("TARGET" if not facts["target_matches"] else "DUPLICATE" if facts["duplicate_keys"] else
+            "FIELDS" if set(values) not in ({"error", "state"}, {"error", "state", "iss"}) else
+            "ERROR" if not facts["access_denied"] else "STATE" if not facts["state_matches"] else
+            "ISSUER" if not facts["issuer_matches"] else "BOUND_DENIAL")
+    except Exception:
+        facts["reason"] = "SYNTAX"
+    return facts
+
+
+def negative_dom_diagnostic(page):
+    selectors = {"login_form": "#kc-form-login", "registration_form": "#kc-register-form,#kc-form-register",
+        "required_action_form": 'form[action*="/login-actions/required-action"]', "consent_form": "#kc-oauth",
+        "error_page": "#kc-error-message", "input_error": "#input-error", "email_error": "#input-error-email",
+        "username_error": "#input-error-username", "password_error": "#input-error-password",
+        "alert_error": ".alert-error,.alert-danger", "feedback_error": ".kc-feedback-text",
+        "login_submit": "#kc-login", "registration_submit": "#kc-register", "verification_send": 'button[name="operation"][value="send"]'}
+    facts = {key: 0 for key in selectors}
+    facts.update(origin="OTHER", path="OTHER", scheme="OTHER", browser_page="OTHER", inspection_failed=False)
+    try:
+        parsed = urllib.parse.urlsplit(page.url)
+        facts["scheme"] = {"http": "HTTP", "https": "HTTPS", "about": "ABOUT", "chrome-error": "CHROME_ERROR", "chrome": "CHROME", "data": "DATA"}.get(parsed.scheme, "OTHER")
+        facts["browser_page"] = ("ABOUT_BLANK" if page.url == "about:blank" else
+            "CHROME_ERROR" if parsed.scheme == "chrome-error" else "NETWORK" if parsed.scheme in {"http", "https"} else "OTHER")
+        origin = parsed.scheme + "://" + parsed.netloc
+        facts["origin"] = {"http://sso-a:8080": "NODE_A", "http://sso-b:8080": "NODE_B", "http://127.0.0.1:18766": "CALLBACK"}.get(origin, "OTHER")
+        facts["path"] = {"/realms/armoney/protocol/openid-connect/auth": "AUTHORIZATION",
+            "/realms/armoney/login-actions/authenticate": "AUTHENTICATE", "/realms/armoney/login-actions/registration": "REGISTRATION",
+            "/realms/armoney/login-actions/required-action": "REQUIRED_ACTION", "/realms/armoney/login-actions/consent": "CONSENT",
+            "/observer-callback": "CALLBACK", "/": "ROOT"}.get(parsed.path, "OTHER")
+        for key, selector in selectors.items():
+            count = page.locator(selector).count()
+            require(type(count) is int and count >= 0, "DOM count")
+            facts[key] = min(count, 16)
+    except Exception:
+        facts["inspection_failed"] = True
+    return facts
+
+
+def negative_navigation_diagnostic(url):
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        origin = {"http://sso-a:8080": "NODE_A", "http://sso-b:8080": "NODE_B", "http://127.0.0.1:18766": "CALLBACK"}.get(parsed.scheme + "://" + parsed.netloc, "OTHER")
+        path = ("CALLBACK" if parsed.path == "/observer-callback" else "AUTHORIZATION" if parsed.path == "/realms/armoney/protocol/openid-connect/auth"
+                else "AUTHENTICATE" if parsed.path == "/realms/armoney/login-actions/authenticate" else "OTHER")
+        return {"origin": origin, "path": path}
+    except Exception:
+        return {"origin": "OTHER", "path": "OTHER"}
+
+
+def negative_network_failure(value):
+    codes = {"ERR_ABORTED", "ERR_FAILED", "ERR_CONNECTION_REFUSED", "ERR_NAME_NOT_RESOLVED", "ERR_BLOCKED_BY_CLIENT",
+        "ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS", "ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS", "ERR_BLOCKED_BY_RESPONSE",
+        "ERR_UNSAFE_REDIRECT", "ERR_INVALID_URL", "ERR_ADDRESS_UNREACHABLE", "ERR_CONNECTION_RESET"}
+    if type(value) is str:
+        for code in codes:
+            if value == "net::" + code or value == code: return code
+    return "OTHER"
+
+
+def denied_callback_label(url, state, issuer):
+    """Closed private metadata only; never retain or print callback inputs."""
+    try:
+        require(type(url) is str and len(url) <= 8192 and all(32 < ord(c) < 127 for c in url)
+                and type(state) is str and state, "denial callback")
+        parsed = urllib.parse.urlsplit(url)
+        require(parsed.scheme == "http" and parsed.netloc == "127.0.0.1:18766"
+                and parsed.path == "/observer-callback" and not parsed.fragment
+                and not re.search(r"%(?![0-9A-Fa-f]{2})", parsed.query), "denial callback target")
+        pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True, max_num_fields=4, encoding="utf-8", errors="strict")
+        values = dict(pairs)
+        require(len(values) == len(pairs) and set(values) in ({"error", "state"}, {"error", "state", "iss"}), "denial callback fields")
+        require(values["error"] == "access_denied" and hmac.compare_digest(values["state"], state)
+                and ("iss" not in values or values["iss"] == issuer), "bound denial callback")
+        return "BOUND_DENIAL"
+    except Exception:
+        return "INVALID"
+
+
+class ObserverCallbackListener:
+    """Actual container-loopback callback; never exposed on a host/network interface."""
+    def __init__(self, labels, expectation, issuer):
+        self.labels, self.expectation, self.issuer = labels, expectation, issuer
+        self.server = None; self.thread = None
+
+    def record(self, path):
+        url = "http://127.0.0.1:18766" + path if type(path) is str and path.startswith("/") and len(path) <= 8192 else ""
+        label = denied_callback_label(url, self.expectation["state"], self.issuer)
+        if len(self.labels) < 16: self.labels.append(label)
+        else: self.labels[-1] = "INVALID"
+        print("NEGATIVE_CALLBACK: OBSERVER69 " + json.dumps(denied_callback_diagnostic(url, self.expectation["state"], self.issuer), sort_keys=True, separators=(",", ":")), flush=True)
+        return label
+
+    def start(self):
+        owner = self
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                label = owner.record(self.path)
+                body = b"<!doctype html><html><body>Authorization denied.</body></html>"
+                self.send_response(200 if label == "BOUND_DENIAL" else 400)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "close")
+                self.end_headers(); self.wfile.write(body); self.close_connection = True
+            def do_POST(self):
+                owner.record(""); self.send_error(405)
+            def log_message(self, *args): pass
+            def log_error(self, *args): pass
+            def send_error(self, code, message=None, explain=None):
+                # Never reflect request path, method, parser messages or payloads.
+                body = b"Callback rejected."
+                self.send_response(code); self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(body))); self.send_header("Connection", "close")
+                self.end_headers(); self.wfile.write(body); self.close_connection = True
+        class Server(http.server.HTTPServer):
+            allow_reuse_address = False
+            def __init__(self):
+                self.requests = {}; self.lock = threading.Lock()
+                super().__init__(("127.0.0.1", 18766), Handler)
+            def get_request(self):
+                connection, address = super().get_request()
+                connection.settimeout(2)
+                def terminate():
+                    try: connection.shutdown(socket.SHUT_RDWR)
+                    except OSError: pass
+                    connection.close()
+                timer = threading.Timer(2, terminate); timer.daemon = True
+                with self.lock: self.requests[connection] = timer
+                timer.start()
+                return connection, address
+            def close_request(self, connection):
+                with self.lock: timer = self.requests.pop(connection, None)
+                if timer is not None: timer.cancel(); timer.join(timeout=1)
+                super().close_request(connection)
+            def handle_error(self, request, client_address): owner.record("")
+        self.server = Server()
+        self.thread = threading.Thread(target=lambda: self.server.serve_forever(poll_interval=.1), daemon=True)
+        self.thread.start()
+
+    def close(self):
+        if self.server is None: return
+        self.server.shutdown(); self.server.server_close()
+        self.thread.join(timeout=4)
+        require(not self.thread.is_alive(), "callback listener reaped")
+        self.server = None
 
 
 def observer(node, flow, key=None, diagnostic=None):
@@ -451,6 +660,7 @@ def acceptance():
     password = secrets.token_urlsafe(24)
     email = "observer-" + uuid.uuid4().hex + "@example.invalid"
     identifier = None
+    callback_listener = None
     try:
         provision_client_and_action(admin, authorization)
         for node in (a, b):
@@ -458,24 +668,78 @@ def acceptance():
                                "new realm visible on direct node")
             require(discovery["issuer"] == issuer, "both nodes expose common fixed issuer")
         phase("USER_SETUP")
-        expect(201, request("POST", users, {"username": phone, "email": email, "enabled": True,
-                   "emailVerified": False, "requiredActions": ["armoney-verify-email-code"],
-                   "credentials": [{"type": "password", "value": password, "temporary": False}]}, authorization), "synthetic user")
-        listed = expect(200, request("GET", users + "?username=" + urllib.parse.quote(phone), headers=authorization), "synthetic user lookup")
-        require(len(listed) == 1, "unique synthetic user")
-        identifier = listed[0]["id"]
+        expect(201, request("POST", users, unmarked_user(phone, email, password), authorization), "synthetic user")
+        identifier = canonical_user(users, authorization, phone)
 
         phase("BROWSER_RENDER")
         with sync_playwright() as p:
             browser = p.chromium.launch()
             context = browser.new_context()  # No ignore_https_errors or certificate bypass.
             callback_count = []
-            context.route("http://127.0.0.1:18766/observer-callback**",
-                          lambda route: (callback_count.append(True), route.abort()))
+            callback_expectation = {"state": None}
+            callback_listener = ObserverCallbackListener(callback_count, callback_expectation, issuer)
+            callback_listener.start()
+
+            # An admin-created persistent action is intentionally not registration authority.
+            denied = context.new_page()
+            navigation_events = {"count": 0}
+            def failed_navigation(request):
+                if request.is_navigation_request() and navigation_events["count"] < 16:
+                    navigation_events["count"] += 1
+                    facts = negative_navigation_diagnostic(request.url)
+                    facts["failure"] = negative_network_failure(request.failure)
+                    print("NEGATIVE_REQUEST_FAILED: OBSERVER69 " + json.dumps(facts, sort_keys=True, separators=(",", ":")), flush=True)
+            def navigation_response(response):
+                if response.request.is_navigation_request() and navigation_events["count"] < 16:
+                    navigation_events["count"] += 1
+                    facts = negative_navigation_diagnostic(response.url)
+                    facts["status"] = response.status if type(response.status) is int and 100 <= response.status <= 599 else 0
+                    print("NEGATIVE_RESPONSE: OBSERVER69 " + json.dumps(facts, sort_keys=True, separators=(",", ":")), flush=True)
+            denied.on("requestfailed", failed_navigation)
+            denied.on("response", navigation_response)
+            before_denied = capture()["count"]
+            denial_verifier = secrets.token_urlsafe(48)
+            denial_challenge = base64.urlsafe_b64encode(hashlib.sha256(denial_verifier.encode()).digest()).rstrip(b"=").decode()
+            denial_state = secrets.token_urlsafe(24)
+            callback_expectation["state"] = denial_state
+            denial_query = urllib.parse.urlencode({"client_id": "armoney-ios", "response_type": "code", "scope": "openid",
+                "redirect_uri": "http://127.0.0.1:18766/observer-callback", "state": denial_state,
+                "nonce": secrets.token_urlsafe(24), "code_challenge": denial_challenge, "code_challenge_method": "S256", "prompt": "login"})
+            phase("NEGATIVE_AUTH_PAGE")
+            denied.goto(a + "/realms/armoney/protocol/openid-connect/auth?" + denial_query)
+            denied.locator("#username").fill(phone); denied.locator("#password").fill(password)
+            phase("NEGATIVE_FORM_SUBMIT")
+            denied.locator("#kc-login").click(no_wait_after=True)
+            phase("NEGATIVE_DENIAL_RESULT")
+            denial_deadline = time.monotonic() + 12
+            while not callback_count and denied.locator("#kc-error-message").count() == 0:
+                if time.monotonic() >= denial_deadline:
+                    print('NEGATIVE_RESULT: OBSERVER69 {"callback_present":false,"error_page_present":false,"one_bound_denial":false}', flush=True)
+                    print("NEGATIVE_DOM: OBSERVER69 " + json.dumps(negative_dom_diagnostic(denied), sort_keys=True, separators=(",", ":")), flush=True)
+                require(time.monotonic() < denial_deadline, "bounded unmarked denial")
+                denied.wait_for_timeout(50)
+            print("NEGATIVE_RESULT: OBSERVER69 " + json.dumps({"callback_present": bool(callback_count),
+                "error_page_present": denied.locator("#kc-error-message").count() == 1,
+                "one_bound_denial": callback_count == ["BOUND_DENIAL"]}, sort_keys=True, separators=(",", ":")), flush=True)
+            print("NEGATIVE_DOM: OBSERVER69 " + json.dumps(negative_dom_diagnostic(denied), sort_keys=True, separators=(",", ":")), flush=True)
+            require(callback_count == ["BOUND_DENIAL"] or not callback_count and denied.locator("#kc-error-message").count() == 1,
+                    "only actual error page or bound access denied callback")
+            phase("NEGATIVE_NO_SEND")
+            require(denied.locator('button[name="operation"][value="send"]').count() == 0, "unmarked persistent action has no Send")
+            phase("NEGATIVE_NO_RPC")
+            require(capture()["count"] == before_denied, "unmarked persistent action denied without RPC")
+            denied.close()
+            callback_count.clear(); callback_expectation["state"] = None
+            expect(204, request("DELETE", users + "/" + identifier, headers=authorization), "delete unmarked synthetic user")
+            identifier = None
 
             def login():
+                nonlocal phone, email, password, identifier
                 phase("BROWSER_RENDER")
                 before = capture()["count"]
+                phone = "+97150" + str(secrets.randbelow(10**7)).zfill(7)
+                email = "observer-" + uuid.uuid4().hex + "@example.invalid"
+                password = secrets.token_urlsafe(24)
                 page = context.new_page()
                 verifier = secrets.token_urlsafe(48)
                 challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
@@ -483,11 +747,16 @@ def acceptance():
                           "redirect_uri": "http://127.0.0.1:18766/observer-callback", "scope": "openid",
                           "state": secrets.token_urlsafe(24), "nonce": secrets.token_urlsafe(24),
                           "code_challenge": challenge, "code_challenge_method": "S256", "prompt": "login"})
-                page.goto(a + "/realms/armoney/protocol/openid-connect/auth?" + query)
+                page.goto(a + "/realms/armoney/protocol/openid-connect/registrations?" + query)
                 page.locator("#username").fill(phone)
+                page.locator("#email").fill(email)
+                for selector, value in (("#firstName", "Synthetic"), ("#lastName", "Observer")):
+                    if page.locator(selector).count(): page.locator(selector).fill(value)
                 page.locator("#password").fill(password)
-                page.locator("#kc-login").click()
+                page.locator("#password-confirm").fill(password)
+                page.locator('input[type="submit"],button[type="submit"]').click()
                 page.locator('button[name="operation"][value="send"]').wait_for()
+                identifier = canonical_user(users, authorization, phone)
                 require(capture()["count"] == before and not callback_count, "initial render zero RPC/callback")
                 phase("SEND_RPC")
                 finish_browser_submission(page, a)
@@ -548,6 +817,7 @@ def acceptance():
             remember_failure()
         phase("CLEANUP")
         try:
+            if callback_listener is not None: callback_listener.close()
             if identifier is not None:
                 expect(204, request("DELETE", users + "/" + identifier, headers=authorization), "synthetic user cleanup")
         finally:

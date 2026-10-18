@@ -10,9 +10,11 @@ The integration implements registration completion, durable code-intent
 confirmation and strict managed-session admission behind default-off configuration.
 The staged consumer described in [ADR 0042](docs/adr/0042-staged-proof-eligibility-consumption.md)
 rereads current eligibility evidence after persistence work. Production provider
-packaging and fresh-realm configuration have isolated evidence; complete browser,
-migration and native acceptance and exact-head CI remain pending. Unsupported
-migration contact mutations still fail closed. Existing stored sessions retain
+packaging and fresh-realm configuration have isolated evidence. Twelve scoped
+production registration, native-code, Gateway, negative-grant, concurrent
+browser callback and response-loss recovery cases passed. Complete migration and
+recovery acceptance and exact-head CI remain pending. Unsupported migration
+contact mutations still fail closed. Existing stored sessions retain
 their original expiry and revocation behavior until successful atomic FINAL.
 
 Registration required-action routing suppresses repeated email scheduling only
@@ -24,6 +26,12 @@ Managed registration admission uses Auth-owned current contact receipts; migrati
 retains its provider verification requirement. The source-specific policy and
 explicit provider-claim format boundary are implemented in the integration source in
 [ADR 0052](docs/adr/0052-registration-email-admission-authority.md).
+
+Global pair classification, native banking confirmation and migration observation
+use separate validated projections. The dedicated account client remains legacy
+and cannot produce banking confirmation. Configuration evidence and remaining
+startup limits are recorded in
+[ADR 0054](docs/adr/0054-managed-and-migration-pair-projections.md).
 
 ## Navigation
 
@@ -1740,7 +1748,9 @@ are immutable opaque Auth attestations, distinct from a verified-contact generat
 Retained publication decisions and scoped uncertainty recovery have component
 acceptance evidence. Atomic classification/session revocation and source-aware
 native consumers have source implementations, with positive readiness disabled
-pending integrated acceptance. Browser OTP continuation is still being connected.
+pending complete migration acceptance. The isolated registration OTP continuation
+and subsequent native Gateway admission have scoped production-image evidence;
+this does not establish existing-owner migration or persistent activation.
 The accepted live-contact design adds a fresh User observation and durable Auth
 classification before a relevant User mutation. The current integration denies
 unsupported new migration contact commands without a write; it does not add a
@@ -1751,3 +1761,46 @@ Existing owners must retain UUIDs, wallets, balances and history; old sessions m
 be revoked only after successful migration. Component test results do not establish
 complete browser, deployment or feature-activation readiness. Full acceptance
 remains required.
+
+## Disposable response-loss acceptance
+
+The separate `compose.production-provider-recovery-acceptance.yaml` has isolated
+production-image response-loss evidence; it is not an activated deployment. It keeps
+the production provider and actual Auth Main, adding a fixed-destination peer on
+the existing private SSO transport name. Gateway traffic bypasses this peer.
+The peer can discard a complete actual STAGE or CONFIRM response once; it cannot
+fabricate a successful Auth authority response, replay authority or fault enrollment/KEY calls. Private selected
+identifiers support read-only commit checks and never appear in public receipts.
+
+Auth's pre-token HTTP observer and the provider's enrollment observer emit only
+fixed diagnostic categories. They contain no contacts, session identifiers,
+credentials or response bodies. An HTTP-success category does not establish
+successful decoding, valid evidence or banking authority. These diagnostics do
+not resolve the pending two-node enrollment acceptance gate by themselves.
+
+```mermaid
+flowchart LR
+  Root[Owned disposable test runner] -->|Independent one-shot control| Peer[Fixture peer: auth-service]
+  SSO[Production Keycloak provider] -->|Original authenticated POSTs| Peer
+  Peer -->|Unchanged request and real response| Auth[Actual Auth Main: auth-backend]
+  Gateway[Actual Gateway] --> Auth
+  Auth --> DB[(Disposable Auth database)]
+  Root --> Evidence[Read-only evidence adapter]
+  Evidence -->|Bounded SELECT only| DB
+```
+
+Concurrent callbacks have scoped production-image evidence: two independent
+browser flows each produce one confirmation and one banking session; crossed
+PKCE redemption is rejected without side effects. This does not prove node
+replacement or full migration. Both STAGE and CONFIRM response-loss cases passed with actual Auth commit and
+read-only evidence of unchanged original records, no banking writes from the
+failed attempt, and one fresh confirmation linked to its banking session.
+Separate master-realm and disabled-provider stock browser cases also passed.
+Independent read-only snapshots retained identical rows across eleven Auth tables;
+STAGE/CONFIRM transport counters were unchanged, and the original provider profile
+was restored. Master routing exists only inside the unpublished disposable edge.
+These before/after snapshots do not prove the absence of transient writes later
+undone. Node replacement and full pre-FINAL migration callbacks remain pending.
+Recovery requires a genuine fresh login/code after an uncertain failed attempt;
+the original provider deadline and Auth replay exclusion remain unchanged.
+See [ADR 0053](docs/adr/0053-disposable-provider-response-loss-evidence.md).

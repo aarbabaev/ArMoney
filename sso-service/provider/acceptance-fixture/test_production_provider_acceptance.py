@@ -9,6 +9,7 @@ import base64
 import hashlib
 from html.parser import HTMLParser
 import http.cookiejar
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -29,9 +30,10 @@ CLAIMS = {'armoney_login_event_id', 'armoney_login_kind', 'armoney_login_notice_
 OPERATIONS = {'capabilities', 'read_delivery', 'outcomes', 'remove_policy', 'restore_policy'}
 CASES = ('registration_no_code', 'native_confirmation', 'gateway_admission', 'refresh_no_proof',
          'offline_refresh_no_proof', 'token_exchange_no_proof',
-         'migration_managed_no_proof', 'migration_account_dedicated_no_proof', 'policy_removed_after_issue_denied')
+         'migration_managed_no_proof', 'migration_account_dedicated_no_proof', 'policy_removed_after_issue_denied',
+         'concurrent_same_client_callbacks')
 UNIMPLEMENTED = ('stage_response_loss', 'confirmation_response_loss', 'node_replacement',
-                 'master_stock', 'disabled_stock', 'concurrent_same_client_callbacks',
+                 'master_stock', 'disabled_stock',
                  'full_migration_callbacks_pre_final')
 LIMIT = 131072
 
@@ -604,9 +606,35 @@ def execute(wire, completed=None):
     after_account = outcomes(wire)
     assert_confirmation_delta(before_account['confirmed_event_ids'], after_account['confirmed_event_ids'])
     completed.append('migration_account_dedicated_no_proof')
-    policy_removed(wire, completed)
+    final_cases(wire, completed)
     require(tuple(completed) == CASES, 'case_inventory')
     return receipt('scoped_passed', 'implemented_cases_passed', completed)
+
+
+def load_concurrency():
+    # Fixed sibling only. Importing defines helpers; it never calls either CLI.
+    spec = importlib.util.spec_from_file_location('production_provider_concurrency_case',
+        Path(__file__).with_name('test_production_provider_concurrency.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def final_cases(wire, completed):
+    # policy_removed returns only after its finally block confirms restoration.
+    policy_removed(wire, completed)
+    require(tuple(completed) == CASES[:-1], 'case_inventory')
+    try:
+        result = load_concurrency().execute(wire.data, deadline=wire.deadline)
+        expected = {'case': 'concurrent_same_client_callbacks', 'status': 'scoped_passed',
+            'positive_confirmations': 2, 'positive_bank_sessions': 2,
+            'negative_no_side_effects': True, 'whole_migration_acceptance': False}
+        require(type(result) is dict and set(result) == set(expected)
+                and all(type(result[key]) is type(value) and result[key] == value
+                        for key, value in expected.items()), 'concurrent_case')
+    except Exception:
+        raise Rejected('concurrent_case') from None
+    completed.append('concurrent_same_client_callbacks')
 
 
 def receipt(status, check, completed=None):

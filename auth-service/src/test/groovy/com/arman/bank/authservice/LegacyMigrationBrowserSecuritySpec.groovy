@@ -171,6 +171,73 @@ class LegacyMigrationBrowserSecuritySpec extends Specification {
                   'state=' + TOKEN + '&code=', 'state=' + TOKEN + '&code=%0A',
                   'state=' + TOKEN + '&code=x&%63ode=y']
     }
+    def 'callback accepts optional Keycloak metadata without forwarding it as proof'() {
+        when:
+        def parsed = LegacyMigrationBrowserRoutes.callback('state=' + TOKEN + '&code=original' + extra, URI.create(ENDPOINT))
+        then:
+        parsed.state() == TOKEN
+        parsed.code() == 'original'
+        !parsed.toString().contains('original')
+        where:
+        extra << ['', '&session_state=opaque-session', '&iss=https%3A%2F%2Fsso.example.test%2Fsso%2Frealms%2Farmoney',
+            '&session_state=opaque-session&iss=https%3A%2F%2Fsso.example.test%2Fsso%2Frealms%2Farmoney']
+    }
+    def 'callback metadata rejects ambiguity foreign issuer malformed values and fragments'() {
+        when:
+        LegacyMigrationBrowserRoutes.callback('state=' + TOKEN + '&code=original' + extra, URI.create(ENDPOINT))
+        then: thrown(IllegalArgumentException)
+        where:
+        extra << ['&iss=https://evil.example.test/sso/realms/armoney', '&iss=', '&session_state=',
+            '&session_state=x&%73ession_state=y', '&iss=x&%69ss=x', '&session_state=%C0%AF',
+            '&session_state=%0A', '&session_state=%GG', '&session_state=' + ('x' * 513),
+            '&session_state=x+y', '&error=access_denied', '#fragment', '&unknown=x',
+            '&iss=https://sso.example.test/sso/realms/armoney/', '&session_state=x&session_state=y']
+    }
+    def 'callback issuer cannot select another trusted purpose issuer'() {
+        when:
+        LegacyMigrationBrowserRoutes.callback('state=' + TOKEN + '&code=original&iss=https://sso.example.test/sso/realms/armoney',
+            URI.create('https://other.example.test/sso/realms/armoney/protocol/openid-connect/auth'))
+        then: thrown(IllegalArgumentException)
+    }
+    def 'both callbacks reject malformed metadata before producer and preserve cookies'() {
+        given:
+        def service = Mock(LegacyMigrationBrowserService)
+        def exchange = request(path, 'GET', ['Cookie':[LegacyMigrationBrowserRoutes.ATTEMPT_COOKIE + '=' + TOKEN + '; ' +
+            LegacyMigrationBrowserRoutes.ACCOUNT_COOKIE + '=' + COOKIE]], 'state=' + TOKEN + '&code=original&' + metadata)
+        when: routes(service).handle(exchange.context)
+        then:
+        0 * service._
+        exchange.seen.status == 400
+        exchange.seen.cookies.empty
+        !exchange.seen.body.contains('original')
+        where:
+        [path, metadata] << [
+            [LegacyMigrationBrowserConfiguration.LEGACY_CALLBACK, LegacyMigrationBrowserConfiguration.MANAGED_CALLBACK],
+            ['iss=https://evil.example.test', 'session_state=x&%73ession_state=y', 'session_state=%ED%A0%80']
+        ].combinations()
+    }
+    def 'both callbacks accept provider metadata only against their server-selected endpoint'() {
+        given:
+        def service = Mock(LegacyMigrationBrowserService)
+        def exchange = request(path, 'GET', ['Cookie':[LegacyMigrationBrowserRoutes.ATTEMPT_COOKIE + '=' + TOKEN + '; ' +
+            LegacyMigrationBrowserRoutes.ACCOUNT_COOKIE + '=' + COOKIE]], 'state=' + TOKEN +
+            '&code=original&session_state=opaque&iss=https%3A%2F%2Fsso.example.test%2Fsso%2Frealms%2Farmoney')
+        when: routes(service).handle(exchange.context)
+        then:
+        (legacy ? 1 : 0) * service.accountOidcCallback({ it.providerCode() == 'original' && it.returnedState() == TOKEN && it.initiatingBrowserCookie() == TOKEN }) >> {
+            throw new LegacyMigrationBrowserService.Failure(LegacyMigrationBrowserService.Kind.UNAUTHORIZED,false)
+        }
+        (legacy ? 0 : 1) * service.managedVerification({ it.providerCode() == 'original' && it.returnedState() == TOKEN && it.initiatingBrowserCookie() == TOKEN }, COOKIE) >> {
+            throw new LegacyMigrationBrowserService.Failure(LegacyMigrationBrowserService.Kind.UNAUTHORIZED,false)
+        }
+        0 * service._
+        exchange.seen.status == 401
+        exchange.seen.cookies.empty
+        where:
+        path | legacy
+        LegacyMigrationBrowserConfiguration.LEGACY_CALLBACK | true
+        LegacyMigrationBrowserConfiguration.MANAGED_CALLBACK | false
+    }
     def 'duplicate or absent cookies and noncanonical attempt values deny before any authority call'() {
         when: LegacyMigrationBrowserRoutes.cookie(headers, LegacyMigrationBrowserRoutes.ATTEMPT_COOKIE)
         then: thrown(IllegalArgumentException)

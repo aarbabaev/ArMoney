@@ -43,6 +43,29 @@ class LegacyMigrationConfigurationSpec extends Specification {
         !env.containsKey('AUTH_SSO_CODE_INTENT_CONFIRMATION_ENABLED')
         !env.containsKey('LOGIN_NOTIFICATIONS_ENABLED')
     }
+    def 'global three native pairs project to exactly configured migration account and target observations'(){
+        given:def env=com.arman.bank.authservice.CodeConfirmationConfigurationSpec.coenabledEnvironment()
+        when:def selected=LegacyMigrationConfiguration.from(env,[:])
+        then:
+        selected.observation.scopes().managedClients()==['armoney-android'] as Set
+        selected.observation.scopes().legacy().collect{it.clientId()}==['armoney-migration-account']
+        selected.observation.allowedPairs().size()==2
+        selected.observation.scopes().classify(env.SSO_ISSUER,'armoney-web')==CodeIntentPairScopes.Classification.UNKNOWN
+        selected.observation.scopes().classify(env.SSO_ISSUER,'armoney-ios')==CodeIntentPairScopes.Classification.UNKNOWN
+    }
+    def 'migration projection cannot conceal invalid global classification #change'(){
+        given:def env=com.arman.bank.authservice.CodeConfirmationConfigurationSpec.coenabledEnvironment()+change
+        when:LegacyMigrationConfiguration.from(env,[:])
+        then:thrown(IllegalArgumentException)
+        where:change << [
+            [ARMONEY_SSO_LEGACY_PAIRS:'[]'],
+            [ARMONEY_SSO_MANAGED_PAIRS:'[]'],
+            [AUTH_MIGRATION_MANAGED_CLIENT_ID:'armoney-migration-account'],
+            [AUTH_MIGRATION_LEGACY_CLIENT_ID:'unknown'],
+            [ARMONEY_SSO_LEGACY_PAIRS:'[{"issuer":"https://wrong.example/sso/realms/armoney","client_id":"armoney-migration-account"}]']
+        ]
+    }
+
     def 'missing selected field fails generically without attaching secret-bearing cause'() {
         given:
         def env=environment();env.remove(name)

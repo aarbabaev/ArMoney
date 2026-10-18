@@ -64,6 +64,15 @@ A new migration-backed contact mutation without supported original command custo
 
 The browser resource graph additionally requires `AUTH_TO_USER_MIGRATION_PUBLICATION_KEY` and `USER_TO_AUTH_MIGRATION_DECISION_KEY` as separate purpose credentials. Enabling source flags does not itself establish external browser, provider, Mailtrap inbox or Android acceptance.
 
+Both OIDC callbacks require the original `state` and `code`. Standard optional
+`iss` must exactly match the issuer derived from the server-selected account or
+managed authorization endpoint. Optional `session_state` is bounded opaque
+metadata and is discarded; it cannot replace a session identifier or establish
+authority. Duplicate decoded fields, unknown fields, malformed encoding, control
+characters and mixed error/code responses are rejected. Original attempt cookies,
+PKCE and nonce checks still apply. Source support for these callback fields does
+not establish successful end-to-end migration acceptance.
+
 ### Opt-in edge ingress under verification
 
 The default edge configurations continue to deny `/migration`. The separate
