@@ -11,6 +11,15 @@ new login rejection for otherwise valid unmanaged legacy identities in default-o
 compatibility mode. Enabled managed cutover separately denies legacy new banking
 admission; optional metadata never bypasses that policy.
 
+The current integration additionally retains an explicit format bit for the
+provider's `email_verified` value: only a JSON boolean is known format. Legacy
+normalization remains unchanged. Managed admission requires known format and
+applies the provider value according to Auth's database-selected authority source;
+the strict registration source still requires its current Auth-owned receipts,
+grant and C2 proof. This value is not contact-verification authority by itself.
+See [ADR 0052](adr/0052-registration-email-admission-authority.md); independent
+acceptance remains pending.
+
 Session identifiers are bounded text without whitespace, controls, formatting
 characters or lone surrogates. Valid supplementary Unicode pairs remain allowed.
 Issued-at values require nonnegative integral, representable timestamps no later

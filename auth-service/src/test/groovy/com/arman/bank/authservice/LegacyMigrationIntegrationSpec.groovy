@@ -130,7 +130,7 @@ class LegacyMigrationIntegrationSpec extends Specification {
     }
 
     def 'existing SSO-only owner keeps null local credentials and exact association counter without fabricated migration proof'(){
-        given:def session=auth.sso('synthetic.token',{token->new SsoTokens.Principal('https://legacy.example/realm','sso-only-subject','+971521234567')} as SsoTokens)
+        given:def session=auth.sso('synthetic.token',{token->new SsoTokens.Principal('https://legacy.example/realm','sso-only-subject','+971521234567', null, false, false)} as SsoTokens)
         def ssoOwner=auth.me('Bearer '+session.accessToken()).id()
         when:def saved=database.transaction{sql->sql.fetchOne('select email,password_hash from identities where id=?',ssoOwner).intoMap()}
         then:saved.email==null;saved.password_hash==null

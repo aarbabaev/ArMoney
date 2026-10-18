@@ -1,6 +1,6 @@
 package com.arman.bank.authservice.infrastructure
 
-import com.arman.bank.authservice.application.AuthFailure
+import com.arman.bank.authservice.application.*
 import com.arman.bank.authservice.domain.LegacyMigrationFinalization as F
 import com.arman.bank.authservice.domain.LoginProof
 import com.arman.bank.authservice.domain.CodeConfirmation
@@ -201,6 +201,42 @@ class MigrationSourcePromotionIntegrationSpec extends Specification {
             assert complete
         }
     }
+    def 'genuine FINAL migration still rejects false provider email flag before any managed write'(){
+        given:
+        def context=prepared(true,true);promote(context)
+        def managed=fixture.fixture;def binding=nativeBinding(context)
+        def policy=LoginProof.Policy.defaults([binding.issuer()] as Set,[binding.clientId()] as Set,['native-v1'] as Set,[managed.ACTOR] as Set)
+        def staging=new PostgresCodeIntentStore(managed.database,policy,
+            new CodeIntentRetentionKeys('native-retention',['native-retention':Base64.encoder.encodeToString(([91]*32) as byte[])]),
+            new CodeIntentDetailCrypto('native-aead',['native-aead':Base64.encoder.encodeToString(([92]*32) as byte[])],[] as Set),managed.crypto,currentUser)
+        def proofs=new PostgresLoginProofStore(managed.database,policy,([93]*32) as byte[],
+            {sql->new PostgresBankingEligibilityStore(sql,managed.crypto)})
+        def confirmation=new PostgresCodeConfirmationStore(managed.database,staging,proofs,policy,managed.crypto,currentUser)
+        def now=Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
+        def input=new LoginProof.Write(UUID.randomUUID(),UUID.randomUUID().toString().replace('-','')*2,'native-v1',binding.issuer(),binding.subject(),binding.clientId(),binding.userSessionId(),
+            'synthetic-native-authentication',now,now.plusSeconds(120),LoginProof.Kind.INTERACTIVE,UUID.randomUUID(),now)
+        staging.cleanup();staging.stage(managed.ACTOR,input)
+        def confirmed=new CodeConfirmationService(confirmation,managed.observer).confirm(managed.ACTOR,new LoginProof.Resolve(input.codeDigest(),input.codeKeyId(),input.issuer(),input.subject(),input.clientId(),input.userSessionId()))
+        assert !confirmed.deniedCommitted()
+        assert confirmed.snapshot().kind()==LoginProof.Kind.INTERACTIVE
+        def pairs={issuer,client->issuer==binding.issuer()&&client==binding.clientId()} as ManagedBankingService.PairScope
+        def store=new PostgresManagedBankingStore(managed.database,new ManagedBankingKeys('native-bank',['native-bank':Base64.encoder.encodeToString(([94]*32) as byte[])]),pairs,managed.ACTOR,managed.crypto,currentUser)
+        store.cleanup()
+        def service=new ManagedBankingService(true,store,managed.observer,pairs)
+        def principal={boolean verified->new SsoTokens.Principal(binding.issuer(),binding.subject(),managed.PHONE,managed.EMAIL,verified,true,
+            new SsoTokens.TokenContext(SsoTokens.Metadata.present(binding.clientId()),SsoTokens.Metadata.present(binding.userSessionId()),SsoTokens.Metadata.present(input.issuedAt()),
+                SsoTokens.Metadata.present(input.expiresAt()),SsoTokens.Metadata.present(new SsoTokens.ProofClaims('interactive',input.eventId(),true))))}
+        when:service.exchange('migration.false.email.flag',principal(false))
+        then:thrown(LoginProof.Failure)
+        managed.count('managed_banking_operations')==0;managed.count('managed_banking_sessions')==0
+        managed.count('managed_banking_event_consumptions')==0;managed.count('managed_banking_completions')==0
+        when:def session=service.exchange('migration.true.email.flag',principal(true))
+        then:session.accessToken().size()==43
+        managed.count('managed_banking_sessions')==1;managed.count('managed_banking_event_consumptions')==1
+        when:def owner=service.validate('Bearer '+session.accessToken())
+        then:owner==context.original.identityId
+    }
+
     def 'passwordless SSO distinct credential and association generations pass native evidence and own suspension guard'(){
         given:
         def context=prepared(true,true)

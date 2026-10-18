@@ -26,10 +26,10 @@ public final class ManagedBankingService {
         var client=present(context.clientId());var sid=present(context.sessionId());
         var issued=present(context.issuedAt());var expires=present(context.expiresAt());var proof=present(context.proof());
         if(!pairs.managed(principal.issuer(),client)||!"interactive".equals(proof.kind())||proof.eventId()==null
-                ||!principal.emailVerified()||principal.email()==null||!AuthService.canonicalPhone(principal.phoneNumber())
+                ||!principal.emailVerificationClaimKnown()||principal.email()==null||!AuthService.canonicalPhone(principal.phoneNumber())
                 ||bearer==null||bearer.length()>8192||!bearer.matches("[A-Za-z0-9._~+/-]+=*")||!issued.isBefore(expires))deny();
         var token=new Token(new LoginProof.Binding(principal.issuer(),principal.subject(),client,sid),proof.eventId(),issued,expires,
-                principal.email(),principal.phoneNumber(),bearer);
+                principal.email(),principal.phoneNumber(),bearer,principal.emailVerified());
         byte[] bytes=new byte[32];random.nextBytes(bytes);
         String opaque=Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
         var result=store.inRequest(request->{

@@ -27,8 +27,8 @@ ACCOUNT_CLIENT = 'armoney-migration-account'
 CALLBACK = 'com.armoney.android:/oauth/callback'
 CLAIMS = {'armoney_login_event_id', 'armoney_login_kind', 'armoney_login_notice_eligible'}
 OPERATIONS = {'capabilities', 'read_delivery', 'outcomes', 'remove_policy', 'restore_policy'}
-CASES = ('registration_no_code', 'native_confirmation', 'gateway_admission', 'offline_refresh_no_proof',
-         'refresh_no_proof', 'token_exchange_no_proof',
+CASES = ('registration_no_code', 'native_confirmation', 'gateway_admission', 'refresh_no_proof',
+         'offline_refresh_no_proof', 'token_exchange_no_proof',
          'migration_managed_no_proof', 'migration_account_dedicated_no_proof', 'policy_removed_after_issue_denied')
 UNIMPLEMENTED = ('stage_response_loss', 'confirmation_response_loss', 'node_replacement',
                  'master_stock', 'disabled_stock', 'concurrent_same_client_callbacks',
@@ -195,10 +195,30 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class ControlPacer:
+    """Respect the fixture's 2/second control budget without retrying any POST."""
+    def __init__(self, deadline, clock=time.monotonic, pause=time.sleep):
+        self.deadline, self.clock, self.pause = deadline, clock, pause
+        self.last = None
+
+    def before_post(self):
+        now = self.clock()
+        require(now < self.deadline, 'deadline')
+        due = now if self.last is None else self.last + .55
+        if now < due:
+            require(due < self.deadline, 'deadline')
+            self.pause(due - now)
+            now = self.clock()
+            require(now >= due, 'controller_pacing')
+        require(now < self.deadline, 'deadline')
+        self.last = now
+
+
 class Wire:
     def __init__(self, data):
         self.data = data
         self.deadline = time.monotonic() + 360
+        self.control_pacer = ControlPacer(self.deadline)
         self.context = ssl.create_default_context(cafile=data['ca_file'])
         self.cookies = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(),
@@ -232,6 +252,7 @@ class Wire:
 
     def control(self, operation, payload):
         require(operation in OPERATIONS, 'controller_operation')
+        self.control_pacer.before_post()
         status, _, raw = self.request(self.data['controller_origin'] + self.data['controller_paths'][operation],
             document=payload, headers={'X-ArMoney-Production-Acceptance-Key': self.data['controller_key']})
         require(status == 200, 'controller_status')
@@ -512,7 +533,9 @@ def execute(wire, completed=None):
             and authority.get('bank_session_count') == 0, 'registration_outcome')
     require(authority['confirmed_event_ids'] == [], 'registration_confirmation')
     completed.append('registration_no_code')
-    form, nonce = fresh_code(wire, offline=True)
+    # BANK_NATIVE positive requires a current persistent ONLINE session. Finish
+    # its admission before creating the separate offline-refresh test session.
+    form, nonce = fresh_code(wire)
     tokens = token_response(wire, form, nonce)
     require(type(tokens.get('refresh_token')) is str and
             not CLAIMS.intersection(inspect_jwt(tokens['refresh_token'])), 'initial_refresh_proof')
@@ -523,18 +546,23 @@ def execute(wire, completed=None):
     completed.append('native_confirmation')
     gateway(wire, tokens['access_token'], 200)
     completed.append('gateway_admission')
-    for case, initial in (('offline_refresh_no_proof', tokens), ('refresh_no_proof', None)):
+    for case, initial in (('refresh_no_proof', tokens), ('offline_refresh_no_proof', None)):
         if initial is None:
             previous = outcomes(wire)['confirmed_event_ids']
-            ordinary, ordinary_nonce = fresh_code(wire)
-            initial = token_response(wire, ordinary, ordinary_nonce)
-            ordinary_access = introspect(wire, initial['access_token'])
-            proof(ordinary_access, True)
-            assert_confirmation_delta(previous, outcomes(wire)['confirmed_event_ids'], ordinary_access['armoney_login_event_id'])
+            bank_sessions = session_count(wire)
+            offline_form, offline_nonce = fresh_code(wire, offline=True)
+            initial = token_response(wire, offline_form, offline_nonce)
+            offline_access = introspect(wire, initial['access_token'])
+            proof(offline_access, True)
+            assert_confirmation_delta(previous, outcomes(wire)['confirmed_event_ids'], offline_access['armoney_login_event_id'])
+            require(session_count(wire) == bank_sessions, 'offline_session_outcome')
         refresh = initial.get('refresh_token')
         require(type(refresh) is str, 'refresh_missing')
+        require(not CLAIMS.intersection(inspect_jwt(refresh)), 'initial_refresh_proof')
         if case == 'offline_refresh_no_proof':
             require(inspect_jwt(refresh).get('typ') == 'Offline', 'offline_token')
+        else:
+            require(inspect_jwt(refresh).get('typ') == 'Refresh', 'ordinary_refresh_token')
         before_refresh = outcomes(wire)['confirmed_event_ids']
         refreshed = token_response(wire, {'grant_type': 'refresh_token', 'client_id': CLIENT, 'refresh_token': refresh})
         no_proof(wire, refreshed)

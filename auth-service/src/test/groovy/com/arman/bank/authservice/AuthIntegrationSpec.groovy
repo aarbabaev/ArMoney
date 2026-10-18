@@ -28,7 +28,7 @@ class AuthIntegrationSpec extends Specification {
         database = new Database(postgres.jdbcUrl, postgres.username, postgres.password)
         clock = new TestClock(Instant.parse('2026-01-01T00:00:00Z'))
         service = new AuthService(new PostgresAuthStore(database), new Argon2Passwords(), clock, profiles)
-        def routes = new AuthRoutes(service, KEY, { token -> new SsoTokens.Principal('https://issuer.example/realm', token, '+971501234567') } as SsoTokens)
+        def routes = new AuthRoutes(service, KEY, { token -> new SsoTokens.Principal('https://issuer.example/realm', token, '+971501234567', null, false, false) } as SsoTokens)
         runtime = ServiceRuntime.start('auth-service', 0, database, routes::configure)
         client = HttpClient.newHttpClient()
     }
@@ -127,7 +127,7 @@ class AuthIntegrationSpec extends Specification {
         service.register('local@example.com', PASSWORD, '+971521234567')
         def store = new PostgresAuthStore(database)
         def local = store.findByEmail('local@example.com').orElseThrow()
-        def original = new SsoTokens.Principal('https://issuer.example/realm', 'email-subject', '+971501234567', 'local@example.com', true)
+        def original = new SsoTokens.Principal('https://issuer.example/realm', 'email-subject', '+971501234567', 'local@example.com', true, true)
         def token = service.sso('synthetic-token', { ignored -> original } as SsoTokens).accessToken()
         def id = service.me('Bearer ' + token).id()
         def path = "/v1/internal/identities/${id}/email"
@@ -137,7 +137,7 @@ class AuthIntegrationSpec extends Specification {
         service.me('Bearer ' + token).email() == null
 
         when:
-        def changed = new SsoTokens.Principal(original.issuer(), original.subject(), original.phoneNumber(), email, verified)
+        def changed = new SsoTokens.Principal(original.issuer(), original.subject(), original.phoneNumber(), email, verified, true)
         def next = service.sso('synthetic-token', { ignored -> changed } as SsoTokens)
         then:
         service.me('Bearer ' + next.accessToken()).id() == id
@@ -157,12 +157,12 @@ class AuthIntegrationSpec extends Specification {
     def 'phone conflict leaves the prior contact and other identities unchanged'() {
         given:
         def store = new PostgresAuthStore(database)
-        def first = new SsoTokens.Principal('https://issuer.example/realm', 'first', '+971501234567', 'first@example.com', true)
-        def second = new SsoTokens.Principal(first.issuer(), 'second', '+971521234567', 'second@example.com', true)
+        def first = new SsoTokens.Principal('https://issuer.example/realm', 'first', '+971501234567', 'first@example.com', true, true)
+        def second = new SsoTokens.Principal(first.issuer(), 'second', '+971521234567', 'second@example.com', true, true)
         def id = store.externalIdentity(first).id()
         def other = store.externalIdentity(second).id()
         when:
-        store.externalIdentity(new SsoTokens.Principal(first.issuer(), first.subject(), second.phoneNumber(), 'changed@example.com', false))
+        store.externalIdentity(new SsoTokens.Principal(first.issuer(), first.subject(), second.phoneNumber(), 'changed@example.com', false, true))
         then:
         def failure = thrown(AuthFailure)
         failure.kind() == AuthFailure.Kind.UNAUTHORIZED
@@ -175,7 +175,7 @@ class AuthIntegrationSpec extends Specification {
         def store = new PostgresAuthStore(database)
         database.transaction { sql -> sql.execute("ALTER TABLE identities ADD CONSTRAINT synthetic_contact_failure CHECK (notification_email IS NULL)") }
         when:
-        store.externalIdentity(new SsoTokens.Principal('https://issuer.example/realm', 'rollback', '+971501234567', 'rollback@example.com', true))
+        store.externalIdentity(new SsoTokens.Principal('https://issuer.example/realm', 'rollback', '+971501234567', 'rollback@example.com', true, true))
         then:
         thrown(org.jooq.exception.DataAccessException)
         database.transaction { sql -> sql.fetchOne('select count(*) from identities').get(0, Long) } == 0
@@ -407,7 +407,7 @@ class AuthIntegrationSpec extends Specification {
 
     def 'new SSO mappings reject missing or foreign numbers without persisting an identity'() {
         when:
-        service.sso('synthetic-token', { ignored -> new SsoTokens.Principal('https://issuer.example/realm', 'new-subject', phone) } as SsoTokens)
+        service.sso('synthetic-token', { ignored -> new SsoTokens.Principal('https://issuer.example/realm', 'new-subject', phone, null, false, false) } as SsoTokens)
         then:
         thrown(AuthFailure)
         database.transaction { sql -> sql.fetchOne('select count(*) from identities').get(0, Long) } == 0
@@ -420,7 +420,7 @@ class AuthIntegrationSpec extends Specification {
         def store = new PostgresAuthStore(database)
         def identity = store.externalIdentity('https://issuer.example/realm', 'immutable-subject', '+971501234567')
         when:
-        service.sso('synthetic-token', { ignored -> new SsoTokens.Principal('https://issuer.example/realm', 'immutable-subject', phone) } as SsoTokens)
+        service.sso('synthetic-token', { ignored -> new SsoTokens.Principal('https://issuer.example/realm', 'immutable-subject', phone, null, false, false) } as SsoTokens)
         then:
         def error = thrown(AuthFailure)
         error.kind() == AuthFailure.Kind.UNAUTHORIZED
@@ -444,7 +444,7 @@ class AuthIntegrationSpec extends Specification {
 
         expect:
         service.me('Bearer ' + service.login('historical@example.com', PASSWORD).accessToken()).id() == legacy
-        service.me('Bearer ' + service.sso('synthetic-token', { ignored -> new SsoTokens.Principal('https://issuer.example/realm', 'old-subject', null) } as SsoTokens).accessToken()).id() == external
+        service.me('Bearer ' + service.sso('synthetic-token', { ignored -> new SsoTokens.Principal('https://issuer.example/realm', 'old-subject', null, null, false, false) } as SsoTokens).accessToken()).id() == external
         profiles.claims.isEmpty()
         database.transaction { sql -> sql.fetchOne('select count(*) from identities where registration_phone is null').get(0, Long) } == 2
     }
@@ -544,7 +544,7 @@ class AuthIntegrationSpec extends Specification {
         def context=new SsoTokens.TokenContext(SsoTokens.Metadata.present('armoney-web'),SsoTokens.Metadata.present('synthetic-sid'),
             SsoTokens.Metadata.present(clock.instant().minusSeconds(1)),SsoTokens.Metadata.present(clock.instant().plusSeconds(600)),
             SsoTokens.Metadata.present(new SsoTokens.ProofClaims('interactive',UUID.randomUUID(),false)))
-        def principal=new SsoTokens.Principal('https://issuer.example/realm','synthetic-subject','+971501234567','fixture@example.test',true,context)
+        def principal=new SsoTokens.Principal('https://issuer.example/realm','synthetic-subject','+971501234567','fixture@example.test',true, true,context)
         def routes=new AuthRoutes(service,KEY,{token->principal} as SsoTokens)
         runtime=ServiceRuntime.start('auth-service',0,database,routes::configure)
         when:def response=request('POST','/v1/auth/sso',JsonOutput.toJson([access_token:'synthetic.token']))

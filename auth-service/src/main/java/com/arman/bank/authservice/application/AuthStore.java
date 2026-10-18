@@ -7,7 +7,7 @@ import java.util.UUID;
 
 public interface AuthStore {
     default Identity externalIdentity(String issuer, String subject, String phone) {
-        return externalIdentity(new SsoTokens.Principal(issuer, subject, phone));
+        return externalIdentity(new SsoTokens.Principal(issuer, subject, phone, null, false, false));
     }
     Identity externalIdentity(SsoTokens.Principal principal);
     record EmailContact(String email, boolean verified) {

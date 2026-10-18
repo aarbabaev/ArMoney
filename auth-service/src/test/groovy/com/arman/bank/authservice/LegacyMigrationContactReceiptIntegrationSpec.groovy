@@ -142,7 +142,7 @@ class LegacyMigrationContactReceiptIntegrationSpec extends Specification {
     }
     MigrationManagedProofPort.Callback callback(MigrationManagedProofStore.Redirect redirect){String code='synthetic-'+redirect.attemptId();callbackNonces.put(code,redirect.nonce());callbackSubjects.put(code,signedSubject);new MigrationManagedProofPort.Callback(code,redirect.state(),redirect.attemptCookie())}
  def passwordlessAccount(){
-  def token=fixture.auth.sso('synthetic-original',{ignored->new SsoTokens.Principal(fixture.ISSUER,'signed-existing',fixture.PHONE)} as SsoTokens).accessToken()
+  def token=fixture.auth.sso('synthetic-original',{ignored->new SsoTokens.Principal(fixture.ISSUER,'signed-existing',fixture.PHONE, null, false, false)} as SsoTokens).accessToken()
   def owner=fixture.auth.me('Bearer '+token).id()
   def form=browser.form(null)
   def redirect=browser.accountOidcStart(form.formCookie(),form.csrf(),form.commandId(),null)

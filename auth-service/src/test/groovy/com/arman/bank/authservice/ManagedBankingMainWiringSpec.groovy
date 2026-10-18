@@ -17,7 +17,7 @@ class ManagedBankingMainWiringSpec extends Specification {
         expect:!resources.service().enabled()
         when:resources.start();resources.close();resources.close()
         then:noExceptionThrown()
-        when:resources.service().exchange('synthetic.token',new SsoTokens.Principal('https://issuer.example','subject','+971501234567'))
+        when:resources.service().exchange('synthetic.token',new SsoTokens.Principal('https://issuer.example','subject','+971501234567', null, false, false))
         then:thrown(AuthFailure)
         when:resources.start()
         then:thrown(IllegalStateException)
@@ -63,7 +63,7 @@ class ManagedBankingMainWiringSpec extends Specification {
         def profiles=Mock(RegistrationProfiles)
         def auth=Main.authService(store,passwords,java.time.Clock.systemUTC(),profiles,resources,configuration,Main.historicalAuthMode(configuration,environment))
         def identity=new com.arman.bank.authservice.domain.Identity(UUID.randomUUID(),null,'+971501234567')
-        when:def session=auth.sso('synthetic.token',{token->new SsoTokens.Principal('https://issuer.example/realm','legacy-subject','+971501234567')} as SsoTokens)
+        when:def session=auth.sso('synthetic.token',{token->new SsoTokens.Principal('https://issuer.example/realm','legacy-subject','+971501234567', null, false, false)} as SsoTokens)
         then:session.accessToken().size()==43;auth.expiresIn(session)==1800
         1 * store.externalIdentity(_) >> identity
         1 * store.requireBankingAccess(identity.id())
@@ -82,7 +82,7 @@ class ManagedBankingMainWiringSpec extends Specification {
         def passwords=Stub(PasswordHasher){hash(_) >> 'synthetic-hash'}
         def auth=Main.authService(store,passwords,java.time.Clock.systemUTC(),profiles,resources,configuration,Main.historicalAuthMode(configuration,environment))
         def context=new SsoTokens.TokenContext(SsoTokens.Metadata.present(client),SsoTokens.Metadata.absent(),SsoTokens.Metadata.absent(),SsoTokens.Metadata.absent(),SsoTokens.Metadata.absent())
-        when:auth.sso('synthetic.token',{token->new SsoTokens.Principal(issuer,'subject','+971501234567',null,false,context)} as SsoTokens)
+        when:auth.sso('synthetic.token',{token->new SsoTokens.Principal(issuer,'subject','+971501234567',null,false, true,context)} as SsoTokens)
         then:thrown(AuthFailure);0 * store._;0 * profiles._
         cleanup:resources.close()
         where:client << ['armoney-web','unknown-client']

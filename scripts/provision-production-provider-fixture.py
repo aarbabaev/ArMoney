@@ -35,6 +35,54 @@ class Refused(Exception):
     pass
 
 
+CLIENT_FIELDS = ("clientId", "enabled", "protocol", "publicClient", "standardFlowEnabled", "implicitFlowEnabled",
+                 "directAccessGrantsEnabled", "serviceAccountsEnabled", "fullScopeAllowed", "redirectUris", "webOrigins")
+INSPECTION_KEYS = frozenset({"included.custom.audience", "id.token.claim", "access.token.claim", "introspection.token.claim", "userinfo.token.claim"})
+STANDARD_DIAGNOSTIC_KEYS = frozenset({"lightweight.claim", "access.tokenResponse.claim"})
+CLIENT_PREDICATES = frozenset({"shape", "attributes", "scopes", "mapper-count", "inspection-config-shape",
+    "inspection-config-keyset", "inspection-config-value", "mapper-contract", "secret-absent", *CLIENT_FIELDS})
+
+
+def client_check(ok, predicate, config_key=None, present=None, matches=None):
+    if ok:
+        return
+    failure = Refused()
+    if predicate in CLIENT_PREDICATES:
+        diagnostic = {"predicate": predicate}
+        if config_key in INSPECTION_KEYS and type(present) is bool and type(matches) is bool:
+            diagnostic.update(config_key=config_key, present=present, matches=matches)
+        failure.diagnostic = diagnostic
+    raise failure from None
+
+
+def safe_diagnostic(failure):
+    if type(failure) is not Refused:
+        return None
+    value = getattr(failure, "diagnostic", None)
+    if type(value) is not dict or value.get("predicate") not in CLIENT_PREDICATES:
+        return None
+    if set(value) == {"predicate"}:
+        return {"predicate": value["predicate"]}
+    if (set(value) == {"predicate", "expected_keys", "standard_keys", "client_audience_present", "client_audience_empty", "unexpected_key_count", "unexpected_all_empty"}
+            and value["predicate"] == "inspection-config-keyset"
+            and type(value["expected_keys"]) is dict and set(value["expected_keys"]) == INSPECTION_KEYS
+            and all(type(v) is dict and set(v) == {"present", "matches"}
+                    and type(v["present"]) is bool and type(v["matches"]) is bool for v in value["expected_keys"].values())
+            and type(value["standard_keys"]) is dict and set(value["standard_keys"]) == STANDARD_DIAGNOSTIC_KEYS
+            and all(type(v) is dict and set(v) == {"present", "string_true", "string_false", "empty", "other"}
+                    and all(type(b) is bool for b in v.values()) for v in value["standard_keys"].values())
+            and type(value["client_audience_present"]) is bool and type(value["client_audience_empty"]) is bool
+            and type(value["unexpected_key_count"]) is int and 0 <= value["unexpected_key_count"] <= 16
+            and type(value["unexpected_all_empty"]) is bool):
+        return {**value, "expected_keys": {k: dict(v) for k, v in value["expected_keys"].items()},
+                "standard_keys": {k: dict(v) for k, v in value["standard_keys"].items()}}
+    if (set(value) == {"predicate", "config_key", "present", "matches"}
+            and value["predicate"] == "inspection-config-value" and value["config_key"] in INSPECTION_KEYS
+            and type(value["present"]) is bool and type(value["matches"]) is bool):
+        return dict(value)
+    return None
+
+
 def require(ok):
     if not ok:
         raise Refused() from None
@@ -190,6 +238,11 @@ def public_client(c, client):
         value["protocolMappers"].append({"name": "armoney-phone", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-property-mapper", "consentRequired": False,
             "config": {"claim.name": "phone_number", "user.attribute": "username", "jsonType.label": "String", "id.token.claim": "false",
                        "access.token.claim": "true", "introspection.token.claim": "true", "userinfo.token.claim": "false"}})
+    elif client == ACCOUNT:
+        value["protocolMappers"] = [{"name": "armoney-auth-introspection-audience", "protocol": "openid-connect",
+            "protocolMapper": "oidc-audience-mapper", "consentRequired": False,
+            "config": {"included.custom.audience": "armoney-auth", "id.token.claim": "false",
+                       "access.token.claim": "true", "introspection.token.claim": "true", "userinfo.token.claim": "false"}}]
     return value
 
 
@@ -404,19 +457,37 @@ class Provisioner:
 
 
 def check_public(actual, expected):
-    require(type(actual) is dict)
-    for key in ("clientId", "enabled", "protocol", "publicClient", "standardFlowEnabled", "implicitFlowEnabled",
-                "directAccessGrantsEnabled", "serviceAccountsEnabled", "fullScopeAllowed", "redirectUris", "webOrigins"):
-        require(type(actual.get(key)) is type(expected[key]) and (set(actual[key]) == set(expected[key]) if key == "redirectUris" else actual[key] == expected[key]))
-    require(type(actual.get("attributes")) is dict and all(actual["attributes"].get(k) == v for k, v in expected["attributes"].items()))
-    require(set(actual.get("defaultClientScopes", [])) == set(expected["defaultClientScopes"]) and actual.get("optionalClientScopes") == expected["optionalClientScopes"])
+    client_check(type(actual) is dict, "shape")
+    for key in CLIENT_FIELDS:
+        client_check(type(actual.get(key)) is type(expected[key]) and (set(actual[key]) == set(expected[key]) if key == "redirectUris" else actual[key] == expected[key]), key)
+    client_check(type(actual.get("attributes")) is dict and all(actual["attributes"].get(k) == v for k, v in expected["attributes"].items()), "attributes")
+    client_check(set(actual.get("defaultClientScopes", [])) == set(expected["defaultClientScopes"]) and actual.get("optionalClientScopes") == expected["optionalClientScopes"], "scopes")
     mappers = actual.get("protocolMappers", [])
-    require(type(mappers) is list and len(mappers) == len(expected.get("protocolMappers", [])))
+    client_check(type(mappers) is list and len(mappers) == len(expected.get("protocolMappers", [])), "mapper-count")
+    if expected.get("clientId") == ACCOUNT:
+        config = mappers[0].get("config")
+        client_check(type(config) is dict, "inspection-config-shape")
+        if set(config) != set(expected["protocolMappers"][0]["config"]):
+            wanted = expected["protocolMappers"][0]["config"]
+            unexpected = set(config) - INSPECTION_KEYS - {"included.client.audience"} - STANDARD_DIAGNOSTIC_KEYS
+            failure = Refused()
+            failure.diagnostic = {"predicate": "inspection-config-keyset",
+                "expected_keys": {k: {"present": k in config, "matches": config.get(k) == v} for k, v in wanted.items()},
+                "standard_keys": {k: {"present": k in config, "string_true": k in config and config[k] == "true",
+                    "string_false": k in config and config[k] == "false", "empty": k in config and config[k] == "",
+                    "other": k in config and config[k] not in ("true", "false", "")} for k in STANDARD_DIAGNOSTIC_KEYS},
+                "client_audience_present": "included.client.audience" in config,
+                "client_audience_empty": "included.client.audience" in config and config["included.client.audience"] == "",
+                "unexpected_key_count": min(len(unexpected), 16),
+                "unexpected_all_empty": all(config[k] == "" for k in unexpected)}
+            raise failure from None
+        for key, value in expected["protocolMappers"][0]["config"].items():
+            client_check(config.get(key) == value, "inspection-config-value", key, key in config, config.get(key) == value)
     for required_mapper in expected.get("protocolMappers", []):
         selected = [x for x in mappers if x.get("name") == required_mapper["name"]]
-        require(len(selected) == 1 and all(selected[0].get(k) == v for k, v in required_mapper.items() if k != "config")
-                and type(selected[0].get("config")) is dict and all(selected[0]["config"].get(k) == v for k, v in required_mapper["config"].items()))
-    require(not actual.get("secret"))
+        client_check(len(selected) == 1 and all(selected[0].get(k) == v for k, v in required_mapper.items() if k != "config")
+                and type(selected[0].get("config")) is dict and all(selected[0]["config"].get(k) == v for k, v in required_mapper["config"].items()), "mapper-contract")
+    client_check(not actual.get("secret"), "secret-absent")
 
 
 def check_leaf_flow(listing, models, providers):
@@ -454,8 +525,11 @@ def main():
         require(len(raw) <= LIMIT)
         c = configuration(raw)
         result = provisioner.run(c)
-    except Exception:
+    except Exception as failure:
         result["checkpoint"] = provisioner.stage if provisioner.stage in STAGES else "config"
+        diagnostic = safe_diagnostic(failure)
+        if diagnostic is not None:
+            result["diagnostic"] = diagnostic
     try:
         with Path(args.result).open("x", encoding="utf-8") as out:
             json.dump(result, out, separators=(",", ":"))

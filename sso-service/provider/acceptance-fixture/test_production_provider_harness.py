@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+import urllib.parse
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('production_acceptance', Path(__file__).with_name('test_production_provider_acceptance.py'))
@@ -374,6 +375,88 @@ class ProductionHarnessTest(unittest.TestCase):
                 ('phone', 'armoney-verify-phone-code&amp;execution=armoney-verify-email-code')):
             with self.subTest(heading=heading, action=action), self.assertRaisesRegex(driver.Rejected, '^phone_transition$'):
                 driver.require_phone_transition(Browser(), page(heading, action))
+
+
+    def test_ordinary_authorization_does_not_request_offline_scope(self):
+        class Browser:
+            data = {'origin': 'https://sso.example.test', 'migration_callbacks': {
+                'managed': 'https://gateway.example.test/migration/managed/callback',
+                'account': 'https://gateway.example.test/migration/legacy/account-oidc/callback'}}
+            def __init__(self):
+                self.requests = []
+            def request(self, url):
+                self.requests.append(url)
+                return 200, {}, b''
+        ordinary, offline = Browser(), Browser()
+        driver.authorize(ordinary)
+        driver.authorize(offline, offline=True)
+        for browser, scope in ((ordinary, 'openid'), (offline, 'openid offline_access')):
+            self.assertEqual(len(browser.requests), 1)
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(browser.requests[0]).query)
+            self.assertEqual(query['scope'], [scope])
+            self.assertEqual(query['client_id'], [driver.CLIENT])
+            self.assertEqual(query['redirect_uri'], [driver.CALLBACK])
+            self.assertEqual(query['code_challenge_method'], ['S256'])
+            self.assertEqual(query['prompt'], ['login'])
+            self.assertEqual(query['max_age'], ['0'])
+            self.assertEqual(len(query['code_challenge'][0]), 43)
+            self.assertTrue(query['state'][0])
+            self.assertTrue(query['nonce'][0])
+        self.assertNotEqual(ordinary.requests, offline.requests)
+
+
+    def test_control_pacing_first_call_spacing_and_no_unneeded_wait(self):
+        class Clock:
+            now = 0.0
+            waits = None
+            def __init__(self):
+                self.waits = []
+            def read(self):
+                return self.now
+            def sleep(self, seconds):
+                self.waits.append(seconds)
+                self.now += seconds
+        clock = Clock()
+        pacer = driver.ControlPacer(360, clock.read, clock.sleep)
+        pacer.before_post()
+        self.assertEqual(clock.waits, [])
+        clock.now = .1
+        pacer.before_post()
+        self.assertEqual(len(clock.waits), 1)
+        self.assertAlmostEqual(clock.waits[0], .45)
+        self.assertAlmostEqual(pacer.last, .55)
+        clock.now = 2
+        pacer.before_post()
+        self.assertEqual(len(clock.waits), 1)
+        self.assertEqual(pacer.last, 2)
+
+    def test_control_pacing_cannot_extend_deadline_or_send_after_oversleep(self):
+        waits = []
+        pacer = driver.ControlPacer(.5, lambda: 0, waits.append)
+        pacer.before_post()
+        with self.assertRaisesRegex(driver.Rejected, '^deadline$'):
+            pacer.before_post()
+        self.assertEqual(waits, [])
+        ticks = iter((0, .1, 361))
+        pacer = driver.ControlPacer(360, lambda: next(ticks), waits.append)
+        pacer.before_post()
+        with self.assertRaisesRegex(driver.Rejected, '^deadline$'):
+            pacer.before_post()
+        self.assertEqual(len(waits), 1)
+
+    def test_control_429_is_one_failed_post_without_retry(self):
+        wire = driver.Wire.__new__(driver.Wire)
+        wire.data = {'controller_origin': 'https://controller.example.test', 'controller_key': 'synthetic',
+                     'controller_paths': {'outcomes': '/fixture/production-provider/outcomes'}}
+        wire.control_pacer = driver.ControlPacer(360, lambda: 0, lambda _: self.fail('First call must not wait'))
+        calls = []
+        def request(*args, **kwargs):
+            calls.append(1)
+            return 429, {}, b''
+        wire.request = request
+        with self.assertRaisesRegex(driver.Rejected, '^controller_status$'):
+            wire.control('outcomes', {'username': 'synthetic'})
+        self.assertEqual(calls, [1])
 
 
 if __name__ == '__main__':

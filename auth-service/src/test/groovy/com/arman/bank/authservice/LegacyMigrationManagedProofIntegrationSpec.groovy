@@ -131,7 +131,7 @@ class LegacyMigrationManagedProofIntegrationSpec extends Specification {
     long count(String table){database.transaction{sql->sql.fetchOne('select count(*) from '+table).get(0,Long)}}
     def localOwner(){auth.register(EMAIL,PASSWORD,PHONE);def token=auth.login(EMAIL,PASSWORD).accessToken();def original=auth.me('Bearer '+token).id();[identityId:original,token:token,admission:auth.beginLegacyMigration(EMAIL,PASSWORD,UUID.randomUUID(),local)]}
     def historicalSsoOwner(){
-        def token=auth.sso('synthetic-old-principal',{ignored->new SsoTokens.Principal(ISSUER,'signed-existing',PHONE)} as SsoTokens).accessToken()
+        def token=auth.sso('synthetic-old-principal',{ignored->new SsoTokens.Principal(ISSUER,'signed-existing',PHONE, null, false, false)} as SsoTokens).accessToken()
         def original=auth.me('Bearer '+token).id()
         // Published credential pair stays NULL/NULL; user candidate is a separate genuine browser use case.
         [identityId:original,token:token]

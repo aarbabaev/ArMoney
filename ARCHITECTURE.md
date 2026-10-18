@@ -20,6 +20,11 @@ after fresh Auth confirmation bound to the original flow and contact version;
 phone and banking admission remain independently enforced. The lifecycle fix
 and its acceptance limits are described in [ADR 0051](docs/adr/0051-registration-required-action-routing.md).
 
+Managed registration admission uses Auth-owned current contact receipts; migration
+retains its provider verification requirement. The source-specific policy and
+explicit provider-claim format boundary are implemented in the integration source in
+[ADR 0052](docs/adr/0052-registration-email-admission-authority.md).
+
 ## Navigation
 
 1. [Readiness and stack](#readiness-and-stack)

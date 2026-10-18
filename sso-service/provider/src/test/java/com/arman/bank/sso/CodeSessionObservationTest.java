@@ -9,6 +9,34 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @org.junit.jupiter.api.parallel.ResourceLock("keycloak-profile")
 final class CodeSessionObservationTest {
+    @Test void rejectionLoggingContainsOnlyClosedEnumsAndNeverUntrustedContacts(){
+        var records=new ArrayList<java.util.logging.LogRecord>();
+        var logger=java.util.logging.Logger.getLogger(CodeSessionObservation.class.getName());
+        var handler=new java.util.logging.Handler(){
+            @Override public void publish(java.util.logging.LogRecord record){records.add(record);}
+            @Override public void flush(){}
+            @Override public void close(){}
+        };
+        logger.addHandler(handler);
+        try{
+            Fixture invalid=new Fixture();invalid.user.put("getEmail","UNTRUSTED-contact-secret");
+            assertThrows(Bridge.Unavailable.class,()->CodeSessionObservation.observe(invalid.session(),invalid.binding,Clock.systemUTC()));
+            assertFalse(records.isEmpty());
+            assertEquals("CONTACT",records.getLast().getMessage());
+            Fixture confidential=new Fixture();confidential.publicClient=false;
+            assertThrows(Bridge.Unavailable.class,()->CodeSessionObservation.observe(confidential.session(),confidential.binding,Clock.systemUTC()));
+            assertEquals("CLIENT_NOT_PUBLIC",records.getLast().getMessage());
+            Fixture wrongSession=new Fixture();wrongSession.us.put("getId","UNTRUSTED-session-secret");
+            assertThrows(Bridge.Unavailable.class,()->CodeSessionObservation.observe(wrongSession.session(),wrongSession.binding,Clock.systemUTC()));
+            assertEquals("SESSION_ID",records.getLast().getMessage());
+            for(var record:records){
+                assertDoesNotThrow(()->CodeSessionObservation.Rejection.valueOf(record.getMessage()));
+                assertNull(record.getThrown());
+                assertTrue(record.getParameters()==null||record.getParameters().length==0);
+                assertFalse(record.getMessage().contains("UNTRUSTED"));
+            }
+        }finally{logger.removeHandler(handler);}
+    }
     private static boolean ownsProfile;
     @org.junit.jupiter.api.BeforeAll static void initializePinnedProfile() {
         ownsProfile=org.keycloak.common.Profile.getInstance()==null;

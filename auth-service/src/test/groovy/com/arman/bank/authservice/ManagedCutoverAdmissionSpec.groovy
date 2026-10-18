@@ -23,7 +23,7 @@ class ManagedCutoverAdmissionSpec extends Specification {
             {issuer,client->issuer==ISSUER&&client=='armoney-web'})
     }
     SsoTokens.Principal principal(String client='armoney-web',boolean proof=false) {
-        new SsoTokens.Principal(ISSUER,'legacy-subject','+971501234567','legacy@example.test',true,
+        new SsoTokens.Principal(ISSUER,'legacy-subject','+971501234567','legacy@example.test',true, true,
             new SsoTokens.TokenContext(SsoTokens.Metadata.present(client),SsoTokens.Metadata.present('user-session'),
                 SsoTokens.Metadata.present(now),SsoTokens.Metadata.present(now.plusSeconds(120)),
                 proof?SsoTokens.Metadata.present(new SsoTokens.ProofClaims('interactive',UUID.randomUUID(),false)):SsoTokens.Metadata.absent()))
@@ -108,7 +108,7 @@ class ManagedCutoverAdmissionSpec extends Specification {
 
     def 'unknown or absent client metadata never chooses legacy path in either mode'() {
         given:def service=auth(enabled)
-        def authenticated=missing?new SsoTokens.Principal(ISSUER,'subject','+971501234567'):principal('unknown-client')
+        def authenticated=missing?new SsoTokens.Principal(ISSUER,'subject','+971501234567', null, false, false):principal('unknown-client')
         when:service.sso('synthetic.token',{token->authenticated} as SsoTokens)
         then:thrown(AuthFailure);0 * store._;0 * profiles._;0 * banking._
         where:

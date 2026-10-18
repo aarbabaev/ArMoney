@@ -47,6 +47,8 @@ registration or verification client. Its read-only code observation requires the
 enabled production manifest and exact public-client/S256 configuration. The three
 existing banking clients retain their managed admission allowlist; introducing
 the dedicated client must not widen that allowlist or contact-based identity linking.
+The isolated acceptance client includes only the `armoney-auth` inspection audience;
+it never receives `armoney-api`. Inspection access is not banking admission.
 
 Migration account and managed callbacks use fresh signed OIDC account proofs
 without requiring positive banking eligibility before FINAL. They cannot carry
@@ -66,6 +68,12 @@ Completing registration and its verification does not itself prove fresh passwor
 authentication. Registration password action completion can defer or fail credential
 persistence. Require a subsequent genuine ordinary password login before native
 banking proof; never infer that proof from user creation or a void action return.
+
+Auth-owned registration receipts remain the email authority for the strict
+database-selected registration admission source. This does not require copying
+verification into Keycloak's user flag or changing migration's provider-flag
+requirement. Known claim format, current contact authority and genuine C2 proof
+remain independently required; see [ADR 0052](0052-registration-email-admission-authority.md).
 
 The production package must exclude fixture control resources and historical
 proof factories. Disabled and unrelated realm/system-client behavior retains

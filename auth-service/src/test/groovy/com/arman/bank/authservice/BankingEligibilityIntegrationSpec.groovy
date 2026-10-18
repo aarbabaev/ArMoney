@@ -81,7 +81,7 @@ class BankingEligibilityIntegrationSpec extends Specification {
         def profiles = Mock(RegistrationProfiles)
         def service = new AuthService(new PostgresAuthStore(database,true),new Argon2Passwords(),Clock.fixed(now,ZoneOffset.UTC),profiles)
         when:
-        service.sso('synthetic', { token -> new SsoTokens.Principal('https://issuer.example/realm','fixture','+971501234567') } as SsoTokens)
+        service.sso('synthetic', { token -> new SsoTokens.Principal('https://issuer.example/realm','fixture','+971501234567', null, false, false) } as SsoTokens)
         then:
         thrown(AuthFailure)
         0 * profiles._

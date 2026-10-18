@@ -30,6 +30,9 @@ exact account callback's `MIGRATION_ACCOUNT` purpose and strict read-only code
 observation. It cannot enter managed banking, registration or verification
 allowlists. This additional configuration and its runtime acceptance remain pending.
 See [ADR 0050](../../../docs/adr/0050-production-provider-code-intent.md).
+The disposable dedicated client exposes its token only to the existing
+`armoney-auth` introspection reader. Its single inspection audience mapper does
+not add `armoney-api` or any banking proof and cannot grant banking admission.
 
 ### Separate production-provider acceptance topology
 

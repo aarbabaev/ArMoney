@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /** Local predicate equivalence only: synthetic provider observations and synthetic mail/SMS
  * receivers fed by real delivery worker/transport and real OTP consume. User ACK comes from
  * actual isolated UserMain/PG over HTTP. No seeded authority/receipt/grant, fabricated ACK,
- * Keycloak/password/SMTP/TLS/carrier acceptance or session authorization is claimed. */
+ * Keycloak/password/SMTP/TLS/carrier acceptance is claimed. Managed admission below uses synthetic provider observations. */
 @com.arman.bank.authservice.RequireAcceptanceExecution
 class CodeIntentRegistrationReadinessIntegrationSpec extends Specification {
     static final String ISSUER='https://issuer.example/sso/realms/armoney'
@@ -87,7 +87,8 @@ class CodeIntentRegistrationReadinessIntegrationSpec extends Specification {
     }
     def setup(){
         int n=sequence.incrementAndGet()
-        writer=WRITER+'-'+n
+        // At most 16 authenticated writer principals; retain every admission row and its natural refill.
+        writer=WRITER+'-'+((n-1)%16+1)
         phone='+97150'+String.format('%07d',n)
         email='readiness-'+UUID.randomUUID()+'@example.test'
         flow=new Flow(ISSUER,'subject-'+UUID.randomUUID(),'armoney-web','root-'+n,'tab-'+n,
@@ -226,6 +227,42 @@ class CodeIntentRegistrationReadinessIntegrationSpec extends Specification {
         confirmation==ready
         grantCount==1
     }
+    def 'actual User ACK and generated OTP receipts admit false provider flag only through confirmed C2'(){
+        given:
+        UUID enrollment=eligible()
+        def policy=L.Policy.defaults([ISSUER] as Set,['armoney-web'] as Set,['readiness-v1'] as Set,[writer] as Set)
+        def staging=new PostgresCodeIntentStore(database,policy,
+            new CodeIntentRetentionKeys('readiness-retention',['readiness-retention':Base64.encoder.encodeToString(([61]*32) as byte[])]),
+            new CodeIntentDetailCrypto('readiness-aead',['readiness-aead':Base64.encoder.encodeToString(([62]*32) as byte[])],[] as Set))
+        def proofs=new PostgresLoginProofStore(database,policy,([63]*32) as byte[],{sql->new PostgresBankingEligibilityStore(sql)})
+        def confirmation=new PostgresCodeConfirmationStore(database,staging,proofs,policy)
+        def facts={L.Binding binding,Instant start->
+            def observed=Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
+            new com.arman.bank.authservice.domain.CodeConfirmation.Facts(binding,phone,email,phone,true,true,true,observed,observed.plusSeconds(5))
+        } as CodeConfirmationObservations
+        def now=Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
+        def input=new L.Write(UUID.randomUUID(),UUID.randomUUID().toString().replace('-','')*2,'readiness-v1',ISSUER,flow.subject(),flow.clientId(),'synthetic-provider-session',
+            flow.authenticationSessionId(),now,now.plusSeconds(120),L.Kind.INTERACTIVE,UUID.randomUUID(),now)
+        staging.cleanup();staging.stage(writer,input)
+        def confirmed=new CodeConfirmationService(confirmation,facts).confirm(writer,new L.Resolve(input.codeDigest(),input.codeKeyId(),input.issuer(),input.subject(),input.clientId(),input.userSessionId()))
+        assert !confirmed.deniedCommitted()
+        assert confirmed.snapshot().kind()==L.Kind.INTERACTIVE
+        def pairs={issuer,client->issuer==ISSUER&&client=='armoney-web'} as ManagedBankingService.PairScope
+        def store=new PostgresManagedBankingStore(database,new ManagedBankingKeys('readiness-bank',['readiness-bank':Base64.encoder.encodeToString(([64]*32) as byte[])]),pairs,writer)
+        store.cleanup()
+        def service=new ManagedBankingService(true,store,facts,pairs)
+        def principal=new SsoTokens.Principal(ISSUER,flow.subject(),phone,email,false,true,
+            new SsoTokens.TokenContext(SsoTokens.Metadata.present(input.clientId()),SsoTokens.Metadata.present(input.userSessionId()),SsoTokens.Metadata.present(input.issuedAt()),
+                SsoTokens.Metadata.present(input.expiresAt()),SsoTokens.Metadata.present(new SsoTokens.ProofClaims('interactive',input.eventId(),true))))
+        when:def session=service.exchange('readiness.false.provider.flag',principal)
+        then:session.accessToken().size()==43
+        when:def owner=service.validate('Bearer '+session.accessToken())
+        then:
+        owner==database.transaction{it.fetchOne('select identity_id from managed_registration_principals where enrollment_id=?',enrollment).get(0,UUID)}
+        database.transaction{it.fetchOne('select count(*) from managed_banking_sessions where identity_id=?',owner).get(0,Long)}==1L
+        database.transaction{it.fetchOne('select count(*) from managed_banking_event_consumptions where identity_id=?',owner).get(0,Long)}==1L
+    }
+
     def 'consumed challenge regression invalidates both entry points'(){
         given:UUID enrollment=eligible()
         mutate("update verification_challenges set state='EXPIRED' where id in (select challenge_id from verification_receipts where enrollment_id=?)",enrollment)

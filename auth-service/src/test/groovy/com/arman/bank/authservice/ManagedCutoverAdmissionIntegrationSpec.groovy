@@ -24,7 +24,7 @@ class ManagedCutoverAdmissionIntegrationSpec extends Specification {
     }
     def cleanup() { client?.close();runtime?.close();fixture?.cleanup() }
     SsoTokens.Principal principal() {
-        new SsoTokens.Principal(ISSUER,'existing-legacy-subject','+971521234567','sso@example.test',true,
+        new SsoTokens.Principal(ISSUER,'existing-legacy-subject','+971521234567','sso@example.test',true, true,
             new SsoTokens.TokenContext(SsoTokens.Metadata.present('armoney-web'),SsoTokens.Metadata.present('legacy-session'),
                 SsoTokens.Metadata.present(Instant.now()),SsoTokens.Metadata.present(Instant.now().plusSeconds(120)),SsoTokens.Metadata.absent()))
     }

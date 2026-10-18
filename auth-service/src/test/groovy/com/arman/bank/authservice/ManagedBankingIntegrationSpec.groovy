@@ -117,11 +117,90 @@ class ManagedBankingIntegrationSpec extends Specification {
     def confirmed(){
         eligible();def input=command();confirmer(confirmations(staged(input))).confirm(WRITER,lookup(input));bankingStore().cleanup();input
     }
-    SsoTokens.Principal principal(L.Write input,String sid=input.userSessionId()){
-        new SsoTokens.Principal(ISSUER,input.subject(),PHONE,EMAIL,true,new SsoTokens.TokenContext(
+    SsoTokens.Principal principal(L.Write input,String sid=input.userSessionId(),boolean verified=true,boolean known=true){
+        new SsoTokens.Principal(ISSUER,input.subject(),PHONE,EMAIL,verified,known,new SsoTokens.TokenContext(
             SsoTokens.Metadata.present(input.clientId()),SsoTokens.Metadata.present(sid),SsoTokens.Metadata.present(input.issuedAt()),
             SsoTokens.Metadata.present(input.expiresAt()),SsoTokens.Metadata.present(new SsoTokens.ProofClaims('interactive',input.eventId(),false))))
     }
+    def 'current Auth registration receipts admit a literal false provider email observation'(){
+        given:def input=confirmed()
+        when:def session=consumer().exchange('registration.false.flag',principal(input,input.userSessionId(),false))
+        then:session.accessToken().size()==43;count('managed_banking_sessions')==1;count('managed_banking_event_consumptions')==1
+        when:def identity=consumer().validate('Bearer '+session.accessToken())
+        then:identity==row('managed_registration_principals').identity_id
+    }
+    def 'false provider flag never substitutes for current registration evidence #damage'(){
+        given:def input=confirmed()
+        execute(mutation)
+        def calls=new java.util.concurrent.atomic.AtomicInteger()
+        when:consumer({binding,start->calls.incrementAndGet();committedFacts(binding)}).exchange('registration.missing.authority',principal(input,input.userSessionId(),false))
+        then:thrown(L.Failure);calls.get()==0
+        count('managed_banking_sessions')==0;count('managed_banking_event_consumptions')==0
+        count('managed_banking_operations')==0;count('managed_banking_completions')==0
+        where:
+        damage | mutation
+        'email receipt' | "delete from verification_receipts where purpose='REGISTRATION_EMAIL'"
+        'phone receipt' | "delete from verification_receipts where purpose='REGISTRATION_PHONE'"
+        'wrong current candidate purpose' | "update verification_authorities set email_candidate_id=phone_candidate_id"
+        'unconsumed challenge' | "update verification_challenges set state='EXPIRED' where purpose='REGISTRATION_EMAIL'"
+        'projection ACK' | "update auth_verification_projection_tombstones set recovery_barrier=true"
+        'verification epoch' | "update verification_authorities set verification_epoch=verification_epoch+1,revision=revision+1"
+        'contact mismatch' | "update verification_enrollments set email='changed@example.test'"
+        'unknown association' | "delete from external_identities"
+    }
+    def 'fresh contact replacement retains historical receipt and suspends the old managed authority'(){
+        given:
+        def input=confirmed()
+        def original=database.transaction{it.fetchOne("select r.id,r.candidate_id,r.contact_version,c.state from verification_receipts r join verification_challenges c on c.id=r.challenge_id where r.purpose='REGISTRATION_EMAIL'").intoMap()}
+        // A fresh authenticated flow may replace the contact; the old granted flow would
+        // deliberately commit suspension and reject before changing any candidate.
+        flow=new Flow(flow.issuer(),flow.subject(),flow.clientId(),'replacement-root','replacement-tab',
+            Base64.urlEncoder.withoutPadding().encodeToString(([4]*32) as byte[]))
+        def replacement=enroll('replacement@example.test')
+        assert replacement.error()==null
+        // This denial exercises grant suspension before receipt selection, not an isolated version mismatch.
+        assert row('verification_authorities').state=='SUSPENDED'
+        def history=database.transaction{sql->
+            def current=sql.fetchOne("select c.id,c.version,c.purpose from verification_authorities a join verification_candidates c on c.id=a.email_candidate_id")
+            def retained=sql.fetchOne('select candidate_id,contact_version from verification_receipts where id=?',original.id)
+            [candidate:current.get('id',UUID),version:current.get('version',Integer),purpose:current.get('purpose',String),
+                originalCandidate:retained.get('candidate_id',UUID),originalVersion:retained.get('contact_version',Integer),
+                currentReceiptCount:sql.fetchOne('select count(*) from verification_receipts where candidate_id=?',current.get('id',UUID)).get(0,Long)]
+        }
+        assert original.state=='CONSUMED'
+        assert history.purpose=='REGISTRATION_EMAIL' && history.version==2
+        assert history.candidate!=history.originalCandidate && history.originalCandidate==original.candidate_id
+        assert history.originalVersion==1 && history.currentReceiptCount==0L
+        def calls=new java.util.concurrent.atomic.AtomicInteger()
+        when:consumer({binding,start->calls.incrementAndGet();committedFacts(binding)}).exchange('registration.historical.receipt',principal(input,input.userSessionId(),false))
+        then:thrown(L.Failure);calls.get()==0
+        count('managed_banking_operations')==0;count('managed_banking_sessions')==0
+        count('managed_banking_event_consumptions')==0;count('managed_banking_completions')==0
+    }
+
+    def 'false provider flag with no current grant or C2 cannot mint a session'(){
+        given:
+        grantsEnabled=grant;wire()
+        def enrollment=projected()
+        if(grant)status(enrollment.enrollmentId())
+        def input=command()
+        when:consumer().exchange('registration.no.proof',principal(input,input.userSessionId(),false))
+        then:thrown(L.Failure);count('managed_banking_operations')==0;count('managed_banking_sessions')==0
+        count('managed_banking_event_consumptions')==0;count('managed_banking_completions')==0
+        where:grant << [false,true]
+    }
+    def 'late authority mutation rolls back false flag registration session and consumption'(){
+        given:def input=confirmed();def before=row('verification_authorities')
+        execute('create sequence email_authority_rollback_witness')
+        execute("create function email_authority_late_change() returns trigger language plpgsql as 'begin perform nextval(''email_authority_rollback_witness''); update verification_authorities set state=''SUSPENDED'',verification_epoch=verification_epoch+1,revision=revision+1; return NEW; end'")
+        execute('create trigger email_authority_late_change after insert on managed_banking_sessions for each row execute function email_authority_late_change()')
+        when:consumer().exchange('registration.late.change',principal(input,input.userSessionId(),false))
+        then:thrown(L.Failure)
+        database.transaction{it.fetchOne('select is_called from email_authority_rollback_witness').get(0,Boolean)}
+        row('verification_authorities')==before
+        count('managed_banking_sessions')==0;count('managed_banking_event_consumptions')==0;count('managed_banking_completions')==0
+    }
+
     def 'confirmed interactive proof mints only dedicated digest and validates with fresh synthetic facts'(){
         given:def input=confirmed();def service=consumer()
         when:def session=service.exchange('authenticated.fixture.token',principal(input))

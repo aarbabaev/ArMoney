@@ -46,6 +46,9 @@ public final class PostgresManagedBankingStore implements ManagedBankingStore {
             Anchor anchor=owned.transaction(sql->{
                 var binding=token.binding();requirePair(binding);
                 var local=local(sql,binding);var proof=proof(sql,binding,token.eventId(),local);
+                // Only current Auth-owned registration receipts may supersede this provider observation.
+                // Source selection is persisted and locked; migration keeps its existing provider gate.
+                if(local.isMigration()&&!token.providerEmailVerified())deny();
                 Instant start=now(sql);
                 if(token.issuedAt().isAfter(start)||token.issuedAt().isBefore(time(proof.row(),"issued_at"))
                         ||!Objects.equals(token.email(),local.email())||!Objects.equals(token.phone(),local.phone()))deny();

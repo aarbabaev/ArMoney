@@ -7,7 +7,7 @@ import java.util.UUID;
 public final class ManagedBankingAccess {
     private ManagedBankingAccess() {}
     public record Token(LoginProof.Binding binding, UUID eventId, Instant issuedAt, Instant expiresAt,
-                        String email, String phone, String bearer) {
+                        String email, String phone, String bearer, boolean providerEmailVerified) {
         @Override public String toString(){return "ManagedToken[redacted]";}
     }
     public record Session(String accessToken, Instant expiresAt) {
