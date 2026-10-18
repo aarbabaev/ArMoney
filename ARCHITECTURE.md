@@ -1577,8 +1577,16 @@ cache volume without permitting anonymous volumes in the lifecycle guard. The
 combined run at `c8917b6c` passed prerequisites and OFF provisioning, then failed
 closed at `dependencies / service-mounts / sms-sandbox` in 260.406 seconds.
 The rejected mount destination was not retained; the inherited cache volume is
-the source-supported explanation. The tmpfs correction still requires isolated
-runtime verification; ON readiness and native confirmation remain unverified.
+the source-supported explanation. With the tmpfs correction, a fresh isolated
+run at `d7ea3e46` completed OFF provisioning,
+the same-database ON lifecycle, transport preparation, both control probes and
+controller input construction. It failed closed at native READY observation in
+364.328 seconds; owned resources were removed and the CI runner restored.
+Native confirmation and actual browser trust usage remain unverified. Failure
+receipts at this stage may now include a strictly validated finite diagnostic:
+setup deadline, control status, control schema, allowlisted provider state or
+unknown transport failure. They exclude response bodies, identifiers and error
+messages; readiness and authority requirements and time limits are unchanged.
 
 The companion image Dockerfile also defines separate `fixture-user` and
 `fixture-sms` targets using real production service distributions without test

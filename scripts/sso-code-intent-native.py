@@ -28,6 +28,30 @@ class Rejected(Exception):
     pass
 
 
+class ControlStatus(Rejected):
+    pass
+
+
+class ControlSchema(Rejected):
+    pass
+
+
+PROVIDER_STATES = frozenset({'ARMED', 'FLOW_BOUND', 'PREPARING', 'READY', 'STAGE_BOUND',
+                             'STAGED', 'CONFIRMED', 'FAILED', 'CANCELLED', 'EXPIRED'})
+
+
+def ready_diagnostic_valid(value):
+    require(type(value) is dict and type(value.get('check')) is str)
+    check = value['check']
+    require(check in {'setup_deadline', 'control_status', 'control_schema', 'provider_state', 'transport_unknown'})
+    if check == 'provider_state':
+        require(set(value) == {'check', 'provider_state'} and type(value['provider_state']) is str
+                and value['provider_state'] in PROVIDER_STATES)
+    else:
+        require(set(value) == {'check'})
+    return value
+
+
 class CleanupFailure(Rejected):
     pass
 
@@ -121,11 +145,18 @@ class Controls:
             require(len(body) <= 12288)
             connection.request('POST', CONTROL + operation, body, {'Content-Type': 'application/json', 'X-ArMoney-Code-Intent-Fixture-Control-Key': self.key})
             response = connection.getresponse()
-            require(response.status == 200 and response.getheader('Cache-Control') == 'no-store')
+            if response.status != 200:
+                raise ControlStatus()
+            if response.getheader('Cache-Control') != 'no-store':
+                raise ControlSchema()
             raw = response.read(12289)
-            require(not expired.is_set() and len(raw) <= 12288)
-            result = json.loads(raw.decode('utf-8'), object_pairs_hook=pairs)
-            require(type(result) is dict)
+            require(not expired.is_set())
+            try:
+                require(len(raw) <= 12288)
+                result = json.loads(raw.decode('utf-8'), object_pairs_hook=pairs)
+                require(type(result) is dict)
+            except Exception:
+                raise ControlSchema() from None
             return result
         finally:
             timer.cancel()
@@ -208,6 +239,7 @@ class Browser:
 
 def execute(data, transport, browser, clock=time.monotonic, pause=time.sleep):
     phase, handle = 'arm', None
+    ready_detail = None
     start = clock()
     end, setup = start + 115, start + 85
 
@@ -235,12 +267,24 @@ def execute(data, transport, browser, clock=time.monotonic, pause=time.sleep):
         browser.click('prepare', remaining(setup))
         phase = 'ready'
         while True:
+            ready_detail = {'check': 'setup_deadline'} if min(end, setup) - clock() <= 0 else None
             remaining(setup)
-            result = control('state', {'experiment_handle': handle})
-            require(set(result) == {'state'})
+            try:
+                result = control('state', {'experiment_handle': handle})
+            except ControlStatus:
+                ready_detail = {'check': 'control_status'}
+                raise
+            except ControlSchema:
+                ready_detail = {'check': 'control_schema'}
+                raise
+            if type(result) is not dict or set(result) != {'state'} or type(result['state']) is not str or result['state'] not in PROVIDER_STATES:
+                ready_detail = {'check': 'control_schema'}
+                raise Rejected()
+            ready_detail = {'check': 'provider_state', 'provider_state': result['state']}
             if result['state'] == 'READY':
                 break
             require(result['state'] in {'ARMED', 'FLOW_BOUND', 'PREPARING'})
+            ready_detail = {'check': 'setup_deadline'} if min(end, setup) - clock() <= 0 else None
             pause(min(.1, remaining(setup)))
         phase = 'bind-stage'
         require(control('bind-stage', {'experiment_handle': handle, 'command_id': str(uuid.uuid4())}) == {'state': 'STAGE_BOUND'})
@@ -256,7 +300,10 @@ def execute(data, transport, browser, clock=time.monotonic, pause=time.sleep):
                 transport.call('cancel', {'experiment_handle': handle}, max(.001, min(4, end - clock())))
             except Exception:
                 pass
-        return {'status': 'not_verified', 'phase': phase}
+        result = {'status': 'not_verified', 'phase': phase}
+        if phase == 'ready':
+            result['ready_diagnostic'] = ready_diagnostic_valid(ready_detail or {'check': 'transport_unknown'})
+        return result
 
 
 def run_browser(data):

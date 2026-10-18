@@ -65,6 +65,88 @@ class Route:
 
 
 class ControllerTests(unittest.TestCase):
+    def ready_failure(self, response=None, failure=None, expire=False):
+        class ReadyTransport(Transport):
+            def call(self, op, value, remaining):
+                if op == 'state':
+                    self.calls.append((op, value))
+                    if failure is not None:
+                        raise failure
+                    return response
+                return super().call(op, value, remaining)
+        now = [0.0]
+        class ReadyBrowser(Browser):
+            def click(self, op, remaining):
+                super().click(op, remaining)
+                if expire and op == 'prepare':
+                    now[0] = 85.0
+        transport = ReadyTransport()
+        result = m.execute(data(), transport, ReadyBrowser(), clock=lambda: now[0])
+        self.assertEqual(result['status'], 'not_verified')
+        self.assertEqual(result['phase'], 'ready')
+        self.assertEqual([op for op, _ in transport.calls].count('cancel'), 1)
+        self.assertNotIn('bind-stage', [op for op, _ in transport.calls])
+        return result
+
+    def test_ready_diagnostic_failure_classes_and_redaction(self):
+        cases = [(dict(state='FAILED'), None, False, {'check': 'provider_state', 'provider_state': 'FAILED'}),
+                 (None, m.ControlStatus(), False, {'check': 'control_status'}),
+                 (None, m.ControlSchema(), False, {'check': 'control_schema'}),
+                 (None, TimeoutError('SECRET URL PASSWORD'), False, {'check': 'transport_unknown'}),
+                 (None, None, True, {'check': 'setup_deadline'})]
+        for response, failure, expire, expected in cases:
+            with self.subTest(expected=expected):
+                result = self.ready_failure(response, failure, expire)
+                self.assertEqual(result['ready_diagnostic'], expected)
+                self.assertNotIn('SECRET', json.dumps(result))
+                self.assertEqual(set(result), {'status', 'phase', 'ready_diagnostic'})
+
+    def test_ready_malformed_unhashable_unknown_and_extra_fields_redacted(self):
+        for response in ({'state': []}, {'state': {}}, {'state': True}, {'state': 'SECRET'},
+                         {'state': 'READY', 'password': 'SECRET'}, [], None):
+            with self.subTest(response=response):
+                self.assertEqual(self.ready_failure(response)['ready_diagnostic'], {'check': 'control_schema'})
+
+    def test_actual_control_transport_classifies_status_and_schema_without_network(self):
+        class Timer:
+            def __init__(self, *args): pass
+            def start(self): pass
+            def cancel(self): pass
+            def join(self): pass
+        class Connection:
+            def __init__(self, *args, **kwargs): pass
+            def request(self, *args, **kwargs): pass
+            def getresponse(self): return response
+            def close(self): pass
+        class Response:
+            def __init__(self, status, cache, body): self.status, self.cache, self.body = status, cache, body
+            def getheader(self, name): return self.cache
+            def read(self, limit): return self.body
+        for response, expected in ((Response(503, 'no-store', b'SECRET'), m.ControlStatus),
+                                   (Response(200, 'private', b'SECRET'), m.ControlSchema),
+                                   (Response(200, 'no-store', b'SECRET'), m.ControlSchema),
+                                   (Response(200, 'no-store', b'{"state":"READY","state":"SECRET"}'), m.ControlSchema)):
+            with self.subTest(expected=expected), patch.object(m.http.client, 'HTTPConnection', Connection), patch.object(m.threading, 'Timer', Timer):
+                with self.assertRaises(expected) as caught:
+                    m.Controls('synthetic').call('state', {'experiment_handle': 'A' * 43}, 4)
+                self.assertEqual(str(caught.exception), '')
+                self.assertIsNone(caught.exception.__cause__)
+
+    def test_ready_diagnostic_exact_schema(self):
+        for invalid in ({'check': []}, {'check': 'unknown'}, {'check': 'provider_state'},
+                        {'check': 'provider_state', 'provider_state': []},
+                        {'check': 'provider_state', 'provider_state': 'SECRET'},
+                        {'check': 'control_status', 'provider_state': 'FAILED'},
+                        {'check': 'transport_unknown', 'password': 'SECRET'}):
+            with self.subTest(invalid=invalid), self.assertRaises(m.Rejected):
+                m.ready_diagnostic_valid(invalid)
+        for state in m.PROVIDER_STATES:
+            self.assertEqual(m.ready_diagnostic_valid({'check': 'provider_state', 'provider_state': state})['provider_state'], state)
+
+    def test_other_failures_keep_original_two_fields(self):
+        for operation in ('arm', 'bind-stage', 'confirm'):
+            self.assertEqual(set(m.execute(data(), Transport(operation), Browser())), {'status', 'phase'})
+
     def test_exact_input(self):
         self.assertEqual(m.parse_input(json.dumps(data()).encode()), data())
 
