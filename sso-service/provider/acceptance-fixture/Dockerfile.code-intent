@@ -23,6 +23,8 @@ RUN printf '%s\n' 'com.arman.bank.sso.CodeIntentFixtureLoginProtocolFactory' > s
     && find sso-service/provider/acceptance-fixture/src sso-service/provider/acceptance-fixture/build.gradle sso-service/provider/acceptance-fixture/settings.gradle sso-service/provider/acceptance-fixture/Dockerfile.code-intent -type f -print0 | sort -z | xargs -0 sha256sum > /fixture-provenance/fixture-source.sha256
 
 FROM quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c AS fixture-augmentation
+# Persist the build-time path used by this fixture's optimized runtime.
+ENV KC_HTTP_RELATIVE_PATH=/sso
 COPY --from=acceptance-build --chown=keycloak:keycloak /provider-package/providers/ /opt/keycloak/providers/
 COPY --from=acceptance-build --chown=keycloak:keycloak /provider-package/themes/ /opt/keycloak/themes/
 COPY --from=acceptance-build --chown=keycloak:keycloak /workspace/sso-service/provider/acceptance-fixture/build/libs/armoney-code-intent-acceptance-fixture-0.1.0.jar /opt/keycloak/providers/
