@@ -8,7 +8,8 @@ Only master/admin-cli obtains an admin token; the synthetic user never does.
 Failures after import leave the owned realm in place: no retry, rollback/delete,
 or modification of an existing realm is attempted. Root owns disposal/restart.
 Private failure results add only the last fixed checkpoint, optional node A/B,
-and optional HTTP status 100..599. Success remains exactly phase/status/subject.
+optional HTTP status 100..599, and an optional fixed CLIENT predicate.
+Success remains exactly phase/status/subject.
 """
 import argparse
 import http.client
@@ -35,21 +36,31 @@ CHECKPOINTS = frozenset({"config", "token", "preexisting", "import", "realm", "d
                          "flow", "action", "off-control", "create-user", "query-user", "user-readback",
                          "off-control-after"})
 
+CLIENT_PREDICATES = frozenset({"client-list", "client-object", "client-id", "enabled", "protocol",
+                               "public-client", "standard-flow", "implicit-flow", "direct-access-grants",
+                               "service-accounts", "full-scope", "redirect-uris", "web-origins", "secret-absent",
+                               "attributes-object", "pkce-s256", "device-grant", "ciba-grant",
+                               "logout-redirects", "flow-overrides"})
+
 
 class Progress:
     """Per-invocation allowlist only; never retain request/response or exceptions."""
     def __init__(self):
         self.mark("config")
 
-    def mark(self, checkpoint, node=None, http_status=None):
+    def mark(self, checkpoint, node=None, http_status=None, predicate=None):
         require(type(checkpoint) is str and checkpoint in CHECKPOINTS)
         require(node is None or type(node) is str and node in {"A", "B"})
         require(http_status is None or type(http_status) is int and 100 <= http_status <= 599)
+        require(predicate is None or checkpoint == "client" and type(predicate) is str
+                and predicate in CLIENT_PREDICATES)
         value = {"checkpoint": checkpoint}
         if node is not None:
             value["node"] = node
         if http_status is not None:
             value["http_status"] = http_status
+        if predicate is not None:
+            value["predicate"] = predicate
         self._last = value
 
     def snapshot(self):
@@ -184,20 +195,33 @@ def request(node, method, path, token=None, payload=None, form=None):
         timer.join()
 
 
-def check_client(client):
-    require(isinstance(client, dict) and client.get("clientId") == "armoney-android"
-            and client.get("enabled") is True and client.get("protocol") == "openid-connect"
-            and client.get("publicClient") is True and client.get("standardFlowEnabled") is True
-            and client.get("implicitFlowEnabled") is False and client.get("directAccessGrantsEnabled") is False
-            and client.get("serviceAccountsEnabled") is False and client.get("fullScopeAllowed") is False
-            and client.get("redirectUris") == ["https://fixture-client/callback"]
-            and client.get("webOrigins") == [] and not client.get("secret"))
+def check_client(client, rejected=None):
+    # Only fixed local labels reach the callback; observed values never do.
+    def check(condition, predicate):
+        if not condition:
+            if rejected is not None:
+                rejected(predicate)
+            require(False)
+    check(isinstance(client, dict), "client-object")
+    check(client.get("clientId") == "armoney-android", "client-id")
+    check(client.get("enabled") is True, "enabled")
+    check(client.get("protocol") == "openid-connect", "protocol")
+    check(client.get("publicClient") is True, "public-client")
+    check(client.get("standardFlowEnabled") is True, "standard-flow")
+    check(client.get("implicitFlowEnabled") is False, "implicit-flow")
+    check(client.get("directAccessGrantsEnabled") is False, "direct-access-grants")
+    check(client.get("serviceAccountsEnabled") is False, "service-accounts")
+    check(client.get("fullScopeAllowed") is False, "full-scope")
+    check(client.get("redirectUris") == ["https://fixture-client/callback"], "redirect-uris")
+    check(client.get("webOrigins") == [], "web-origins")
+    check(not client.get("secret"), "secret-absent")
     attrs = client.get("attributes", {})
-    require(attrs.get("pkce.code.challenge.method") == "S256"
-            and attrs.get("oauth2.device.authorization.grant.enabled") == "false"
-            and attrs.get("oidc.ciba.grant.enabled") == "false"
-            and not attrs.get("post.logout.redirect.uris")
-            and not client.get("authenticationFlowBindingOverrides"))
+    check(isinstance(attrs, dict), "attributes-object")
+    check(attrs.get("pkce.code.challenge.method") == "S256", "pkce-s256")
+    check(attrs.get("oauth2.device.authorization.grant.enabled") == "false", "device-grant")
+    check(attrs.get("oidc.ciba.grant.enabled") == "false", "ciba-grant")
+    check(not attrs.get("post.logout.redirect.uris"), "logout-redirects")
+    check(not client.get("authenticationFlowBindingOverrides"), "flow-overrides")
 
 
 def realm_source():
@@ -242,8 +266,12 @@ def provision(config, transport=request, progress=None):
         discovery = strict_json(call("discovery", node, "GET", BASE + "/realms/armoney/.well-known/openid-configuration", 200))
         require(discovery.get("issuer") == config["expected_issuer"])
         clients = strict_json(call("client", node, "GET", REALM + "/clients?clientId=armoney-android", 200, token))
-        require(isinstance(clients, list) and len(clients) == 1)
-        check_client(clients[0])
+        def rejected_client(predicate):
+            mark("client", {"sso-a": "A", "sso-b": "B"}[node], 200, predicate)
+        if not (isinstance(clients, list) and len(clients) == 1):
+            rejected_client("client-list")
+            require(False)
+        check_client(clients[0], rejected_client)
         executions = strict_json(call("flow", node, "GET", REALM + "/authentication/flows/" + FLOW + "/executions", 200, token))
         require(isinstance(executions, list) and len(executions) == 1
                 and executions[0].get("providerId") == "armoney-password-proof"

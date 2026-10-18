@@ -244,6 +244,75 @@ class ProvisionTests(unittest.TestCase):
         self.assertEqual({"checkpoint": "config"}, result["diagnostic"])
         self.assertEqual([], transport.calls)
 
+    def test_client_predicates_cover_each_rejection_without_observed_values(self):
+        secret = "secret-response-body-and-token"
+        fields = {"clientId": "client-id", "enabled": "enabled", "protocol": "protocol",
+                  "publicClient": "public-client", "standardFlowEnabled": "standard-flow",
+                  "implicitFlowEnabled": "implicit-flow", "directAccessGrantsEnabled": "direct-access-grants",
+                  "serviceAccountsEnabled": "service-accounts", "fullScopeAllowed": "full-scope",
+                  "redirectUris": "redirect-uris", "webOrigins": "web-origins", "secret": "secret-absent",
+                  "authenticationFlowBindingOverrides": "flow-overrides"}
+        attrs = {"pkce.code.challenge.method": "pkce-s256",
+                 "oauth2.device.authorization.grant.enabled": "device-grant",
+                 "oidc.ciba.grant.enabled": "ciba-grant", "post.logout.redirect.uris": "logout-redirects"}
+        for field, predicate in fields.items():
+            transport = FakeTransport()
+            transport.client[field] = secret
+            with self.subTest(field=field):
+                self.assert_client_diagnostic(transport, predicate)
+        for field, predicate in attrs.items():
+            transport = FakeTransport()
+            transport.client["attributes"][field] = secret
+            with self.subTest(attribute=field):
+                self.assert_client_diagnostic(transport, predicate)
+        for value in (None, [], secret):
+            transport = FakeTransport()
+            transport.client = value
+            with self.subTest(client_type=type(value).__name__):
+                self.assert_client_diagnostic(transport, "client-object")
+            transport = FakeTransport()
+            transport.client["attributes"] = value
+            with self.subTest(attributes_type=type(value).__name__):
+                self.assert_client_diagnostic(transport, "attributes-object")
+        transport = FakeTransport()
+        def wrong_list(node, method, path, **kwargs):
+            if path.endswith("/clients?clientId=armoney-android"):
+                return 200, json.dumps({"untrusted": secret}).encode()
+            return transport(node, method, path, **kwargs)
+        self.assert_client_diagnostic(wrong_list, "client-list")
+
+    def assert_client_diagnostic(self, transport, predicate):
+        result = self.cli_failure(transport)
+        self.assertEqual({"checkpoint": "client", "node": "A", "http_status": 200,
+                          "predicate": predicate}, result["diagnostic"])
+        if isinstance(transport, FakeTransport):
+            self.assertIsNone(transport.created)
+
+    def test_client_security_booleans_reject_integer_and_other_nonboolean_values(self):
+        fields = {"enabled": "enabled", "publicClient": "public-client",
+                  "standardFlowEnabled": "standard-flow", "implicitFlowEnabled": "implicit-flow",
+                  "directAccessGrantsEnabled": "direct-access-grants",
+                  "serviceAccountsEnabled": "service-accounts", "fullScopeAllowed": "full-scope"}
+        for field, predicate in fields.items():
+            for value in (0, 1, None, "true", "false"):
+                transport = FakeTransport()
+                transport.client[field] = value
+                with self.subTest(field=field, value=value):
+                    self.assert_client_diagnostic(transport, predicate)
+
+    def test_predicate_allowlist_is_client_only_and_invalid_marks_do_not_replace_progress(self):
+        progress = p.Progress()
+        progress.mark("client", "B", 200, "pkce-s256")
+        expected = progress.snapshot()
+        for checkpoint, predicate in (("client", "secret-response-body-and-token"),
+                                      ("client", True), ("client", 1),
+                                      ("flow", "pkce-s256"), ("config", "client-id")):
+            with self.subTest(checkpoint=checkpoint, predicate=predicate), self.assertRaises(p.Refused):
+                progress.mark(checkpoint, "A", 200, predicate)
+            self.assertEqual(expected, progress.snapshot())
+        progress.mark("flow", "A", 200)
+        self.assertNotIn("predicate", progress.snapshot())
+
     def cli_failure(self, transport, candidate=None):
         actual_provision = p.provision
         def selected(configured, progress=None):
@@ -265,7 +334,7 @@ class ProvisionTests(unittest.TestCase):
             result = json.loads(raw)
             self.assertEqual({"phase", "status", "diagnostic"}, set(result))
             self.assertEqual("FAILED_NO_AUTOMATIC_RETRY", result["status"])
-            self.assertTrue(set(result["diagnostic"]) <= {"checkpoint", "node", "http_status"})
+            self.assertTrue(set(result["diagnostic"]) <= {"checkpoint", "node", "http_status", "predicate"})
             return result
 
     def test_transport_rejects_arbitrary_nodes_redirects_and_oversized_responses(self):

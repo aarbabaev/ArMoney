@@ -1580,9 +1580,12 @@ fixture Dockerfile now pins `/sso` before augmentation, matching optimized runti
 configuration. A fresh run at `f01ef2f3` rebuilt all four images and passed both-node
 HTTP and verified edge-TLS readiness. It then failed at provisioning in 232.078
 seconds; the runner exited 1, owned resources were removed and the CI controller
-restored. A diagnostic run at `64d007c0` failed at discovery validation on node A despite HTTP 200, in 229.093 seconds; owned resources were removed. Source analysis identified the full `KC_HOSTNAME` URL missing `/sso`. All three fixture hostname settings now include that path; strict issuer validation is preserved. This correction still requires fresh runtime verification. The helper now records only a fixed
-checkpoint, optional node A/B and optional HTTP status on private failure output;
-14 synthetic tests passed. Success output remains unchanged. Diagnostic reporting
+restored. A diagnostic run at `64d007c0` failed at discovery validation on node A despite HTTP 200, in 229.093 seconds; owned resources were removed. Source analysis identified the full `KC_HOSTNAME` URL missing `/sso`. All three fixture hostname settings now include that path; strict issuer validation is preserved. A fresh run at `af81b793` passed discovery and then failed at client readback on node A (HTTP 200), in 231.656 seconds; owned resources were removed. The rejected client predicate remains unknown. No client or security validation was relaxed. The helper now records only a fixed
+checkpoint, optional node A/B and optional HTTP status on private failure output.
+Client readback failures additionally identify one fixed local predicate without
+recording observed values; strict client acceptance remains unchanged. The
+expanded diagnostic suite passed 17 portable tests with mocked transport,
+independently retested; this is separate from runtime proof. Success output remains unchanged. Diagnostic reporting
 does not fix provisioning. Cluster association, realm/user provisioning and the
 complete native topology remain unverified. The companion has
 no health endpoint; only Auth/User/SMS expose `/health/ready`.
@@ -1630,7 +1633,8 @@ All four new pacing/cutoff/rate-rejection/cancellation regressions executed at
 `64d007c0`: 169 tests across 29 suites, zero failures, errors or skips, with
 `verifyFixtureJars` executed. Independent artifact verification matched all 857
 archived source files to that revision. Native acceptance and mandatory CI
-remain separate gates; this result is not evidence for later source changes.
+remain separate gates. Mandatory CI run `39083572626` completed successfully for
+`64d007c0`; neither that CI nor the 169-test result covers later source changes.
 
 ## Private fixture configuration
 
