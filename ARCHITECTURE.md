@@ -1551,7 +1551,7 @@ remain outside this image-build evidence.
 
 ## Isolated native-flow wiring source
 
-`compose.sso-code-intent.yaml` is a separate, unexecuted topology source. It uses
+`compose.sso-code-intent.yaml` is a separate disposable acceptance topology. It uses
 three empty tmpfs PostgreSQL instances, real Auth/User/SMS processes, the Auth
 companion, two dedicated Keycloak nodes and a private HTTPS Caddy edge. There
 are no host ports, external networks or named volumes. All images and component
@@ -1572,9 +1572,13 @@ root stops both nodes before restarting enabled with the read-back UUID.
 
 The companion image Dockerfile also defines separate `fixture-user` and
 `fixture-sms` targets using real production service distributions without test
-classes. These new targets, Caddy syntax, schema startup, cluster behavior and
-the complete topology have not been built or exercised. Static Compose parsing
-with dummy inputs passed; that is not a runtime smoke test. The companion has
+classes. A bounded isolated run at `d579ebbf` built all four targets and started the
+disposable PostgreSQL database and Caddy. Both Keycloak nodes exited with a
+build-time `kc.http-relative-path` mismatch before realm provisioning. The run
+failed at OFF readiness in 313.921 seconds; owned resources were removed. The
+fixture Dockerfile now pins `/sso` before augmentation, matching optimized runtime
+configuration. This fix requires a fresh image/startup check; cluster behavior,
+realm provisioning and the complete native topology remain unverified. The companion has
 no health endpoint; only Auth/User/SMS expose `/health/ready`.
 
 `provision-code-intent-realm.py` is the phase-one private-input helper. It accepts
@@ -1603,8 +1607,11 @@ This repairs a fixture-only gap: diagnostic READY exposed no handle through the
 controller interface, yet the previous bind request required one. The controller
 does not gain provider-to-Auth credentials, Flow input or authority. Native form
 validation, genuine code generation, stage13, transaction COMMIT, real node-B
-membership and original lookup/confirm remain unchanged. Eight new regression
-cases are source-reviewed but unexecuted; fresh unfiltered checks, augmentation
+membership and original lookup/confirm remain unchanged. All eight new regression
+cases executed in unfiltered checks at `d579ebbf`: 165 tests across 29 suites,
+zero failures, errors or skips, with `verifyFixtureJars` executed. Independent
+artifact verification matched the archived sources to that revision. The run
+took 93.5 seconds and owned resources were removed. Fresh augmentation/startup
 and actual native acceptance remain required. Production and Auth wire contracts
 are unchanged.
 
