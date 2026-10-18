@@ -12,6 +12,7 @@ from unittest.mock import patch
 SPEC = importlib.util.spec_from_file_location("provision_fixture", Path(__file__).with_name("provision-code-intent-realm.py"))
 p = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(p)
+EXECUTION = "727d4f44-234b-4e2e-89a4-247db759f9cb"
 SUBJECT = "d14d7e29-80f7-41ed-a5b5-99d82bbba4df"
 
 
@@ -34,7 +35,9 @@ class FakeTransport:
         self.subject = SUBJECT
         self.off_status = 503
         self.issuer = config()["expected_issuer"]
-        self.execution = {"providerId": "armoney-password-proof", "requirement": "REQUIRED", "authenticationFlow": False}
+        self.execution = {"id": EXECUTION, "providerId": "armoney-password-proof", "requirement": "REQUIRED", "authenticationFlow": False}
+        self.execution_model = {"id": EXECUTION, "authenticator": "armoney-password-proof",
+                                "requirement": "REQUIRED", "authenticatorFlow": False}
         self.saved_override = {}
 
     def __call__(self, node, method, path, token=None, payload=None, form=None):
@@ -50,6 +53,8 @@ class FakeTransport:
             return 200, json.dumps({"issuer": self.issuer}).encode()
         if path == p.REALM + "/clients?clientId=armoney-android":
             return 200, json.dumps([self.client]).encode()
+        if path == p.REALM + "/authentication/executions/" + EXECUTION:
+            return 200, json.dumps(self.execution_model).encode()
         if path.endswith("/executions"):
             return 200, json.dumps([self.execution]).encode()
         if path.endswith("/authentication/required-actions"):
@@ -227,7 +232,7 @@ class ProvisionTests(unittest.TestCase):
         transport = FakeTransport()
         transport.execution["providerId"] = "secret-response-body-and-token"
         result = self.cli_failure(transport)
-        self.assertEqual({"checkpoint": "flow", "node": "A", "http_status": 200}, result["diagnostic"])
+        self.assertEqual({"checkpoint": "flow", "node": "A", "http_status": 200, "predicate": "flow-provider"}, result["diagnostic"])
         transport = FakeTransport()
         def failure(node, method, path, **kwargs):
             if node == "sso-b" and path.endswith("/.well-known/openid-configuration"):
@@ -294,6 +299,95 @@ class ProvisionTests(unittest.TestCase):
         transport = FakeTransport()
         del transport.client["attributes"]["post.logout.redirect.uris"]
         self.assert_client_diagnostic(transport, "logout-redirects")
+
+    def test_leaf_listing_null_or_omitted_requires_authoritative_model_proof(self):
+        for omitted in (True, False):
+            transport = FakeTransport()
+            if omitted:
+                del transport.execution["authenticationFlow"]
+            else:
+                transport.execution["authenticationFlow"] = None
+            self.assertEqual(SUBJECT, p.provision(config(), transport)["subject"])
+            reads = [call for call in transport.calls if call[2].endswith("/authentication/executions/" + EXECUTION)]
+            self.assertEqual(2, len(reads))
+            self.assertTrue(all(call[1] == "GET" and call[3] == "synthetic-admin-token" for call in reads))
+
+    def test_malicious_execution_ids_refuse_before_authoritative_request(self):
+        for value in (None, "../users", "https://attacker.invalid/", EXECUTION.upper(), 1):
+            transport = FakeTransport()
+            transport.execution["id"] = value
+            result = self.cli_failure(transport)
+            self.assertEqual("flow-id", result["diagnostic"]["predicate"])
+            self.assertFalse(any("/authentication/executions/" in call[2] for call in transport.calls))
+
+    def test_remaining_readback_predicates_are_fixed_and_redacted(self):
+        secret = "secret-response-body-and-token"
+        cases = []
+        for value, predicate in (([], "flow-list"), ([secret], "flow-object"),
+                                 ([{"id": EXECUTION, "providerId": secret}], "flow-provider"),
+                                 ([{"id": EXECUTION, "providerId": "armoney-password-proof", "requirement": secret}], "flow-requirement")):
+            cases.append(("flow", "/executions", value, predicate))
+        cases.append(("flow", "/authentication/executions/" + EXECUTION, secret, "execution-object"))
+        for field, predicate in (("id", "execution-id"), ("authenticator", "execution-authenticator"),
+                                 ("requirement", "execution-requirement"), ("authenticatorFlow", "execution-not-flow")):
+            model = FakeTransport().execution_model
+            model[field] = secret
+            cases.append(("flow", "/authentication/executions/" + EXECUTION, model, predicate))
+        for value, predicate in (({}, "action-list"), ([secret], "action-object"), ([], "action-selection")):
+            cases.append(("action", "/authentication/required-actions", value, predicate))
+        for field, predicate in (("alias", "action-alias"), ("providerId", "action-provider")):
+            action = copy.deepcopy(p.realm_source()["requiredActions"][0])
+            action[field] = secret
+            cases.append(("action", "/authentication/required-actions", [action], predicate))
+        for value, predicate in (({}, "user-list"), ([secret], "user-object"), ([{"id": secret}], "user-id")):
+            cases.append(("query-user", "/users?", value, predicate))
+        cases.append(("user-readback", "/users/" + SUBJECT, secret, "saved-object"))
+        for field, predicate in (("id", "saved-id"), ("enabled", "saved-enabled"),
+                                 ("emailVerified", "saved-email-verified"), ("requiredActions", "saved-actions"),
+                                 ("username", "saved-username"), ("email", "saved-email"),
+                                 ("firstName", "saved-first-name"), ("lastName", "saved-last-name")):
+            transport = FakeTransport()
+            transport.saved_override[field] = secret
+            result = self.cli_failure(transport)
+            self.assertEqual(predicate, result["diagnostic"]["predicate"])
+        for checkpoint, suffix, value, predicate in cases:
+            transport = FakeTransport()
+            def altered(node, method, path, **kwargs):
+                if path.endswith(suffix) or suffix == "/users?" and "/users?" in path:
+                    return 200, json.dumps(value).encode()
+                return transport(node, method, path, **kwargs)
+            with self.subTest(predicate=predicate):
+                result = self.cli_failure(altered)
+                self.assertEqual({"checkpoint": checkpoint, "node": "A", "http_status": 200,
+                                  "predicate": predicate}, result["diagnostic"])
+
+    def test_listing_rejects_contradictory_or_malformed_flow_kind(self):
+        for value in (True, 0, 1, "false", [], {}):
+            transport = FakeTransport()
+            transport.execution["authenticationFlow"] = value
+            with self.subTest(value=value):
+                self.assertEqual("flow-kind", self.cli_failure(transport)["diagnostic"]["predicate"])
+                self.assertFalse(any("/authentication/executions/" in call[2] for call in transport.calls))
+
+    def test_authoritative_flow_boolean_must_be_explicit_false(self):
+        for value in (None, True, 0, 1, "false", [], {}):
+            transport = FakeTransport()
+            transport.execution_model["authenticatorFlow"] = value
+            with self.subTest(value=value):
+                self.assertEqual("execution-not-flow", self.cli_failure(transport)["diagnostic"]["predicate"])
+        transport = FakeTransport()
+        del transport.execution_model["authenticatorFlow"]
+        self.assertEqual("execution-not-flow", self.cli_failure(transport)["diagnostic"]["predicate"])
+
+    def test_predicates_cannot_cross_checkpoint_boundaries(self):
+        progress = p.Progress()
+        for checkpoint, predicates in p.PREDICATES.items():
+            for predicate in predicates:
+                progress.mark(checkpoint, "A", 200, predicate)
+                self.assertEqual(predicate, progress.snapshot()["predicate"])
+                wrong = "action" if checkpoint != "action" else "flow"
+                with self.assertRaises(p.Refused):
+                    progress.mark(wrong, "A", 200, predicate)
 
     def assert_client_diagnostic(self, transport, predicate):
         result = self.cli_failure(transport)

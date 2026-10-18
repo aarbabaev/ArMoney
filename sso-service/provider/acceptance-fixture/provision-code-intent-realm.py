@@ -8,7 +8,7 @@ Only master/admin-cli obtains an admin token; the synthetic user never does.
 Failures after import leave the owned realm in place: no retry, rollback/delete,
 or modification of an existing realm is attempted. Root owns disposal/restart.
 Private failure results add only the last fixed checkpoint, optional node A/B,
-optional HTTP status 100..599, and an optional fixed CLIENT predicate.
+optional HTTP status 100..599, and an optional fixed checkpoint-specific predicate.
 Success remains exactly phase/status/subject.
 """
 import argparse
@@ -42,6 +42,17 @@ CLIENT_PREDICATES = frozenset({"client-list", "client-object", "client-id", "ena
                                "attributes-object", "pkce-s256", "device-grant", "ciba-grant",
                                "logout-redirects", "flow-overrides"})
 
+PREDICATES = {
+    "client": CLIENT_PREDICATES,
+    "flow": frozenset({"flow-list", "flow-object", "flow-provider", "flow-requirement", "flow-kind", "flow-id",
+                       "execution-object", "execution-id", "execution-authenticator", "execution-requirement",
+                       "execution-not-flow"}),
+    "action": frozenset({"action-list", "action-object", "action-selection", "action-alias", "action-provider"}),
+    "query-user": frozenset({"user-list", "user-object", "user-id"}),
+    "user-readback": frozenset({"saved-object", "saved-id", "saved-enabled", "saved-email-verified",
+                                "saved-actions", "saved-username", "saved-email", "saved-first-name", "saved-last-name"}),
+}
+
 
 class Progress:
     """Per-invocation allowlist only; never retain request/response or exceptions."""
@@ -52,8 +63,8 @@ class Progress:
         require(type(checkpoint) is str and checkpoint in CHECKPOINTS)
         require(node is None or type(node) is str and node in {"A", "B"})
         require(http_status is None or type(http_status) is int and 100 <= http_status <= 599)
-        require(predicate is None or checkpoint == "client" and type(predicate) is str
-                and predicate in CLIENT_PREDICATES)
+        require(predicate is None or checkpoint in PREDICATES and type(predicate) is str
+                and predicate in PREDICATES[checkpoint])
         value = {"checkpoint": checkpoint}
         if node is not None:
             value["node"] = node
@@ -251,6 +262,17 @@ def provision(config, transport=request, progress=None):
         mark(checkpoint, node_label, status if type(status) is int and 100 <= status <= 599 else None)
         require(status == expected and isinstance(raw, bytes) and len(raw) <= LIMIT)
         return raw
+    def checked(condition, checkpoint, node, predicate):
+        if not condition:
+            mark(checkpoint, {"sso-a": "A", "sso-b": "B"}[node], 200, predicate)
+            require(False)
+
+    def checked_uuid(value, checkpoint, node, predicate):
+        try:
+            return canonical_uuid(value)
+        except Refused:
+            checked(False, checkpoint, node, predicate)
+
     auth = strict_json(call("token", "sso-a", "POST", BASE + "/realms/master/protocol/openid-connect/token", 200,
                            form={"client_id": "admin-cli", "grant_type": "password",
                                  "username": config["admin_username"], "password": config["admin_password"]}))
@@ -274,14 +296,29 @@ def provision(config, transport=request, progress=None):
             require(False)
         check_client(clients[0], rejected_client)
         executions = strict_json(call("flow", node, "GET", REALM + "/authentication/flows/" + FLOW + "/executions", 200, token))
-        require(isinstance(executions, list) and len(executions) == 1
-                and executions[0].get("providerId") == "armoney-password-proof"
-                and executions[0].get("requirement") == "REQUIRED"
-                and executions[0].get("authenticationFlow") is False)
+        checked(isinstance(executions, list) and len(executions) == 1, "flow", node, "flow-list")
+        execution = executions[0]
+        checked(isinstance(execution, dict), "flow", node, "flow-object")
+        checked(execution.get("providerId") == "armoney-password-proof", "flow", node, "flow-provider")
+        checked(execution.get("requirement") == "REQUIRED", "flow", node, "flow-requirement")
+        checked(execution.get("authenticationFlow") is None or execution.get("authenticationFlow") is False,
+                "flow", node, "flow-kind")
+        execution_id = checked_uuid(execution.get("id"), "flow", node, "flow-id")
+        # The listing's nullable authenticationFlow is not populated for leaf entries in KC 26.7.4.
+        # Read the underlying execution representation, which exports the model's primitive boolean.
+        model = strict_json(call("flow", node, "GET", REALM + "/authentication/executions/" + execution_id, 200, token))
+        checked(isinstance(model, dict), "flow", node, "execution-object")
+        checked(model.get("id") == execution_id, "flow", node, "execution-id")
+        checked(model.get("authenticator") == "armoney-password-proof", "flow", node, "execution-authenticator")
+        checked(model.get("requirement") == "REQUIRED", "flow", node, "execution-requirement")
+        checked(model.get("authenticatorFlow") is False, "flow", node, "execution-not-flow")
         actions = strict_json(call("action", node, "GET", REALM + "/authentication/required-actions", 200, token))
-        require(isinstance(actions, list))
+        checked(isinstance(actions, list), "action", node, "action-list")
+        checked(all(isinstance(action, dict) for action in actions), "action", node, "action-object")
         selected = [a for a in actions if a.get("enabled") is True and a.get("defaultAction") is True]
-        require(len(selected) == 1 and selected[0].get("alias") == ACTION and selected[0].get("providerId") == ACTION)
+        checked(len(selected) == 1, "action", node, "action-selection")
+        checked(selected[0].get("alias") == ACTION, "action", node, "action-alias")
+        checked(selected[0].get("providerId") == ACTION, "action", node, "action-provider")
         call("off-control", node, "POST", BASE + "/realms/armoney/armoney-code-intent-fixture/state", 503, payload={})
     supplied = config["synthetic_user"]
     user = {k: supplied[k] for k in ("username", "email", "firstName", "lastName")}
@@ -290,13 +327,19 @@ def provision(config, transport=request, progress=None):
     call("create-user", "sso-a", "POST", REALM + "/users", 201, token, user)
     query = urllib.parse.urlencode({"username": supplied["username"], "exact": "true"})
     users = strict_json(call("query-user", "sso-a", "GET", REALM + "/users?" + query, 200, token))
-    require(isinstance(users, list) and len(users) == 1 and isinstance(users[0], dict))
-    subject = canonical_uuid(users[0].get("id"))
+    checked(isinstance(users, list) and len(users) == 1, "query-user", "sso-a", "user-list")
+    checked(isinstance(users[0], dict), "query-user", "sso-a", "user-object")
+    subject = checked_uuid(users[0].get("id"), "query-user", "sso-a", "user-id")
     for node in NODES:
         saved = strict_json(call("user-readback", node, "GET", REALM + "/users/" + subject, 200, token))
-        require(saved.get("id") == subject and saved.get("enabled") is True
-                and saved.get("emailVerified") is False and saved.get("requiredActions") == [ACTION]
-                and all(saved.get(k) == user[k] for k in ("username", "email", "firstName", "lastName")))
+        checked(isinstance(saved, dict), "user-readback", node, "saved-object")
+        checked(saved.get("id") == subject, "user-readback", node, "saved-id")
+        checked(saved.get("enabled") is True, "user-readback", node, "saved-enabled")
+        checked(saved.get("emailVerified") is False, "user-readback", node, "saved-email-verified")
+        checked(saved.get("requiredActions") == [ACTION], "user-readback", node, "saved-actions")
+        for field, predicate in (("username", "saved-username"), ("email", "saved-email"),
+                                 ("firstName", "saved-first-name"), ("lastName", "saved-last-name")):
+            checked(saved.get(field) == user[field], "user-readback", node, predicate)
         call("off-control-after", node, "POST", BASE + "/realms/armoney/armoney-code-intent-fixture/state", 503, payload={})
     return {"phase": "PHASE1", "status": "BOTH_NODES_STOP_AND_ENABLED_RESTART_REQUIRED", "subject": subject}
 
