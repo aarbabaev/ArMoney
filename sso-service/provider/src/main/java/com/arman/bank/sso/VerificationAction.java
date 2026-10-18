@@ -104,7 +104,15 @@ final class VerificationAction implements RequiredActionProvider {
             String enrollment=LoginProof.uuid(LoginProof.text(marker,"enrollment_id")).toString();
             int email=markerVersion(marker,"email_version"),phone=markerVersion(marker,"phone_version");
             if(!SessionBinding.matches(projectionBinding(context,enrollment,email,phone),LoginProof.text(marker,"binding")))throw new Bridge.Unavailable();
-            JsonNode current=projectionFacts(routingStatus==null?Bridge.configured().enrollment("/internal/enrollments/"+enrollment+"/status",bindingFields(context)):routingStatus.apply(context,enrollment));
+            JsonNode observed;
+            try{
+                observed=routingStatus==null?Bridge.configured().post("/internal/enrollments/"+enrollment+"/status",bindingFields(context)):routingStatus.apply(context,enrollment);
+            }catch(Bridge.Unavailable unavailable){
+                // Only the already validated original routing marker permits retry UI.
+                // No current authority is inferred from an unavailable observation.
+                render(context,"Status is temporarily unavailable. Check status to try again.",true);return;
+            }
+            JsonNode current=projectionFacts(observed);
             if(!enrollment.equals(uuid(current,"enrollment_id"))||email!=current.path("email_contact_version").intValue()||phone!=current.path("phone_contact_version").intValue())throw new Bridge.Unavailable();
             if(!complete(context,current))renderPending(context);
         }catch(Bridge.Rejected|Bridge.Unavailable refusal){throw refusal;}

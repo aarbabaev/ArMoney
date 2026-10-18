@@ -32,6 +32,10 @@ and `PROJECTED` reach the fixed sign-in page. Empty, unknown or duplicate
 operations are rejected. Routing notes cannot construct receipt or projection
 authority.
 
+After validating the pending marker, transient Auth transport unavailability
+retains the status-only retry form. It does not restore OTP controls or grant
+completion. Malformed markers and negative or mismatched fresh facts still deny.
+
 ## Consequences and validation
 
 Trigger reevaluation with a retained marker depends on Auth availability and its

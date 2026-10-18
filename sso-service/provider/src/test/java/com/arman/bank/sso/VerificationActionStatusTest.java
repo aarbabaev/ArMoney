@@ -46,12 +46,22 @@ class VerificationActionStatusTest {
             var f=new Fixture();assertThrows(Bridge.Unavailable.class,()->f.action.rememberProjection(f.context,status));assertTrue(f.base.notes.isEmpty());
         }
     }
+    @Test void unavailableFreshStatusKeepsOnlyPendingRetryThenRequiresFreshProjectedWithoutNoteMutation(){
+        var f=new Fixture();f.current=facts("PROJECTION_PENDING",1,1,true,true);f.action.rememberProjection(f.context,f.current);
+        var original=new HashMap<>(f.base.notes);f.operation("status");f.unavailable=true;f.action.processAction(f.context);
+        assertEquals(1,f.reads);assertEquals(true,f.attributes.get("verificationPending"));assertEquals(0,f.base.terminalPages);assertEquals(original,f.base.notes);
+        f.unavailable=false;f.current=facts("PROJECTED",1,1,true,true);f.action.processAction(f.context);
+        assertEquals(2,f.reads);assertEquals(1,f.base.terminalPages);assertEquals(0,f.base.successes);assertEquals(original,f.base.notes);
+        // A malformed original marker never receives the transient retry presentation.
+        f.base.notes.put(VerificationActionLifecycleTest.PHONE+".projection-pending","{}");f.unavailable=true;f.action.processAction(f.context);
+        assertEquals(2,f.reads);assertEquals(false,f.attributes.get("verificationPending"));
+    }
     static JsonNode facts(String state,int email,int phone,boolean emailVerified,boolean phoneVerified){return org.keycloak.util.JsonSerialization.mapper.createObjectNode()
             .put("enrollment_id","00000000-0000-0000-0000-000000000001").put("version",1).put("state",state).put("email_contact_version",email).put("phone_contact_version",phone).put("email_verified",emailVerified).put("phone_verified",phoneVerified);}
     static final class Fixture{
         final VerificationActionLifecycleTest.Fixture base=new VerificationActionLifecycleTest.Fixture();
         final MultivaluedMap<String,String> parameters=new MultivaluedHashMap<>();final Map<String,Object> attributes=new HashMap<>();
-        JsonNode current;int reads;
+        JsonNode current;int reads;boolean unavailable;
         final LoginFormsProvider form=VerificationActionLifecycleTest.model(LoginFormsProvider.class,(n,a)->switch(n){case "setAttribute"->{attributes.put((String)a[0],a[1]);yield form();}case "createForm"->Response.ok("synthetic verification",MediaType.TEXT_HTML_TYPE).build();default->VerificationActionLifecycleTest.unexpected(n);});
         LoginFormsProvider form(){return form;}
         final HttpRequest request=VerificationActionLifecycleTest.model(HttpRequest.class,(n,a)->n.equals("getDecodedFormParameters")?parameters:VerificationActionLifecycleTest.unexpected(n));
@@ -60,7 +70,7 @@ class VerificationActionStatusTest {
         });
         VerificationAction action=action("REGISTRATION_PHONE",VerificationActionLifecycleTest.PHONE);
         VerificationAction action(String purpose,String id){return new VerificationAction(purpose,id,()->true,ignored->true,c->base.terminalPages++,
-                (c,enrollment)->{reads++;return current;},()->"isolated-synthetic-routing-key-for-fixtures");}
+                (c,enrollment)->{reads++;if(unavailable)throw new Bridge.Unavailable();return current;},()->"isolated-synthetic-routing-key-for-fixtures");}
         void operation(String operation){parameters.putSingle("operation",operation);}
     }
 }
