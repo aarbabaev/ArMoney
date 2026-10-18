@@ -34,7 +34,8 @@
       "attributes": {
         "pkce.code.challenge.method": "S256",
         "oauth2.device.authorization.grant.enabled": "false",
-        "oidc.ciba.grant.enabled": "false"
+        "oidc.ciba.grant.enabled": "false",
+        "post.logout.redirect.uris": "-"
       },
       "defaultClientScopes": [
         "basic"

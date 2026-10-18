@@ -281,6 +281,20 @@ class ProvisionTests(unittest.TestCase):
             return transport(node, method, path, **kwargs)
         self.assert_client_diagnostic(wrong_list, "client-list")
 
+    def test_logout_redirects_require_exact_explicit_deny_sentinel(self):
+        transport = FakeTransport()
+        self.assertEqual("-", transport.client["attributes"]["post.logout.redirect.uris"])
+        self.assertEqual(SUBJECT, p.provision(config(), transport)["subject"])
+        for value in (None, "", "+", "*", "https://fixture-client/callback", " -", "- ",
+                      "\t-", "-\n", [], ["-"], True, False, 0, 1):
+            transport = FakeTransport()
+            transport.client["attributes"]["post.logout.redirect.uris"] = value
+            with self.subTest(value=value):
+                self.assert_client_diagnostic(transport, "logout-redirects")
+        transport = FakeTransport()
+        del transport.client["attributes"]["post.logout.redirect.uris"]
+        self.assert_client_diagnostic(transport, "logout-redirects")
+
     def assert_client_diagnostic(self, transport, predicate):
         result = self.cli_failure(transport)
         self.assertEqual({"checkpoint": "client", "node": "A", "http_status": 200,

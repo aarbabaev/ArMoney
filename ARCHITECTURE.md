@@ -1580,11 +1580,11 @@ fixture Dockerfile now pins `/sso` before augmentation, matching optimized runti
 configuration. A fresh run at `f01ef2f3` rebuilt all four images and passed both-node
 HTTP and verified edge-TLS readiness. It then failed at provisioning in 232.078
 seconds; the runner exited 1, owned resources were removed and the CI controller
-restored. A diagnostic run at `64d007c0` failed at discovery validation on node A despite HTTP 200, in 229.093 seconds; owned resources were removed. Source analysis identified the full `KC_HOSTNAME` URL missing `/sso`. All three fixture hostname settings now include that path; strict issuer validation is preserved. A fresh run at `af81b793` passed discovery and then failed at client readback on node A (HTTP 200), in 231.656 seconds; owned resources were removed. The rejected client predicate remains unknown. No client or security validation was relaxed. The helper now records only a fixed
+restored. A diagnostic run at `64d007c0` failed at discovery validation on node A despite HTTP 200, in 229.093 seconds; owned resources were removed. Source analysis identified the full `KC_HOSTNAME` URL missing `/sso`. All three fixture hostname settings now include that path; strict issuer validation is preserved. A fresh run at `af81b793` passed discovery and then failed at client readback on node A (HTTP 200), in 231.656 seconds; owned resources were removed. A diagnostic run at `3daf3bfc` identified the rejected predicate as `logout-redirects` (node A, HTTP 200), in 231.312 seconds; owned resources were removed. The actual returned attribute value was not retained. Pinned Keycloak source analysis shows an omitted logout redirect attribute receives a login-redirect fallback. The fixture now explicitly sets the logout-deny sentinel `-`, and readback requires that exact value. This denies logout redirects rather than allowing the fallback; runtime verification of the correction remains pending. The helper now records only a fixed
 checkpoint, optional node A/B and optional HTTP status on private failure output.
 Client readback failures additionally identify one fixed local predicate without
 recording observed values; strict client acceptance remains unchanged. The
-expanded diagnostic suite passed 17 portable tests with mocked transport,
+expanded diagnostic and logout-denial suite passed 18 portable tests with mocked transport,
 independently retested; this is separate from runtime proof. Success output remains unchanged. Diagnostic reporting
 does not fix provisioning. Cluster association, realm/user provisioning and the
 complete native topology remain unverified. The companion has

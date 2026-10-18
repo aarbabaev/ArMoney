@@ -220,7 +220,8 @@ def check_client(client, rejected=None):
     check(attrs.get("pkce.code.challenge.method") == "S256", "pkce-s256")
     check(attrs.get("oauth2.device.authorization.grant.enabled") == "false", "device-grant")
     check(attrs.get("oidc.ciba.grant.enabled") == "false", "ciba-grant")
-    check(not attrs.get("post.logout.redirect.uris"), "logout-redirects")
+    check(type(attrs.get("post.logout.redirect.uris")) is str
+          and attrs.get("post.logout.redirect.uris") == "-", "logout-redirects")
     check(not client.get("authenticationFlowBindingOverrides"), "flow-overrides")
 
 
