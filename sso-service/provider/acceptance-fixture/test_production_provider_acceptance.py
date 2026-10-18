@@ -150,12 +150,15 @@ class Forms(HTMLParser):
     def __init__(self, html, page_url, origin):
         super().__init__(convert_charrefs=True)
         self.forms, self.current = {}, None
+        self.heading_depth, self.heading_parts = 0, []
         self.page_url, self.origin = page_url, origin
         self.feed(html)
         require(self.current is None, 'unclosed_form')
 
     def handle_starttag(self, tag, attrs):
-        if tag not in {'form', 'input'}:
+        if tag in {'h1', 'h2'}:
+            self.heading_depth += 1
+        if tag not in {'form', 'input', 'button'}:
             return
         values = unique(attrs)
         if tag == 'form':
@@ -166,17 +169,25 @@ class Forms(HTMLParser):
             parsed = urllib.parse.urlsplit(action)
             require(parsed.scheme == 'https' and 'https://' + parsed.netloc == self.origin and not parsed.fragment
                     and not parsed.username and not parsed.password, 'form_origin')
-            self.current = {'action': action, 'fields': {}}
+            self.current = {'action': action, 'fields': {}, 'buttons': []}
             self.forms[name] = self.current
         elif self.current is not None and values.get('type', '').lower() == 'hidden':
             name = values.get('name')
             require(name and name not in self.current['fields'], 'form_fields')
             self.current['fields'][name] = values.get('value', '')
+        elif tag == 'button' and self.current is not None:
+            self.current['buttons'].append(values)
 
     def handle_endtag(self, tag):
+        if tag in {'h1', 'h2'}:
+            self.heading_depth = max(0, self.heading_depth - 1)
         if tag == 'form':
             require(self.current is not None, 'form')
             self.current = None
+
+    def handle_data(self, data):
+        if self.heading_depth:
+            self.heading_parts.append(data)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -427,19 +438,45 @@ def policy_removed(wire, completed):
     completed.append('policy_removed_after_issue_denied')
 
 
-PENDING_INFO = b'Contact verified. Account activation is pending; try again shortly.'
+PENDING_INFO = b'Contact verified. Account activation is pending; check status to continue.'
 TERMINAL_INFO = b'Registration verified. Sign in to continue.'
+
+
+def require_phone_transition(wire, page):
+    """Email completion must advance to the actual server-owned phone action."""
+    try:
+        require(page[0] == 200, 'phone_transition')
+        parsed = Forms(page[2].decode('utf-8'), page[3], wire.data['origin'])
+        heading = ' '.join(' '.join(parsed.heading_parts).split())
+        require('Verify your phone' in heading and 'Verify your email' not in heading, 'phone_transition')
+        action = parsed.forms['armoney-verification']['action']
+        fields = urllib.parse.parse_qsl(urllib.parse.urlsplit(action).query,
+                                       keep_blank_values=True, strict_parsing=True)
+        execution = [value for key, value in fields if key == 'execution']
+        require(execution == ['armoney-verify-phone-code'], 'phone_transition')
+    except (Rejected, ValueError, KeyError, UnicodeError, AttributeError):
+        raise Rejected('phone_transition') from None
 
 
 def await_registration_info(wire, page, clock=time.monotonic, pause=time.sleep):
     end = clock() + 15
     while page[0] == 200 and PENDING_INFO in page[2]:
         require(clock() < end, 'projection_pending')
+        require_phone_transition(wire, page)
+        try:
+            selected = Forms(page[2].decode('utf-8'), page[3], wire.data['origin']).forms['armoney-verification']
+            buttons = [button for button in selected['buttons'] if button.get('name') == 'operation'
+                       and button.get('value') == 'status']
+            require(len(buttons) == 1 and buttons[0].get('type', 'submit').lower() == 'submit'
+                    and 'formnovalidate' in buttons[0]
+                    and not {'disabled', 'formaction', 'formmethod', 'form'}.intersection(buttons[0]), 'pending_status_form')
+        except (Rejected, ValueError, KeyError, UnicodeError, AttributeError):
+            raise Rejected('pending_status_form') from None
         pause(min(.2, max(0, end - clock())))
         require(clock() < end, 'projection_pending')
-        # Genuine server status precheck runs before operation/code handling.
-        # Preserve current hidden bindings; never resend OTP, issue or add operation.
-        page = follow(wire, submit(wire, page, 'armoney-verification', {}))
+        # Submit the actual rendered status-only action with current hidden
+        # bindings; never resend an OTP or request another challenge.
+        page = follow(wire, submit(wire, page, 'armoney-verification', {'operation': 'status'}))
         require(clock() <= end, 'projection_pending')
     expected_status(page[0], 200)
     require(TERMINAL_INFO in page[2] and not page[1].get('Location')
@@ -459,6 +496,10 @@ def execute(wire, completed=None):
         'username': data['username'], 'email': data['email'], 'firstName': data['first_name'],
         'lastName': data['last_name'], 'password': data['password'], 'password-confirm': data['password']}))
     for purpose in ('REGISTRATION_EMAIL', 'REGISTRATION_PHONE'):
+        if purpose == 'REGISTRATION_PHONE':
+            # Do not send on a re-entered email form or misdiagnose absent PHONE
+            # delivery when Keycloak has not advanced its required action.
+            require_phone_transition(wire, page)
         page = follow(wire, submit(wire, page, 'armoney-verification', {'operation': 'send'}))
         delivery = wire.control('read_delivery', {'username': data['username'], 'purpose': purpose})
         require(set(delivery) == {'code', 'challenge_id'} and type(delivery['code']) is str

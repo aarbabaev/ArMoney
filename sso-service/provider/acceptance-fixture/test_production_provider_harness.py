@@ -294,13 +294,54 @@ class ProductionHarnessTest(unittest.TestCase):
             driver.outcomes(OldController())
 
 
-    def test_pending_projection_uses_fresh_form_without_otp_or_operation(self):
-        pending = (200, {}, driver.PENDING_INFO, 'https://sso.example.test/sso/login-actions/required-action')
+    def pending_page(self, button='<button name="operation" value="status" type="submit" formnovalidate>Check status</button>'):
+        # Literal production renderPending message: do not derive from the driver
+        # constant, which would conceal the actual cross-file contract mismatch.
+        html = ('<h1>Verify your phone</h1><p>Contact verified. Account activation is pending; check status to continue.</p>'
+            '<form id="armoney-verification" method="post" action="/sso/login-actions/required-action?execution=armoney-verify-phone-code&amp;tab_id=synthetic">'
+            '<input type="hidden" name="csrf" value="original">' + button + '</form>')
+        return (200, {}, html.encode(), 'https://sso.example.test/sso/login-actions/required-action')
+
+    def test_pending_projection_uses_rendered_status_button_without_otp(self):
+        pending = self.pending_page()
         terminal = (200, {}, driver.TERMINAL_INFO, pending[3])
-        wire = object()
+        class Browser:
+            data = {'origin': 'https://sso.example.test'}
+        wire = Browser()
         with patch.object(driver, 'submit', return_value=terminal) as submit, patch.object(driver, 'follow', side_effect=lambda wire, page: page):
             self.assertEqual(driver.await_registration_info(wire, pending, clock=lambda: 0, pause=lambda _: None), terminal)
-        submit.assert_called_once_with(wire, pending, 'armoney-verification', {})
+        submit.assert_called_once_with(wire, pending, 'armoney-verification', {'operation': 'status'})
+
+    def test_pending_fixture_matches_actual_provider_render_pending(self):
+        provider = Path(__file__).parent.parent / 'src/main/java/com/arman/bank/sso/VerificationAction.java'
+        message = 'Contact verified. Account activation is pending; check status to continue.'
+        self.assertIn('render(context,"' + message + '",true)', provider.read_text(encoding='utf-8'))
+        self.assertIn(message.encode(), self.pending_page()[2])
+        self.assertEqual(driver.PENDING_INFO, message.encode())
+
+    def test_pending_requires_real_enabled_status_button_in_phone_form(self):
+        class Browser:
+            data = {'origin': 'https://sso.example.test'}
+        for button in ('', '<button name="operation" value="verify" formnovalidate>Verify</button>',
+                '<button name="operation" value="status">Check status</button>',
+                '<button name="operation" value="status" formnovalidate disabled>Check status</button>',
+                '<button name="operation" value="status" formnovalidate formaction="/other">Check status</button>'):
+            with self.subTest(button=button), patch.object(driver, 'submit') as submit:
+                with self.assertRaisesRegex(driver.Rejected, '^pending_status_form$'):
+                    driver.await_registration_info(Browser(), self.pending_page(button), clock=lambda: 0, pause=lambda _: None)
+                submit.assert_not_called()
+
+    def test_status_retry_retains_form_binding_and_sends_no_otp(self):
+        class Browser:
+            data = {'origin': 'https://sso.example.test'}
+            def request(self, url, *, form):
+                self.sent = form
+                self.url = url
+                return 200, {}, driver.TERMINAL_INFO
+        wire = Browser()
+        driver.await_registration_info(wire, self.pending_page(), clock=lambda: 0, pause=lambda _: None)
+        self.assertEqual(wire.sent, {'csrf': 'original', 'operation': 'status'})
+        self.assertIn('execution=armoney-verify-phone-code&tab_id=synthetic', wire.url)
 
     def test_pending_is_not_pass_and_unavailable_does_not_retry(self):
         pending = (200, {}, driver.PENDING_INFO, 'https://sso.example.test/sso/login-actions/required-action')
@@ -318,6 +359,21 @@ class ProductionHarnessTest(unittest.TestCase):
                 'https://sso.example.test/sso/login-actions/required-action')
         with self.assertRaises(driver.Rejected):
             driver.await_registration_info(object(), page)
+
+
+    def test_email_verification_must_advance_to_phone_before_phone_delivery(self):
+        class Browser:
+            data = {'origin': 'https://sso.example.test'}
+        def page(heading, execution):
+            html = ('<h1>Verify your ' + heading + '</h1><form id="armoney-verification" method="post" '
+                'action="/sso/login-actions/required-action?execution=' + execution + '&amp;tab_id=synthetic"></form>')
+            return (200, {}, html.encode(), 'https://sso.example.test/sso/login-actions/required-action')
+        driver.require_phone_transition(Browser(), page('phone', 'armoney-verify-phone-code'))
+        for heading, action in (('email', 'armoney-verify-email-code'), ('email', 'armoney-verify-phone-code'),
+                ('phone', 'armoney-verify-email-code'), ('phone', 'unknown'),
+                ('phone', 'armoney-verify-phone-code&amp;execution=armoney-verify-email-code')):
+            with self.subTest(heading=heading, action=action), self.assertRaisesRegex(driver.Rejected, '^phone_transition$'):
+                driver.require_phone_transition(Browser(), page(heading, action))
 
 
 if __name__ == '__main__':

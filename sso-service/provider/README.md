@@ -71,6 +71,19 @@ separate gates. No emulator is started by these checks.
   code issuance and requires a fresh password flow; no registration password
   action return is treated as authentication proof. Production browser/restart
   acceptance remains pending.
+- After confirmed email completion, a purpose-scoped authentication-session
+  routing marker prevents Keycloak's repeated trigger evaluation from scheduling
+  email again before phone. Suppression requires a fresh Auth observation and
+  the same enrollment, contact version, user, email and original flow binding.
+  Missing, changed or unavailable evidence requeues email. This marker grants no
+  verification or banking authority; phone still requires both receipts and
+  `PROJECTED`. See [ADR 0051](../../docs/adr/0051-registration-required-action-routing.md).
+- After phone consumption, a pending form exposes an explicit status-only POST.
+  It uses the original flow's protected consumption routing state and fresh Auth
+  contact versions and dual-verification facts. It neither issues nor consumes
+  another OTP. `PROJECTION_PENDING` remains pending; only `PROJECTED` reaches the
+  fixed sign-in page. Empty, unknown and duplicate operations are rejected.
+  Runtime acceptance of this continuation remains pending.
 - The flow binding is HMAC-SHA-256 over a domain-separated, length-prefixed tuple
   of realm ID, root authentication-session ID, tab ID and client internal ID.
   Both required actions derive the same opaque binding. No browser field selects

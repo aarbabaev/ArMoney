@@ -126,7 +126,8 @@ jobs:
     # GitHub all_external_contributors approval policy is the external-run gate.
     if: always() && !cancelled() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, armoney-local]
-    timeout-minutes: 60
+    # Full isolated acceptance follows the PostgreSQL suite; retain every gate.
+    timeout-minutes: 90
     steps:
       - name: Require valid component selection
         env:

@@ -15,6 +15,11 @@ migration and native acceptance and exact-head CI remain pending. Unsupported
 migration contact mutations still fail closed. Existing stored sessions retain
 their original expiry and revocation behavior until successful atomic FINAL.
 
+Registration required-action routing suppresses repeated email scheduling only
+after fresh Auth confirmation bound to the original flow and contact version;
+phone and banking admission remain independently enforced. The lifecycle fix
+and its acceptance limits are described in [ADR 0051](docs/adr/0051-registration-required-action-routing.md).
+
 ## Navigation
 
 1. [Readiness and stack](#readiness-and-stack)
