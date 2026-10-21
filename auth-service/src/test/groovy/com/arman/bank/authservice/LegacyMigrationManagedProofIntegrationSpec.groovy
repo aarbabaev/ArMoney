@@ -223,6 +223,50 @@ class LegacyMigrationManagedProofIntegrationSpec extends Specification {
         count('managed_registration_principals')==0
         auth.me('Bearer '+original.token).id()==original.identityId
     }
+    def 'receipt insert rollback emits only fixed transaction phase and preserves claimed owner session'(){
+        given:
+        def logger=java.util.logging.Logger.getLogger(PostgresLegacyMigrationManagedProofStore.name)
+        def records=new CopyOnWriteArrayList<java.util.logging.LogRecord>()
+        def handler=new java.util.logging.Handler(){
+            void publish(java.util.logging.LogRecord record){records.add(record)}
+            void flush(){}
+            void close(){}
+        }
+        def parentHandlers=logger.useParentHandlers
+        logger.useParentHandlers=false
+        logger.addHandler(handler)
+        def original=localOwner()
+        def redirect=managed.start(original.admission.migrationId(),original.admission.ownerCapability(),UUID.randomUUID())
+        interactive(redirect,'legacy_migration_managed_attempts')
+        def input=callback(redirect)
+        database.transaction{sql->
+            // Fresh isolated fixture: inject a rejecting write, without disabling any invariant.
+            sql.execute("create function synthetic_receipt_failure() returns trigger language plpgsql as 'begin raise exception ''SENSITIVE-synthetic-receipt-sentinel'' using errcode = ''40001''; end;'")
+            sql.execute('create trigger synthetic_receipt_failure before insert on legacy_migration_managed_receipts for each row execute function synthetic_receipt_failure()')
+        }
+        when:managed.complete(input)
+        then:
+        def rejected=thrown(MigrationManagedProofStore.Consumed)
+        rejected.error()==LegacyMigrationOtp.Error.UNAVAILABLE
+        records*.message==['ARMONEY_MANAGED_STORE_FAILURE_RECEIPT_TRANSACTION']
+        records.every{it.thrown==null&&it.parameters==null&&!it.message.contains('SENSITIVE')}
+        tokenCalls==1
+        count('legacy_migration_managed_claims')==1
+        count('legacy_migration_managed_receipts')==0
+        count('legacy_migration_managed_targets')==0
+        count('legacy_migration_managed_completions')==0
+        count('identities')==1
+        count('managed_registration_principals')==0
+        auth.me('Bearer '+original.token).id()==original.identityId
+        when:managed.complete(input)
+        then:
+        thrown(LegacyMigrationOtp.Failure)
+        tokenCalls==1
+        records.size()==1
+        cleanup:
+        logger.removeHandler(handler)
+        logger.useParentHandlers=parentHandlers
+    }
     def 'unknown genuinely signed legacy subject never allocates an owner or account migration'(){
         given:
         def redirect=account.start(UUID.randomUUID())

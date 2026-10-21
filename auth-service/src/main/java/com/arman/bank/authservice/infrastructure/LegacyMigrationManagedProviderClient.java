@@ -16,6 +16,11 @@ import java.util.concurrent.*;
  * No retry, caller URL/verifier, refresh grant, mapping, receipt, reservation or session mutation.
  */
 public final class LegacyMigrationManagedProviderClient implements MigrationManagedProofPort,AutoCloseable {
+    private static final java.util.logging.Logger LOG=java.util.logging.Logger.getLogger(LegacyMigrationManagedProviderClient.class.getName());
+    private enum FailurePhase { VALIDATE_ATTEMPT, TOKEN_REQUEST, JWT_VERIFY, OBSERVATION, FACTS_VALIDATE, SINK_VALIDATE, POST_SINK }
+    private static void reportFailure(FailurePhase phase){
+        try{LOG.warning("ARMONEY_MANAGED_PROVIDER_FAILURE_"+phase.name());}catch(RuntimeException ignored){/* Preserve the existing rejection if logging fails. */}
+    }
     public record Settings(URI issuer,URI tokenEndpoint,URI jwks,String clientId,URI redirect){
         public Settings{
             new LegacyMigrationOidcClient.Settings(issuer,jwks,clientId);https(tokenEndpoint);https(redirect);
@@ -61,6 +66,7 @@ public final class LegacyMigrationManagedProviderClient implements MigrationMana
     @Override public void exchange(Attempt attempt,Callback callback,VerifiedSink sink){
         long started=System.nanoTime();
         if(closed||Thread.currentThread().isInterrupted()||!slots.tryAcquire())throw unavailable();
+        FailurePhase phase=FailurePhase.VALIDATE_ATTEMPT;
         try{
             if(attempt==null||callback==null||sink==null||!bounded(callback.providerCode(),4096)
                 ||!bounded(callback.returnedState(),512)||!bounded(callback.initiatingBrowserCookie(),512))throw unavailable();
@@ -71,11 +77,15 @@ public final class LegacyMigrationManagedProviderClient implements MigrationMana
             String challenge=Base64.getUrlEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(original.getBytes(StandardCharsets.US_ASCII)));
             if(attempt.pkceChallenge()==null||!MessageDigest.isEqual(challenge.getBytes(StandardCharsets.US_ASCII),attempt.pkceChallenge().getBytes(StandardCharsets.US_ASCII)))throw unavailable();
             remaining(started,attempt);attempt.requireLive();remaining(started,attempt);
+            phase=FailurePhase.TOKEN_REQUEST;
             String idToken=token(attempt,callback.providerCode(),original,started);
+            phase=FailurePhase.JWT_VERIFY;
             var verified=verifier.verifyManaged(idToken,attempt,started); // Explicit MANAGED_TARGET gate, no existing-mapping true callback.
             remaining(started,attempt);attempt.requireLive();long left=remaining(started,attempt);
             var binding=new LoginProof.Binding(verified.issuer(),verified.subject(),verified.clientId(),verified.sessionId());
+            phase=FailurePhase.OBSERVATION;
             var facts=observations.observe(binding,attempt.originalDatabaseStart(),Duration.ofNanos(left));
+            phase=FailurePhase.FACTS_VALIDATE;
             Instant received=clock.instant();
             Instant evidence=CodeConfirmation.deadline(binding,facts,attempt.originalDatabaseStart(),received);
             if(!facts.enabled()||!facts.userSessionActive()||!facts.clientSessionActive()||facts.email()==null||facts.phone()==null)throw unavailable();
@@ -83,10 +93,12 @@ public final class LegacyMigrationManagedProviderClient implements MigrationMana
             CodeConfirmation.fresh(attempt.originalDatabaseStart(),evidence,finalNow);
             if(!finalNow.isBefore(verified.tokenExpiresAt())||finalNow.getEpochSecond()-verified.authenticatedAt().getEpochSecond()>120)throw unavailable();
             // Only the private creator sink may create a request/thread/backend-bound capability.
+            phase=FailurePhase.SINK_VALIDATE;
             sink.accept(new Claims(verified.issuer(),verified.subject(),verified.clientId(),verified.sessionId(),verified.authenticatedAt(),verified.issuedAt(),verified.tokenExpiresAt()),facts);
+            phase=FailurePhase.POST_SINK;
             remaining(started,attempt);CodeConfirmation.fresh(attempt.originalDatabaseStart(),evidence,clock.instant());
-        }catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw unavailable();}
-        catch(Exception rejected){throw unavailable();}
+        }catch(InterruptedException interrupted){reportFailure(phase);Thread.currentThread().interrupt();throw unavailable();}
+        catch(Exception rejected){reportFailure(phase);throw unavailable();}
         finally{slots.release();}
     }
     private void configured(Attempt a){

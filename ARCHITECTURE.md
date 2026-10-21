@@ -1851,3 +1851,13 @@ production build, 57 unit tests, browser installation and 13 browser tests,
 with verified cleanup and independent evidence review. The Vite 8.3.3 override
 preserves Angular versions and changes no banking API or trust boundary.
 This manual result does not replace required exact-head CI or release acceptance.
+
+The local PR #96 migration recovery candidate validates bounded RSA JWKS inventories containing
+signing and encryption keys, then caches only eligible RS256 verification keys.
+Key IDs must be unique across the complete inventory. Existing metadata/material,
+signature, issuer, audience, nonce, freshness and callback replay checks remain
+enforced; non-RSA inventories fail closed. Auth failure diagnostics contain only
+fixed phase markers and grant no authority. This changes no HTTP contract,
+database schema, service ownership or diagram boundary. Controlled RED/GREEN
+verification passed; rebuilt live migration and release acceptance remain pending.
+See [ADR 0057](docs/adr/0057-migration-jwks-signing-key-selection.md).

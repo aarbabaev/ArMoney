@@ -65,3 +65,10 @@ plus offline realm-provisioning, private-configuration and native-controller uni
 tests. The browser is not launched by those unit tests. This adds no parallel job
 and does not establish native acceptance. Local backend artifacts retain JUnit
 XML as well as HTML test reports, including the standalone fixture module.
+
+The backend job has a bounded 180-minute aggregate budget for cold full-suite
+execution followed by linked Compose acceptance. An observed cold PostgreSQL
+suite alone took 79 minutes and 25 seconds; the previous 90-minute aggregate
+budget cancelled the job during SMS acceptance. Individual test and acceptance
+deadlines, selected checks and failure conditions are unchanged. An incomplete
+or cancelled job does not satisfy required CI.

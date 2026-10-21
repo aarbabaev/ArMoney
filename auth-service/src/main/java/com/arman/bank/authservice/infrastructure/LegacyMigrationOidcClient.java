@@ -212,13 +212,23 @@ public final class LegacyMigrationOidcClient implements AutoCloseable {
         JsonNode root=LegacyMigrationOidcJson.object(raw,65536);LegacyMigrationOidcJson.fields(root,Set.of("keys"));
         JsonNode list=root.get("keys");if(list==null||!list.isArray()||list.isEmpty()||list.size()>32)throw denied();
         Map<String,RSAPublicKey> result=new HashMap<>();
+        Set<String> kids=new HashSet<>();
         for(JsonNode entry:list){
             if(!entry.isObject())throw denied();
             LegacyMigrationOidcJson.fields(entry,Set.of("kty","kid","n","e","alg","use","key_ops","x5c","x5t","x5t#S256"));
             String kid=text(entry,"kid",128);
-            if(!kid.matches("[!-~]{1,128}")||!"RSA".equals(text(entry,"kty",16))
-                ||entry.has("alg")&&!"RS256".equals(text(entry,"alg",16))||entry.has("use")&&!"sig".equals(text(entry,"use",16)))throw denied();
-            if(entry.has("key_ops")){JsonNode ops=entry.get("key_ops");if(!ops.isArray()||ops.size()!=1||!ops.get(0).isTextual()||!"verify".equals(ops.get(0).textValue()))throw denied();}
+            if(!kid.matches("[!-~]{1,128}")||!kids.add(kid)||!"RSA".equals(text(entry,"kty",16)))throw denied();
+            boolean eligible=(!entry.has("alg")||"RS256".equals(text(entry,"alg",16)))
+                &&(!entry.has("use")||"sig".equals(text(entry,"use",16)));
+            // Validate metadata even for unrelated keys; only verification keys enter the cache.
+            if(entry.has("alg"))text(entry,"alg",16);
+            if(entry.has("use")&&!Set.of("sig","enc").contains(text(entry,"use",16)))throw denied();
+            if(entry.has("key_ops")){
+                JsonNode ops=entry.get("key_ops");if(!ops.isArray()||ops.isEmpty()||ops.size()>8)throw denied();
+                Set<String> operations=new HashSet<>();
+                for(JsonNode operation:ops)if(!operation.isTextual()||!Set.of("sign","verify","encrypt","decrypt","wrapKey","unwrapKey","deriveKey","deriveBits").contains(operation.textValue())||!operations.add(operation.textValue()))throw denied();
+                eligible=eligible&&operations.equals(Set.of("verify"));
+            }
             // Only metadata from the fixed trusted JWKS; never a source of URLs or verification keys.
             if(entry.has("x5c")){JsonNode certs=entry.get("x5c");if(!certs.isArray()||certs.isEmpty()||certs.size()>4)throw denied();
                 for(JsonNode cert:certs){
@@ -232,8 +242,10 @@ public final class LegacyMigrationOidcClient implements AutoCloseable {
             }
             LegacyMigrationOidcJson.segment(text(entry,"n",2048));LegacyMigrationOidcJson.segment(text(entry,"e",16));
             RSAPublicKey rsa=RSAKey.parse(entry.toString()).toRSAPublicKey();
-            if(rsa.getModulus().bitLength()<2048||rsa.getModulus().bitLength()>8192||result.putIfAbsent(kid,rsa)!=null)throw denied();
+            if(rsa.getModulus().bitLength()<2048||rsa.getModulus().bitLength()>8192)throw denied();
+            if(eligible)result.put(kid,rsa);
         }
+        if(result.isEmpty())throw denied();
         return result;
     }
     private long remaining(long started,Instant deadline){

@@ -36,11 +36,25 @@ class LegacyMigrationManagedProviderClientSpec extends Specification {
     boolean negative
     boolean wrongObservation
     boolean closeDuringObservation
+    RuntimeException observerFailure
+    List<java.util.logging.LogRecord> failureRecords=[]
+    java.util.logging.Logger diagnosticLogger
+    java.util.logging.Handler diagnosticHandler
+    boolean originalParentHandlers
     long tokenDelayMillis
     FixtureAttempt attempt=new FixtureAttempt()
     SyntheticHttp http=new SyntheticHttp()
     LegacyMigrationManagedProviderClient adapter
     def setup(){
+        diagnosticLogger=java.util.logging.Logger.getLogger(LegacyMigrationManagedProviderClient.name)
+        originalParentHandlers=diagnosticLogger.useParentHandlers
+        diagnosticHandler=new java.util.logging.Handler(){
+            void publish(java.util.logging.LogRecord record){failureRecords.add(record)}
+            void flush(){}
+            void close(){}
+        }
+        diagnosticLogger.useParentHandlers=false
+        diagnosticLogger.addHandler(diagnosticHandler)
         tokenClaims=[iss:ISSUER,sub:'signed-target',sid:'signed-session',aud:CLIENT,azp:CLIENT,nonce:'original-nonce',
                      auth_time:NOW.minusSeconds(5).epochSecond,iat:NOW.epochSecond,exp:NOW.plusSeconds(60).epochSecond]
         http.responder={ HttpRequest request,handler ->
@@ -59,6 +73,7 @@ class LegacyMigrationManagedProviderClientSpec extends Specification {
         def verifier=new LegacyMigrationOidcClient(new LegacyMigrationOidcClient.Settings(URI.create(ISSUER),JWKS,CLIENT),Clock.fixed(NOW,ZoneOffset.UTC),http)
         P.Observations observer={ binding,start,budget ->
             observations.add([binding,start,budget])
+            if(observerFailure!=null)throw observerFailure
             if(closeDuringObservation)adapter.close()
             new CodeConfirmation.Facts(wrongObservation?new LoginProof.Binding(ISSUER,'foreign',CLIENT,'signed-session'):binding,
                 '+971501234567','fixture@example.test','+971501234567',!negative,true,true,NOW,NOW.plusSeconds(5))
@@ -66,7 +81,31 @@ class LegacyMigrationManagedProviderClientSpec extends Specification {
         adapter=new LegacyMigrationManagedProviderClient(new LegacyMigrationManagedProviderClient.Settings(URI.create(ISSUER),TOKEN,JWKS,CLIENT,REDIRECT),
             Clock.fixed(NOW,ZoneOffset.UTC),observer,http,verifier)
     }
-    def cleanup(){adapter?.close()}
+    def cleanup(){adapter?.close();diagnosticLogger?.removeHandler(diagnosticHandler);if(diagnosticLogger!=null)diagnosticLogger.useParentHandlers=originalParentHandlers}
+    def 'failure markers contain only the fixed phase and never sensitive rejection content'(){
+        given:
+        def sentinel='SENSITIVE-synthetic-code-token-contact'
+        if(stage=='VALIDATE_ATTEMPT')attempt.verifier='invalid'
+        if(stage=='TOKEN_REQUEST'){tokenStatus=503;responseOverride=sentinel}
+        if(stage=='JWT_VERIFY')tokenClaims.nonce=sentinel
+        if(stage=='OBSERVATION')observerFailure=new IllegalStateException(sentinel)
+        if(stage=='FACTS_VALIDATE')negative=true
+        when:
+        adapter.exchange(attempt,CALLBACK,{claims,facts->
+            if(stage=='SINK_VALIDATE')throw new IllegalStateException(sentinel)
+            if(stage=='POST_SINK')adapter.close()
+        } as P.VerifiedSink)
+        then:
+        thrown(LegacyMigrationOidcClient.Unavailable)
+        failureRecords*.message==['ARMONEY_MANAGED_PROVIDER_FAILURE_'+stage]
+        failureRecords.every{it.thrown==null&&it.parameters==null&&!it.message.contains(sentinel)}
+        where:
+        stage<<['VALIDATE_ATTEMPT','TOKEN_REQUEST','JWT_VERIFY','OBSERVATION','FACTS_VALIDATE','SINK_VALIDATE','POST_SINK']
+    }
+    def 'successful provider exchange emits no failure marker'(){
+        when:positiveExchange()
+        then:failureRecords.empty
+    }
     String signed(){
         def jws=new JWSObject(new JWSHeader.Builder(JWSAlgorithm.RS256).keyID('signing-key').type(JOSEObjectType.JWT).build(),new Payload(JsonOutput.toJson(tokenClaims)))
         jws.sign(new RSASSASigner(key));jws.serialize()

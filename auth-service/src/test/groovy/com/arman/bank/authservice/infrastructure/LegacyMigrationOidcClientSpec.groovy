@@ -66,6 +66,61 @@ class LegacyMigrationOidcClientSpec extends Specification {
         requests[0].headers().firstValue('Authorization').isEmpty()
         requests[0].timeout().get()<=Duration.ofSeconds(4)
     }
+    Map signingJwk(){new LinkedHashMap(rsa.toPublicJWK().toJSONObject())+[alg:'RS256',use:'sig',key_ops:['verify']]}
+    Map encryptionJwk(String kid='encryption-key'){
+        new LinkedHashMap(new RSAKeyGenerator(2048).keyID(kid).generate().toPublicJWK().toJSONObject())+
+            [alg:'RSA-OAEP',use:'enc',key_ops:['wrapKey']]
+    }
+    def 'trusted mixed signing and encryption JWKS verifies real RS256 signature in either inventory order'(){
+        given:
+        def signing=signingJwk()
+        def encryption=encryptionJwk()
+        jwks=JsonOutput.toJson([keys:(encryptionFirst ? [encryption,signing] : [signing,encryption])]).bytes
+        when:
+        def proof=verify(token())
+        verify(token())
+        then:
+        proof.existingOwner()==OWNER
+        proof.subject()=='existing-subject'
+        proof.authenticatedAt()==NOW.minusSeconds(5)
+        requests.size()==1
+        requests[0].uri()==JWKS
+        where:
+        encryptionFirst<<[false,true]
+    }
+    def 'mixed JWKS duplicate kid across uses never selects signing key'(){
+        given:
+        jwks=JsonOutput.toJson([keys:[signingJwk(),encryptionJwk('key-one')]]).bytes
+        when:verify(token())
+        then:thrown(LegacyMigrationOidcClient.Unavailable)
+        requests.size()==1
+    }
+    def 'mixed JWKS malformed eligible signing key remains rejected'(){
+        given:
+        def signing=signingJwk()
+        if(malformed=='missing-modulus')signing.remove('n')
+        if(malformed=='invalid-modulus')signing.n='!invalid!'
+        if(malformed=='invalid-exponent')signing.e='AA'
+        jwks=JsonOutput.toJson([keys:[encryptionJwk(),signing]]).bytes
+        when:verify(token())
+        then:thrown(LegacyMigrationOidcClient.Unavailable)
+        requests.size()==1
+        where:
+        malformed<<['missing-modulus','invalid-modulus','invalid-exponent']
+    }
+    def 'trusted mixed JWKS never uses encryption key or substitutes for unknown kid'(){
+        given:
+        def encryption=encryptionJwk()
+        jwks=JsonOutput.toJson([keys:(inventory=='encryption-only' ? [encryption] : [signingJwk(),encryption])]).bytes
+        when:verify(token(claims(),requestedKid))
+        then:thrown(LegacyMigrationOidcClient.Unavailable)
+        requests.size()==1
+        where:
+        inventory        | requestedKid
+        'encryption-only'| 'key-one'
+        'mixed'          | 'encryption-key'
+        'mixed'          | 'unknown'
+    }
     def 'missing or refused admission context cannot fetch or return proof'(){
         when: client.verify(token(),attempt(),null)
         then: thrown(LegacyMigrationOidcClient.Unavailable)

@@ -14,6 +14,11 @@ import org.jooq.Record;
 /** Genuine managed binding producer. Explicit injection of real exchange and observation adapters required.
  * Never provisions identity/profile, writes a mapping/marker, cuts over sessions or returns a bank credential. */
 public final class PostgresLegacyMigrationManagedProofStore implements MigrationManagedProofStore,MigrationBindingSqlPort {
+    private static final java.util.logging.Logger LOG=java.util.logging.Logger.getLogger(PostgresLegacyMigrationManagedProofStore.class.getName());
+    private enum FailurePhase { PROVIDER, RECEIPT_TRANSACTION, POST_COMMIT }
+    private static void reportFailure(FailurePhase phase){
+        try{LOG.warning("ARMONEY_MANAGED_STORE_FAILURE_"+phase.name());}catch(RuntimeException ignored){/* Preserve the existing failure mapping. */}
+    }
     public record Settings(String actor,String issuer,String clientId,String redirectUri){
         public Settings{if(actor==null||!actor.matches("[A-Za-z0-9_-]{1,64}")||clientId==null||!clientId.matches("[A-Za-z0-9_-]{1,128}"))throw unavailable();endpoint(issuer);endpoint(redirectUri);}
         private static void endpoint(String value){try{URI u=URI.create(value);if(!"https".equals(u.getScheme())||u.getHost()==null||u.getRawUserInfo()!=null||u.getRawQuery()!=null||u.getRawFragment()!=null)throw unavailable();}catch(IllegalArgumentException invalid){throw unavailable();}}
@@ -95,12 +100,14 @@ public final class PostgresLegacyMigrationManagedProofStore implements Migration
             owned.verify();
             ActiveAttempt active=new ActiveAttempt(owned,claimed,callback);
             final Verified[] verified={null};
+            FailurePhase phase=FailurePhase.PROVIDER;
             try{
                 provider.exchange(active,callback,(claims,facts)->{
                     active.requireLive();if(verified[0]!=null)throw unavailable();
                     verified[0]=verify(active,claims,facts,owned.transaction(PostgresLegacyMigrationManagedProofStore::now));
                 });
                 active.requireLive();Verified proof=verified[0];if(proof==null)throw unavailable();
+                phase=FailurePhase.RECEIPT_TRANSACTION;
                 Result result=owned.transaction(sql->{
                     Record ownerRoute=sql.fetchOne("select identity_id from legacy_migration_intents where id=?",active.migrationId());
                     if(ownerRoute==null)throw unavailable();PostgresLegacyMigrationStore.lockOwner(sql,ownerRoute.get("identity_id",UUID.class));
@@ -124,8 +131,8 @@ public final class PostgresLegacyMigrationManagedProofStore implements Migration
                     sql.execute("insert into legacy_migration_managed_completions values(?,?,cast(? as timestamptz))",active.attemptId(),active.receiptId(),now(sql).toString());
                     checkAccount(sql,account);active.requireBound(sql);CodeConfirmation.fresh(active.originalDatabaseStart(),proof.evidenceDeadline(),now(sql));live(sql,deadline);
                     return new Result("BOUND",deadline);
-                });owned.verify();return result;
-            }catch(RuntimeException failure){throw new MigrationManagedProofStore.Consumed(failure instanceof LegacyMigrationOtp.Failure typed?typed.error():LegacyMigrationOtp.Error.UNAVAILABLE);}finally{active.closed=true;verified[0]=null;}
+                });phase=FailurePhase.POST_COMMIT;owned.verify();return result;
+            }catch(RuntimeException failure){reportFailure(phase);throw new MigrationManagedProofStore.Consumed(failure instanceof LegacyMigrationOtp.Failure typed?typed.error():LegacyMigrationOtp.Error.UNAVAILABLE);}finally{active.closed=true;verified[0]=null;}
     }
     public Result complete(MigrationManagedProofPort.Callback callback){return complete(null,callback);}
     /** Browser facade supplies the ORIGINAL restricted ACCOUNT cookie (owner capability).
