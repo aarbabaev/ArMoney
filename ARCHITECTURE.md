@@ -1808,7 +1808,13 @@ Independent read-only snapshots retained identical rows across eleven Auth table
 STAGE/CONFIRM transport counters were unchanged, and the original provider profile
 was restored. Master routing exists only inside the unpublished disposable edge.
 These before/after snapshots do not prove the absence of transient writes later
-undone. Node replacement and full pre-FINAL migration callbacks remain pending.
+undone. A separate 2026-10-21 fresh-image run passed scoped node replacement:
+actual membership changed from two nodes to one and back to two, the survivor
+remained, and the replacement received a new identity without realm reimport.
+The original code was redeemed on the survivor and replay was denied after
+rejoin in 14.78 seconds within its original 60-second TTL. Independent security
+review verified the receipts and owned cleanup. This is scoped node evidence;
+complete migration and persistent activation require separate acceptance.
 Recovery requires a genuine fresh login/code after an uncertain failed attempt;
 the original provider deadline and Auth replay exclusion remain unchanged.
 See [ADR 0053](docs/adr/0053-disposable-provider-response-loss-evidence.md).
@@ -1818,11 +1824,18 @@ managed-attempt allocation one Auth transaction. Confirmed local rollback keeps
 the original form and deadline usable; successful replay and uncertain provider
 callbacks remain fail closed. This introduces no new service or trust boundary.
 On 2026-10-21, scoped PostgreSQL/HTTP verification passed 22 tests with no failures,
-errors or skips and verified owned cleanup; full migration is still unverified.
+errors or skips and verified owned cleanup; this does not establish full migration.
 The migration redirect helper also explicitly declares HTML, as already required
 by the gateway for the existing empty 303 response; its actual HTTP regression
 failed before the header fix and passed afterward. Full gateway migration
-verification remains pending. A separate complete-migration acceptance fixture
-has 14 passing offline protocol tests; its actual delivery, snapshot and admission
-adapters remain unverified, so it does not establish complete migration.
+requires separate verification. A separate complete-migration acceptance fixture
+has 14 passing offline protocol tests; those protocol tests establish neither
+actual delivery nor snapshot/admission acceptance or complete migration.
 See [ADR 0055](docs/adr/0055-atomic-migration-managed-start.md).
+
+On 2026-10-21, a separate exact-revision manual web check at `94dbe49` passed
+installation, the mandatory high-severity audit with zero vulnerabilities,
+production build, 57 unit tests, browser installation and 13 browser tests,
+with verified cleanup and independent evidence review. The Vite 8.3.3 override
+preserves Angular versions and changes no banking API or trust boundary.
+This manual result does not replace required exact-head CI or release acceptance.

@@ -65,6 +65,11 @@ disabled-provider stock browser checks, unchanged eleven-table Auth row snapshot
 and unchanged STAGE/CONFIRM transport counters, then restored the original profile.
 Independent review verified the sanitized evidence and cleanup. Master routing is
 confined to the disposable edge; before/after snapshots are not a historical audit
-of transient writes. Node replacement and complete migration callbacks remain
-pending. This topology does not activate a
+of transient writes. A separate 2026-10-21 fresh-image run passed scoped node
+replacement with actual two-to-one-to-two membership, survivor continuity and a
+new replacement identity without realm reimport. Genuine original-code redemption
+on the survivor and replay denial after rejoin completed in 14.78 seconds within
+the original 60-second TTL. Independent security review verified the receipts and
+owned cleanup. Complete migration requires separate acceptance; this scoped result
+does not establish whole-migration success. This topology does not activate a
 persistent deployment or change production transport or authority contracts.
