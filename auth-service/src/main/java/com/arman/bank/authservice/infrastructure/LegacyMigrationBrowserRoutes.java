@@ -177,7 +177,7 @@ public final class LegacyMigrationBrowserRoutes {
         String header = attemptCookie(redirect.attemptCookie(), seconds(redirect.expiresAt()));
         context.res().addHeader("Set-Cookie", header);
         if (!managed) context.res().addHeader("Set-Cookie", clearCookie(FORM_COOKIE));
-        context.header("Location", redirect.location().toASCIIString()).status(303).result("");
+        context.header("Location", redirect.location().toASCIIString()).status(303).contentType("text/html; charset=utf-8").result("");
     }
     private void account(Context context, LegacyMigrationBrowserService.Account account, boolean callback) {
         require(account != null && token(account.csrf()) && validCommand(account.commandId()));

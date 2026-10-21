@@ -75,8 +75,11 @@ public final class PostgresLegacyMigrationBrowserService implements LegacyMigrat
         live(sql,time(intent,"authorization_deadline"));return new Account(cookie,nextToken,nextCommand,time(intent,"authorization_deadline"),false);
     }));}
     @Override public Redirect managedStart(String cookie,String token,UUID command,String existingAttemptCookie){return operation(owned->{
-        UUID migration=owned.transaction(sql->{noActiveAttempt(sql,existingAttemptCookie);return guard(sql,"ACCOUNT",cookie,token,command,"MANAGED_BINDING").get("migration_id",UUID.class);});owned.verify();
-        var attempt=managed.start(owned,migration,cookie,command);return redirect(attempt,managedAuthorization,managed.settings());
+        var attempt=owned.transaction(sql->{
+            noActiveAttempt(sql,existingAttemptCookie);
+            UUID migration=guard(sql,"ACCOUNT",cookie,token,command,"MANAGED_BINDING").get("migration_id",UUID.class);
+            return managed.start(sql,migration,cookie,command);
+        });owned.verify();return redirect(attempt,managedAuthorization,managed.settings());
     });}
     @Override public Completion managedCallback(MigrationManagedProofPort.Callback callback){return operation(owned->{var result=managed.complete(owned,null,callback);return new Completion(result.state(),result.expiresAt());});}
     @Override public VerificationPage managedVerification(MigrationManagedProofPort.Callback callback,String cookie){

@@ -590,6 +590,39 @@ class StorageGate(unittest.TestCase):
 
 
 class FormatDiagnostics(unittest.TestCase):
+    def test_storage_tool_categories_are_finite_and_private_text_is_withheld(self):
+        secret = 'synthetic-password=/private/config.properties?token=do-not-print'
+        cases = {
+            'java.lang.OutOfMemoryError: Java heap space': 'OOM',
+            'java.io.IOException: No space left on device': 'DISK',
+            'java.nio.file.AccessDeniedException:': 'PERMISSION',
+            'error: unrecognized arguments: --unsupported': 'UNSUPPORTED_FLAG',
+            'org.apache.kafka.common.config.ConfigException:': 'INVALID_CONFIG',
+            'java.lang.NullPointerException:': 'JAVA_RUNTIME',
+            'java.io.IOException:': 'IO',
+            'org.apache.kafka.common.KafkaException:': 'KAFKA',
+            secret: 'UNKNOWN',
+        }
+        for message, category in cases.items():
+            with self.subTest(category=category):
+                result = subprocess.CompletedProcess([], 17, secret,
+                    'ARMONEY_KAFKA_FORMAT_STAGE=STORAGE_TOOL\n' + message + ' ' + secret)
+                output = self.diagnostic(result)
+                self.assertIn('storage_tool_category=' + category, output)
+                self.assertIn('format_stage=STORAGE_TOOL format_reason=UNCLASSIFIED', output)
+                self.assertIn('exit=17', output)
+                self.assertNotIn(secret, output)
+                self.assertNotIn('--unsupported', output)
+
+    def test_storage_tool_categories_do_not_apply_outside_storage_tool(self):
+        for phase, stage in (('baseline', 'STORAGE_TOOL'), ('format', 'CONFIG')):
+            result = subprocess.CompletedProcess([], 17, '',
+                'ARMONEY_KAFKA_FORMAT_STAGE=' + stage + '\njava.lang.OutOfMemoryError: private')
+            output = self.diagnostic(result, phase)
+            self.assertNotIn('storage_tool_category=', output)
+            self.assertIn('exit=17', output)
+            self.assertNotIn('private', output)
+
     def diagnostic(self, result, phase='format'):
         return kafka.safe_docker_failure(
             ['compose', 'run', 'kafka-controller-1'], result, phase,

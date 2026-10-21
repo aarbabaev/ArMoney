@@ -1812,3 +1812,17 @@ undone. Node replacement and full pre-FINAL migration callbacks remain pending.
 Recovery requires a genuine fresh login/code after an uncertain failed attempt;
 the original provider deadline and Auth replay exclusion remain unchanged.
 See [ADR 0053](docs/adr/0053-disposable-provider-response-loss-evidence.md).
+
+The pending migration recovery patch makes account-form command consumption and
+managed-attempt allocation one Auth transaction. Confirmed local rollback keeps
+the original form and deadline usable; successful replay and uncertain provider
+callbacks remain fail closed. This introduces no new service or trust boundary.
+On 2026-10-21, scoped PostgreSQL/HTTP verification passed 22 tests with no failures,
+errors or skips and verified owned cleanup; full migration is still unverified.
+The migration redirect helper also explicitly declares HTML, as already required
+by the gateway for the existing empty 303 response; its actual HTTP regression
+failed before the header fix and passed afterward. Full gateway migration
+verification remains pending. A separate complete-migration acceptance fixture
+has 14 passing offline protocol tests; its actual delivery, snapshot and admission
+adapters remain unverified, so it does not establish complete migration.
+See [ADR 0055](docs/adr/0055-atomic-migration-managed-start.md).

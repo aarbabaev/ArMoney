@@ -35,7 +35,12 @@ public final class PostgresLegacyMigrationManagedProofStore implements Migration
     }
     Redirect start(PostgresLoginRequestScope.Request owned,UUID migration,String capability,UUID command){
         requireEnabled();if(!settings.actor().equals(owned.actor()))throw unavailable();
-            Redirect result=owned.transaction(sql->{
+        Redirect result=owned.transaction(sql->start(sql,migration,capability,command));
+        owned.verify();return result;
+    }
+    /** Local allocation only, composed atomically with the browser command consumption. */
+    Redirect start(DSLContext sql,UUID migration,String capability,UUID command){
+        requireEnabled();if(migration==null||command==null||capability==null||!capability.matches("[A-Za-z0-9_-]{43}"))throw denied();
                 Account account=account(sql,migration,capability,false);
                 if(sql.fetchOne("select id from legacy_migration_managed_attempts where migration_id=?",migration)!=null)throw denied();
                 if(count(sql,"select count(*) from legacy_migration_managed_attempts")>=10000)throw limited();
@@ -51,7 +56,6 @@ public final class PostgresLegacyMigrationManagedProofStore implements Migration
                     """,id,receipt,migration,account.owner(),command,key,account.intent().get("proof_mode"),accountHash,account.ownerGeneration(),account.modeGeneration(),account.emailGeneration(),settings.issuer(),settings.clientId(),settings.redirectUri(),account.intent().get("legacy_subject"),account.intent().get("legacy_issuer"),account.intent().get("legacy_subject"),
                     secret(key,"browser",cookie),secret(key,"state",state),secret(key,"nonce",nonce),challenge,encrypted.keyId(),encrypted.nonce(),encrypted.ciphertext(),created.toString(),time(account.intent(),"authorization_deadline").toString(),deadline.toString());
                 checkAccount(sql,account);live(sql,deadline);return new Redirect(id,cookie,state,nonce,challenge,deadline);
-            });owned.verify();return result;
     }
     @Override public Result complete(UUID attemptId,MigrationManagedProofPort.Callback callback){
         requireEnabled();validateCallback(callback);

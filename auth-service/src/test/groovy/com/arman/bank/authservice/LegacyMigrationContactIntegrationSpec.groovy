@@ -141,6 +141,98 @@ class LegacyMigrationContactIntegrationSpec extends Specification {
         assert Instant.now().epochSecond>created.epochSecond
     }
     MigrationManagedProofPort.Callback callback(MigrationManagedProofStore.Redirect redirect){String code='synthetic-'+redirect.attemptId();callbackNonces.put(code,redirect.nonce());callbackSubjects.put(code,signedSubject);new MigrationManagedProofPort.Callback(code,redirect.state(),redirect.attemptCookie())}
+ def localBrowserOwner(){
+  auth.register(EMAIL,PASSWORD,PHONE)
+  def token=auth.login(EMAIL,PASSWORD).accessToken()
+  def owner=auth.me('Bearer '+token).id()
+  def before=database.transaction{sql->sql.fetchOne('select password_hash from identities where id=?',owner).get(0,String)}
+  def form=browser.form(null)
+  def selected=browser.password(form.formCookie(),form.csrf(),EMAIL,PASSWORD,form.commandId())
+  [owner:owner,token:token,passwordHash:before,account:selected]
+ }
+ boolean commandConsumed(UUID command){database.transaction{sql->sql.fetchOne('select count(*) from legacy_migration_browser_consumptions where command_id=?',command).get(0,Long)}!=0}
+ void preservedLocalOwner(Map original){
+  assert auth.me('Bearer '+original.token).id()==original.owner
+  assert database.transaction{sql->sql.fetchOne('select password_hash from identities where id=?',original.owner).get(0,String)}==original.passwordHash
+  assert count('managed_registration_principals')==0
+  assert count('legacy_migration_managed_receipts')==0
+ }
+ def 'composed password account starts a managed attempt without changing legacy credentials or session'(){
+  given:def original=localBrowserOwner()
+  expect:!original.account.emailCandidateRequired()
+  when:def redirect=browser.managedStart(original.account.accountCookie(),original.account.csrf(),original.account.commandId(),null)
+  then:
+  redirect.location().host=='issuer.example'
+  count('legacy_migration_managed_attempts')==1
+  commandConsumed(original.account.commandId())
+  preservedLocalOwner(original)
+  when:browser.managedStart(original.account.accountCookie(),original.account.csrf(),original.account.commandId(),null)
+  then:
+  def rejected=thrown(LegacyMigrationBrowserService.Failure)
+  rejected.kind()==LegacyMigrationBrowserService.Kind.CONFLICT
+  count('legacy_migration_managed_attempts')==1
+ }
+ // REC-AUTH-HTTP-02: the dedicated Gateway validates HTML content type on redirects too.
+ def 'actual HTTP managed redirect declares the gateway required HTML content type'(){
+  given:
+  def original=localBrowserOwner()
+  def origin=URI.create('https://migration.example')
+  def endpoint=URI.create(ISSUER+'/protocol/openid-connect/auth')
+  def configuration=new LegacyMigrationBrowserConfiguration(true,origin,
+   origin.resolve(LegacyMigrationBrowserConfiguration.LEGACY_CALLBACK),origin.resolve(LegacyMigrationBrowserConfiguration.MANAGED_CALLBACK),
+   endpoint,'legacy-client',endpoint,'managed-client')
+  def ingress=LegacyMigrationBrowserIngressConfiguration.from([AUTH_MIGRATION_BROWSER_ENABLED:'true',
+   MIGRATION_PUBLIC_ORIGIN:origin.toString(),MIGRATION_GATEWAY_TO_AUTH_KEY:'g'*64])
+  def routes=new LegacyMigrationBrowserRoutes(configuration,ingress,browser)
+  def app=io.javalin.Javalin.create{config->routes.configure(config)}.start('127.0.0.1',0)
+  def client=HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).connectTimeout(Duration.ofSeconds(2)).build()
+  def body='csrf='+original.account.csrf()+'&command_id='+original.account.commandId()
+  def request=HttpRequest.newBuilder(URI.create('http://127.0.0.1:'+app.port()+LegacyMigrationBrowserConfiguration.MANAGED_START))
+   .timeout(Duration.ofSeconds(5)).header('Origin',origin.toString())
+   .header('X-ArMoney-Migration-Auth-Key','g'*64).header('X-ArMoney-Migration-Origin',origin.toString())
+   .header('Cookie',LegacyMigrationBrowserRoutes.ACCOUNT_COOKIE+'='+original.account.accountCookie())
+   .header('Content-Type','application/x-www-form-urlencoded').POST(HttpRequest.BodyPublishers.ofString(body)).build()
+  when:
+  def response=client.send(request,HttpResponse.BodyHandlers.ofString())
+  int status=response.statusCode()
+  int contentTypeCount=response.headers().allValues('Content-Type').size()
+  String contentType=response.headers().firstValue('Content-Type').orElse('')
+  int locationCount=response.headers().allValues('Location').size()
+  boolean bodyEmpty=response.body().isEmpty()
+  then:
+  status==303
+  contentTypeCount==1
+  contentType.matches('(?i)text/html(?:;\\s*charset=UTF-8)?')
+  locationCount==1
+  bodyEmpty
+  commandConsumed(original.account.commandId())
+  preservedLocalOwner(original)
+  cleanup:client?.close();app?.stop()
+ }
+ // REC-SEC-AUTH-01: confirmed rollback must not burn the original command.
+ def 'managed allocation rollback preserves the exact browser command for retry and the legacy owner session'(){
+  given:
+  def original=localBrowserOwner()
+  database.transaction{sql->
+   sql.execute("CREATE FUNCTION synthetic_managed_start_failure() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RAISE EXCEPTION ''Synthetic managed allocation unavailable'' USING ERRCODE=''40001''; END;'")
+   sql.execute('CREATE TRIGGER synthetic_managed_start_failure BEFORE INSERT ON legacy_migration_managed_attempts FOR EACH ROW EXECUTE FUNCTION synthetic_managed_start_failure()')
+   null
+  }
+  when:browser.managedStart(original.account.accountCookie(),original.account.csrf(),original.account.commandId(),null)
+  then:
+  thrown(org.jooq.exception.DataAccessException)
+  !commandConsumed(original.account.commandId())
+  count('legacy_migration_managed_attempts')==0
+  preservedLocalOwner(original)
+  when:
+  database.transaction{sql->sql.execute('DROP TRIGGER synthetic_managed_start_failure ON legacy_migration_managed_attempts');null}
+  def redirect=browser.managedStart(original.account.accountCookie(),original.account.csrf(),original.account.commandId(),null)
+  then:
+  redirect.location().host=='issuer.example'
+  commandConsumed(original.account.commandId())
+  count('legacy_migration_managed_attempts')==1
+  preservedLocalOwner(original)
+ }
  def passwordlessAccount(){
   def token=fixture.auth.sso('synthetic-original',{ignored->new SsoTokens.Principal(fixture.ISSUER,'signed-existing',fixture.PHONE, null, false, false)} as SsoTokens).accessToken()
   def owner=fixture.auth.me('Bearer '+token).id()
