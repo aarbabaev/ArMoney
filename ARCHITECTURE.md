@@ -1833,6 +1833,18 @@ has 14 passing offline protocol tests; those protocol tests establish neither
 actual delivery nor snapshot/admission acceptance or complete migration.
 See [ADR 0055](docs/adr/0055-atomic-migration-managed-start.md).
 
+Migration account and managed proof freshness use whole-second precision for
+the signed OIDC authentication time and the challenge start. An authentication
+from an earlier whole second remains invalid; signature, nonce, provider
+observation, token age, deadlines and one-shot callback rules are unchanged.
+The read-only account receipt evidence query uses the same precision. This
+changes no HTTP contract, database schema, service ownership or diagram boundary.
+On 2026-10-21, the unchanged PostgreSQL regression suite reproduced exactly two
+same-second failures before the fix and passed all 28 tests afterward, with no
+errors or skips and verified cleanup. Independent security verified the scoped
+source and runtime evidence. Complete live migration and delivered-code
+acceptance remain separate gates. See [ADR 0056](docs/adr/0056-oidc-migration-authentication-time-precision.md).
+
 On 2026-10-21, a separate exact-revision manual web check at `94dbe49` passed
 installation, the mandatory high-severity audit with zero vulnerabilities,
 production build, 57 unit tests, browser installation and 13 browser tests,

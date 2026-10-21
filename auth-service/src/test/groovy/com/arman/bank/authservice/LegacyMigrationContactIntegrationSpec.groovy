@@ -46,6 +46,7 @@ class LegacyMigrationContactIntegrationSpec extends Specification {
     List<String> observedSubjects=new CopyOnWriteArrayList<>()
     String signedSubject='signed-existing'
     long tokenLifetime=60
+    Long authenticationSecond
     boolean negative
     int tokenCalls
     int observerCalls
@@ -100,7 +101,7 @@ class LegacyMigrationContactIntegrationSpec extends Specification {
                 assert fields.grant_type=='authorization_code'
                 assert fields.code_verifier!=null
                 long current=Instant.now().epochSecond
-                def claims=[iss:ISSUER,sub:callbackSubjects.get(fields.code),sid:'signed-session',aud:fields.client_id,azp:fields.client_id,nonce:callbackNonces.get(fields.code),auth_time:current,iat:current,exp:current+tokenLifetime]
+                def claims=[iss:ISSUER,sub:callbackSubjects.get(fields.code),sid:'signed-session',aud:fields.client_id,azp:fields.client_id,nonce:callbackNonces.get(fields.code),auth_time:authenticationSecond==null?current:authenticationSecond,iat:current,exp:current+tokenLifetime]
                 def jws=new JWSObject(new JWSHeader.Builder(JWSAlgorithm.RS256).keyID('proof-fixture-signing').type(JOSEObjectType.JWT).build(),new Payload(JsonOutput.toJson(claims)))
                 jws.sign(new RSASSASigner(key))
                 body=JsonOutput.toJson([token_type:'Bearer',access_token:'unused-synthetic-access',id_token:jws.serialize()]).getBytes('UTF-8')
@@ -151,6 +152,107 @@ class LegacyMigrationContactIntegrationSpec extends Specification {
   [owner:owner,token:token,passwordHash:before,account:selected]
  }
  boolean commandConsumed(UUID command){database.transaction{sql->sql.fetchOne('select count(*) from legacy_migration_browser_consumptions where command_id=?',command).get(0,Long)}!=0}
+ Map callbackAtChallenge(LegacyMigrationBrowserService.Redirect redirect,long offset,boolean accountPurpose=false){
+  def fields=redirect.location().rawQuery.split('&').collectEntries{part->def pair=part.split('=',2);[(URLDecoder.decode(pair[0],'UTF-8')):URLDecoder.decode(pair[1],'UTF-8')]}
+  Instant created=database.transaction{sql->sql.fetchOne(accountPurpose?'select created_at from legacy_migration_account_attempts':'select created_at from legacy_migration_managed_attempts').get(0,OffsetDateTime).toInstant()}
+  // Signed NumericDate is selected from the captured database challenge, not a
+  // scheduling-dependent current second. Deliberately no interactive() wait.
+  authenticationSecond=created.epochSecond+offset
+  String code='synthetic-precision-'+UUID.randomUUID()
+  callbackNonces.put(code,fields.nonce);callbackSubjects.put(code,signedSubject)
+  [callback:new MigrationManagedProofPort.Callback(code,fields.state,redirect.attemptCookie()),challengeFraction:created.nano]
+ }
+ def 'managed signed authentication in the challenge epoch second is accepted without waiting'(){
+  given:
+  def original=localBrowserOwner()
+  def redirect=browser.managedStart(original.account.accountCookie(),original.account.csrf(),original.account.commandId(),null)
+  def proof=callbackAtChallenge(redirect,0)
+  expect:proof.challengeFraction>0
+  when:def completed=browser.managedCallback(proof.callback)
+  then:
+  completed.state()=='BOUND'
+  count('legacy_migration_managed_receipts')==1
+  tokenCalls==1
+  observerCalls==1
+  auth.me('Bearer '+original.token).id()==original.owner
+  database.transaction{sql->sql.fetchOne('select password_hash from identities where id=?',original.owner).get(0,String)}==original.passwordHash
+  count('managed_registration_principals')==0
+  when:def replay=browser.managedCallback(proof.callback)
+  then:
+  replay.state()=='BOUND'
+  tokenCalls==1
+  observerCalls==2
+  count('legacy_migration_managed_receipts')==1
+ }
+ def 'managed earlier authentication remains rejected and claimed callback cannot exchange again'(){
+  given:
+  def original=localBrowserOwner()
+  def redirect=browser.managedStart(original.account.accountCookie(),original.account.csrf(),original.account.commandId(),null)
+  def proof=callbackAtChallenge(redirect,offset)
+  when:browser.managedCallback(proof.callback)
+  then:
+  def rejected=thrown(LegacyMigrationBrowserService.Failure)
+  rejected.kind()==LegacyMigrationBrowserService.Kind.UNAVAILABLE
+  tokenCalls==1
+  count('legacy_migration_managed_receipts')==0
+  count('legacy_migration_managed_claims')==1
+  auth.me('Bearer '+original.token).id()==original.owner
+  when:browser.managedCallback(proof.callback)
+  then:
+  thrown(LegacyMigrationBrowserService.Failure)
+  tokenCalls==1
+  count('legacy_migration_managed_receipts')==0
+  where:offset<<[-1L,-121L]
+ }
+ Map accountBrowserOwner(){
+  def token=auth.sso('synthetic-original',{ignored->new SsoTokens.Principal(ISSUER,signedSubject,PHONE,null,false,false)} as SsoTokens).accessToken()
+  def owner=auth.me('Bearer '+token).id()
+  def form=browser.form(null)
+  def redirect=browser.accountOidcStart(form.formCookie(),form.csrf(),form.commandId(),null)
+  [owner:owner,token:token,redirect:redirect]
+ }
+ def 'legacy account signed authentication in the challenge epoch second is accepted without waiting'(){
+  given:
+  def original=accountBrowserOwner()
+  def proof=callbackAtChallenge(original.redirect,0,true)
+  expect:proof.challengeFraction>0
+  when:def admitted=browser.accountOidcCallback(proof.callback)
+  then:
+  admitted.emailCandidateRequired()
+  count('legacy_migration_account_receipts')==1
+  count('legacy_migration_account_completions')==1
+  tokenCalls==1
+  observerCalls==1
+  auth.me('Bearer '+original.token).id()==original.owner
+  database.transaction{sql->sql.fetchOne('select email is null and password_hash is null from identities where id=?',original.owner).get(0,Boolean)}
+  count('managed_registration_principals')==0
+  when:browser.accountOidcCallback(proof.callback)
+  then:
+  thrown(LegacyMigrationBrowserService.Failure)
+  tokenCalls==1
+  observerCalls==1
+  count('legacy_migration_account_receipts')==1
+ }
+ def 'legacy account earlier authentication remains rejected and claimed callback cannot exchange again'(){
+  given:
+  def original=accountBrowserOwner()
+  def proof=callbackAtChallenge(original.redirect,offset,true)
+  when:browser.accountOidcCallback(proof.callback)
+  then:
+  def rejected=thrown(LegacyMigrationBrowserService.Failure)
+  rejected.kind()==LegacyMigrationBrowserService.Kind.UNAVAILABLE
+  tokenCalls==1
+  count('legacy_migration_account_receipts')==0
+  count('legacy_migration_account_claims')==1
+  count('legacy_migration_intents')==0
+  auth.me('Bearer '+original.token).id()==original.owner
+  when:browser.accountOidcCallback(proof.callback)
+  then:
+  thrown(LegacyMigrationBrowserService.Failure)
+  tokenCalls==1
+  count('legacy_migration_account_receipts')==0
+  where:offset<<[-1L,-121L]
+ }
  void preservedLocalOwner(Map original){
   assert auth.me('Bearer '+original.token).id()==original.owner
   assert database.transaction{sql->sql.fetchOne('select password_hash from identities where id=?',original.owner).get(0,String)}==original.passwordHash

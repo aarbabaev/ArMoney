@@ -132,7 +132,7 @@ select
  and r.client_id='armoney-migration-account' and a.client_id=r.client_id and a.issuer=r.issuer
  and a.redirect_uri='https://fixture.local:8443/migration/legacy/account-oidc/callback'
  and r.challenge_created_at=a.created_at and r.callback_database_start=claim.started_at
- and r.authenticated_at>=r.challenge_created_at and r.authenticated_at<=r.issued_at and r.issued_at<r.token_expires_at
+ and date_trunc('second',r.authenticated_at)>=date_trunc('second',r.challenge_created_at) and r.authenticated_at<=r.issued_at and r.issued_at<r.token_expires_at
  and c.completed_at>=claim.started_at and c.completed_at<claim.started_at+interval '4 seconds'
  and r.owner_generation=p.owner_generation and r.association_generation=p.association_generation
  and r.credential_generation=p.credential_generation and r.email_generation=p.email_generation+1

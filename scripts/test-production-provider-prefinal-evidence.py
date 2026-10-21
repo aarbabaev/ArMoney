@@ -195,6 +195,30 @@ class PrefinalEvidenceTests(unittest.TestCase):
         self.assertIn('not exists(select 1 from sso_login_proofs)', E.PREFINAL_SQL)
         self.assertIn("p.mode='LEGACY_OIDC_REAUTH' or not exists(select 1 from external_identities x where x.issuer=p.issuer and x.subject=p.target_subject)", E.PREFINAL_SQL)
 
+    def test_account_receipt_numericdate_precision_preserves_chain_and_age_guards(self):
+        # Offline SQL contract only: these assertions do not execute PostgreSQL.
+        account = E.PREFINAL_SQL.split("case when p.mode='LOCAL_PASSWORD' then (select account_receipt_id is null from i)", 1)[1].split('end as account_receipt_chain_consistent', 1)[0]
+        self.assertIn("date_trunc('second',r.authenticated_at)>=date_trunc('second',r.challenge_created_at)", account)
+        self.assertNotIn('r.authenticated_at>=r.challenge_created_at', account)
+        for guard in ('r.challenge_created_at=a.created_at', 'r.callback_database_start=claim.started_at',
+                      'r.authenticated_at<=r.issued_at', 'r.issued_at<r.token_expires_at',
+                      "c.completed_at>=claim.started_at and c.completed_at<claim.started_at+interval '4 seconds'",
+                      'r.owner_id=p.owner', 'r.proof_mode=p.mode', 'r.issuer=p.issuer', 'r.subject=p.legacy_subject',
+                      'r.owner_generation=p.owner_generation', 'r.association_generation=p.association_generation',
+                      'r.credential_generation=p.credential_generation', 'r.email_generation=p.email_generation+1',
+                      'r.account_deadline>clock_timestamp()', 'r.attempt_deadline>clock_timestamp()',
+                      'r.token_expires_at>clock_timestamp()', 'm.account_receipt_hash=r.receipt_hash'):
+            self.assertIn(guard, account)
+        # Reference boundary examples document the OIDC NumericDate contract.
+        # They are not an emulation or acceptance test of PostgreSQL date_trunc.
+        challenge = CREATED
+        same_second = challenge.replace(microsecond=0)
+        earlier_second = same_second - D.timedelta(seconds=1)
+        next_second = same_second + D.timedelta(seconds=1)
+        self.assertLess(same_second, challenge)
+        for auth_at, expected in ((same_second, True), (earlier_second, False), (next_second, True)):
+            self.assertEqual(expected, auth_at.replace(microsecond=0) >= challenge.replace(microsecond=0))
+
     def test_all_queried_tables_are_in_published_auth_migrations(self):
         migration_dir = PATH.parent.parent / 'auth-service/src/main/resources/db/migration'
         ddl = '\n'.join(p.read_text() for p in migration_dir.glob('V*.sql'))

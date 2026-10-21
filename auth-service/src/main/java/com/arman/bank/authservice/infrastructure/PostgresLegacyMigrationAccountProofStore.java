@@ -113,7 +113,7 @@ public final class PostgresLegacyMigrationAccountProofStore {
         void requireBound(DSLContext sql){checkLocal();if(!backend(sql).equals(claim.backend()))throw unavailable();live(sql,originalAttemptDeadline());}
     }
     private Proof verified(Active active,MigrationManagedProofPort.Claims c,CodeConfirmation.Facts f,Instant received){
-        if(c==null||!active.issuer().equals(c.issuer())||!active.clientId().equals(c.clientId())||c.subject()==null||c.userSessionId()==null||c.authenticatedAt()==null||c.issuedAt()==null||c.tokenExpiresAt()==null||c.authenticatedAt().isBefore(active.challengeStartedAt())||c.authenticatedAt().isAfter(c.issuedAt())||!c.issuedAt().isBefore(c.tokenExpiresAt()))throw unavailable();
+        if(c==null||!active.issuer().equals(c.issuer())||!active.clientId().equals(c.clientId())||c.subject()==null||c.userSessionId()==null||c.authenticatedAt()==null||c.issuedAt()==null||c.tokenExpiresAt()==null||c.authenticatedAt().getEpochSecond()<active.challengeStartedAt().getEpochSecond()||c.authenticatedAt().isAfter(c.issuedAt())||!c.issuedAt().isBefore(c.tokenExpiresAt()))throw unavailable();
         Instant bound=min(CodeConfirmation.deadline(new LoginProof.Binding(c.issuer(),c.subject(),c.clientId(),c.userSessionId()),f,active.originalDatabaseStart(),received),active.originalAttemptDeadline(),c.tokenExpiresAt());
         if(!f.enabled()||!f.userSessionActive()||!f.clientSessionActive()||f.email()==null||f.phone()==null)throw denied();CodeConfirmation.fresh(active.originalDatabaseStart(),bound,received);return new Proof(c,f,bound);
     }
