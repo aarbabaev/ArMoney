@@ -7,6 +7,9 @@
     "node": "^24.15.0"
   },
   "packageManager": "npm@11.11.0",
+  "overrides": {
+    "vite": "8.3.3"
+  },
   "scripts": {
     "start": "ng serve --host localhost --ssl --port 4200",
     "build": "ng build",
