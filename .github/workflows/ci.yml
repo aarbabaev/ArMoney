@@ -377,7 +377,7 @@ jobs:
             echo 'No web component exists at this revision.' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          docker run --rm --mount type=bind,source="$PWD/web",target=/app --workdir /app node:24.19.0-bookworm bash -euc 'npm ci; npm audit --audit-level=high; npm run build; npm test; npx playwright install --with-deps chromium; npm run e2e'
+          docker run --rm --mount type=bind,source="$PWD/web",target=/app --mount type=bind,source="$PWD/scripts/run-web-ci.sh",target=/opt/run-web-ci.sh,readonly --workdir /app node:24.19.0-bookworm bash /opt/run-web-ci.sh
       - name: Save web reports locally
         if: always() && needs.impact.outputs.web == 'true'
         run: bash scripts/archive-local-ci.sh web

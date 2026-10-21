@@ -220,3 +220,10 @@ Allow substantial disk space for the image, inner image builds, Android system
 image/userdata, and reports. Fresh daemon state favors isolation over build speed;
 multiple jobs re-download dependencies. No Docker build or runtime validation is
 implied by the presence of these files.
+
+Web CI runs the six required stages through a read-only mounted script and records
+each stage's duration and exit status. Dependency installation has a ten-minute
+bound and finite fetch retries; the full job retains its thirty-minute bound.
+The explicit high-severity npm audit remains mandatory after installation,
+followed by the build, unit tests, browser installation and browser tests.
+An installation timeout is a failed check, not evidence about application tests.
