@@ -64,6 +64,7 @@ jobs:
           python3 -B scripts/test-affected-gradle.py
           python3 -B scripts/test-ci-workflow.py
           python3 -B scripts/test-local-ci-guards.py
+          python3 -B scripts/test-web-ci-guards.py
       - name: Validate metrics collector and disposable acceptance guards (offline)
         run: |
           python3 -B infra/observability/test_collector.py
