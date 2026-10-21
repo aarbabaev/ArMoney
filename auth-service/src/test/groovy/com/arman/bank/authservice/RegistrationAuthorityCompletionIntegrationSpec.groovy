@@ -230,7 +230,7 @@ class RegistrationAuthorityCompletionIntegrationSpec extends Specification {
         def sessionFailure=thrown(AuthFailure)
         sessionFailure.kind()==AuthFailure.Kind.UNAUTHORIZED
         when:
-        store.externalIdentity(new SsoTokens.Principal(ISSUER,flow.subject(),PHONE,EMAIL,true))
+        store.externalIdentity(new SsoTokens.Principal(ISSUER,flow.subject(),PHONE,EMAIL,true, true))
         then:
         thrown(AuthFailure)
         count('managed_registration_principals')==1
@@ -256,7 +256,7 @@ class RegistrationAuthorityCompletionIntegrationSpec extends Specification {
         def profiles=Mock(RegistrationProfiles)
         def service=new AuthService(new PostgresAuthStore(database,flag),new Argon2Passwords(),Clock.systemUTC(),profiles)
         when:
-        service.sso('synthetic-provider-token',{ token -> new SsoTokens.Principal(ISSUER,flow.subject(),PHONE,EMAIL,true) } as SsoTokens)
+        service.sso('synthetic-provider-token',{ token -> new SsoTokens.Principal(ISSUER,flow.subject(),PHONE,EMAIL,true, true) } as SsoTokens)
         then:
         def failure=thrown(AuthFailure)
         failure.kind()==AuthFailure.Kind.UNAUTHORIZED
@@ -277,7 +277,7 @@ class RegistrationAuthorityCompletionIntegrationSpec extends Specification {
         def profiles=Mock(RegistrationProfiles)
         def service=new AuthService(new PostgresAuthStore(database,flag),new Argon2Passwords(),Clock.systemUTC(),profiles)
         when:
-        service.sso('synthetic-provider-token',{ token -> new SsoTokens.Principal(ISSUER,'different-subject',PHONE,EMAIL,true) } as SsoTokens)
+        service.sso('synthetic-provider-token',{ token -> new SsoTokens.Principal(ISSUER,'different-subject',PHONE,EMAIL,true, true) } as SsoTokens)
         then:
         def ssoFailure=thrown(AuthFailure)
         ssoFailure.kind()==AuthFailure.Kind.CONFLICT
@@ -331,7 +331,7 @@ class RegistrationAuthorityCompletionIntegrationSpec extends Specification {
         assert staged.await(10,TimeUnit.SECONDS)
         def profiles=Mock(RegistrationProfiles)
         def service=new AuthService(new PostgresAuthStore(database,false),new Argon2Passwords(),Clock.systemUTC(),profiles)
-        def sso=pool.submit({service.sso('synthetic-provider-token',{token->new SsoTokens.Principal(ISSUER,flow.subject(),PHONE,EMAIL,true)} as SsoTokens)} as Callable)
+        def sso=pool.submit({service.sso('synthetic-provider-token',{token->new SsoTokens.Principal(ISSUER,flow.subject(),PHONE,EMAIL,true, true)} as SsoTokens)} as Callable)
         when:
         boolean waited=false
         long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5)
@@ -362,7 +362,7 @@ class RegistrationAuthorityCompletionIntegrationSpec extends Specification {
         given:
         def profiles=Stub(RegistrationProfiles)
         def service=new AuthService(new PostgresAuthStore(database,false),new Argon2Passwords(),Clock.systemUTC(),profiles)
-        def session=service.sso('synthetic-provider-token',{token->new SsoTokens.Principal(ISSUER,flow.subject(),PHONE,EMAIL,true)} as SsoTokens)
+        def session=service.sso('synthetic-provider-token',{token->new SsoTokens.Principal(ISSUER,flow.subject(),PHONE,EMAIL,true, true)} as SsoTokens)
         UUID existing=service.me('Bearer '+session.accessToken()).id()
         when:
         enroll()

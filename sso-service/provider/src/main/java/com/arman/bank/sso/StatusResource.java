@@ -12,6 +12,9 @@ import java.util.Map;
 /** Private contact observations, never an eligibility or verification authority. */
 @jakarta.ws.rs.ext.Provider
 public final class StatusResource {
+    enum EnrollmentRejection { STATUS_KEY_CONFIGURATION, STATUS_AUTHENTICATION, FEATURE_DISABLED, BODY_BOUND, REQUEST_SCHEMA, OBSERVATION_UNAVAILABLE }
+    private static final org.jboss.logging.Logger LOG=org.jboss.logging.Logger.getLogger(StatusResource.class);
+    private static Response enrollmentRejected(EnrollmentRejection reason,int status){LOG.warn(reason.name());return empty(status);}
     private final KeycloakSession session;
     private final java.util.function.Supplier<String> statusKey;
     private final java.util.function.Supplier<String> bindingKey;
@@ -51,18 +54,18 @@ public final class StatusResource {
     public Response enrollment(@HeaderParam("X-ArMoney-Auth-Status-Key") String supplied, byte[] body) {
         String configured = statusKey.get();
         if (configured == null || configured.length() < 32 || configured.length() > 512
-                || configured.chars().anyMatch(c -> c < 33 || c > 126)) return empty(503);
+                || configured.chars().anyMatch(c -> c < 33 || c > 126)) return enrollmentRejected(EnrollmentRejection.STATUS_KEY_CONFIGURATION,503);
         if (supplied == null || supplied.length() > 512 || !MessageDigest.isEqual(
-                configured.getBytes(StandardCharsets.UTF_8), supplied.getBytes(StandardCharsets.UTF_8))) return empty(401);
-        if (!enrollmentEnabled.getAsBoolean()) return empty(503);
-        if (body == null || body.length > 12288) return empty(400);
+                configured.getBytes(StandardCharsets.UTF_8), supplied.getBytes(StandardCharsets.UTF_8))) return enrollmentRejected(EnrollmentRejection.STATUS_AUTHENTICATION,401);
+        if (!enrollmentEnabled.getAsBoolean()) return enrollmentRejected(EnrollmentRejection.FEATURE_DISABLED,503);
+        if (body == null || body.length > 12288) return enrollmentRejected(EnrollmentRejection.BODY_BOUND,400);
         final EnrollmentObservation.Binding binding;
         try { binding = EnrollmentObservation.parse(Bridge.strictJson(body)); }
-        catch (IllegalArgumentException | java.io.IOException invalid) { return empty(400); }
+        catch (IllegalArgumentException | java.io.IOException invalid) { return enrollmentRejected(EnrollmentRejection.REQUEST_SCHEMA,400); }
         try {
             return Response.ok(EnrollmentObservation.observe(session, binding, bindingKey.get()))
                     .header("Cache-Control", "no-store").build();
-        } catch (RuntimeException unavailable) { return empty(503); }
+        } catch (RuntimeException unavailable) { return enrollmentRejected(EnrollmentRejection.OBSERVATION_UNAVAILABLE,503); }
     }
 
     @POST @Consumes(MediaType.APPLICATION_JSON) @Produces(MediaType.APPLICATION_JSON)

@@ -1,0 +1,92 @@
+# Explicit opt-in only; the default edge files continue to deny migration ingress.
+(migrationUpstream) {
+    # Strip caller values in a separate middleware: header_up deletions run after sets.
+    request_header -X-ArMoney-Migration-*
+    reverse_proxy app-gateway:8080 {
+        header_up -Forwarded
+        header_up -X-Forwarded-*
+        header_up -X-Identity-*
+        header_up -X-Service-Key
+        header_up -Authorization
+        header_up -X-User-Id
+        header_up -X-Authenticated-User
+        header_up X-ArMoney-Migration-Edge-Key {$MIGRATION_EDGE_TO_GATEWAY_KEY}
+        header_up X-ArMoney-Migration-Origin {$MIGRATION_PUBLIC_ORIGIN}
+        transport http {
+            # A reused HTTP/1 connection may replay a GET after a read timeout.
+            # Migration phases get one fresh upstream attempt within these limits.
+            keepalive off
+            dial_timeout 2s
+            response_header_timeout 5s
+            read_timeout 5s
+            write_timeout 5s
+        }
+    }
+}
+{
+    admin off
+    # IP-address clients omit SNI; select the certificate for the configured origin.
+    default_sni {$ARMONEY_HOST}
+    auto_https disable_redirects
+}
+# Unknown HTTP authorities must receive a local denial, never an empty default 200.
+# The configured-host site below remains the only site with upstream routes.
+https://:443 {
+    tls internal
+    respond 404
+}
+https://{$ARMONEY_HOST}:443 {
+    tls internal
+    # No access log: authorization codes and credentials must not be logged.
+    @oidc path /sso/realms/armoney/.well-known/* /sso/realms/armoney/protocol/openid-connect/* /sso/realms/armoney/login-actions/* /sso/resources/*
+    handle @oidc {
+        reverse_proxy sso-service:8080 {
+            header_up X-Forwarded-Proto https
+            header_up X-Forwarded-Host {$ARMONEY_HOST}:8443
+            header_up X-Forwarded-Port 8443
+        }
+    }
+    @blockedSso path /sso /sso/*
+    handle @blockedSso {
+        respond 404
+    }
+    @internal path /internal /internal/*
+    handle @internal {
+        respond 404
+    }
+    # Opt-in browser migration ingress: original URI, real TLS and fixed authority only.
+    @migrationGet {
+        protocol https
+        method GET
+        expression `"https://" + {http.request.hostport} == "{$MIGRATION_PUBLIC_ORIGIN}" && ({http.request.tls.server_name} == "" || {http.request.tls.server_name} == "{$ARMONEY_HOST}") && {http.request.orig_uri}.matches('^/migration/(legacy|legacy/verify/status|legacy/account-oidc/callback([?].*)?|managed/callback([?].*)?)$')`
+    }
+    @migrationPost {
+        protocol https
+        method POST
+        expression `"https://" + {http.request.hostport} == "{$MIGRATION_PUBLIC_ORIGIN}" && ({http.request.tls.server_name} == "" || {http.request.tls.server_name} == "{$ARMONEY_HOST}") && {http.request.orig_uri}.matches('^/migration/(legacy/(password|email|account-oidc/start|verify/(stage|decision|publication|final-command|final)|otp/(issue|consume))|managed/start)$')`
+    }
+    handle @migrationGet {
+        import migrationUpstream
+    }
+    handle @migrationPost {
+        import migrationUpstream
+    }
+    @migrationDenied path /migration /migration/*
+    handle @migrationDenied {
+        respond 404
+    }
+    @api path /v1/* /health/live /health/ready /openapi.yaml
+    handle @api {
+        reverse_proxy app-gateway:8080
+    }
+    handle {
+        header {
+            Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+            Referrer-Policy "no-referrer"
+            X-Content-Type-Options "nosniff"
+            Permissions-Policy "camera=(), microphone=(), geolocation=()"
+            Cache-Control "no-store"
+        }
+        reverse_proxy web:8080
+    }
+}

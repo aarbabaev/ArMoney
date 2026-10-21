@@ -168,6 +168,12 @@ class KeycloakTokensSpec extends Specification {
         provider.verify('opaque-access-token').phoneNumber() == null
     }
 
+    def 'absent email verification remains unknown without changing legacy principal normalization'(){
+        given:claims.remove('email_verified')
+        when:def principal=provider.verify('opaque-access-token')
+        then:!principal.emailVerificationClaimKnown();!principal.emailVerified()
+    }
+
     def 'only a valid email and literal boolean verification establish verified contact'() {
         given:
         claims.email = email
@@ -177,6 +183,7 @@ class KeycloakTokensSpec extends Specification {
         then:
         principal.email() == expectedEmail
         principal.emailVerified() == expectedVerified
+        principal.emailVerificationClaimKnown() == (verification instanceof Boolean)
         where:
         email                 | verification | expectedEmail         | expectedVerified
         ' Contact@Example.com ' | true       | 'contact@example.com' | true
@@ -315,7 +322,7 @@ class KeycloakTokensSpec extends Specification {
     }
     def 'legacy principal constructors explicitly supply absent context instead of fabricated timestamps or client'(){
         when:
-        def principal=withEmail?new SsoTokens.Principal(ISSUER,'legacy','+971501234567','legacy@example.test',true):new SsoTokens.Principal(ISSUER,'legacy','+971501234567')
+        def principal=withEmail?new SsoTokens.Principal(ISSUER,'legacy','+971501234567','legacy@example.test',true, true):new SsoTokens.Principal(ISSUER,'legacy','+971501234567', null, false, false)
         then:
         [principal.tokenContext().clientId(),principal.tokenContext().sessionId(),principal.tokenContext().issuedAt(),principal.tokenContext().expiresAt(),principal.tokenContext().proof()].every{
             it.status()==SsoTokens.MetadataStatus.ABSENT&&it.value()==null

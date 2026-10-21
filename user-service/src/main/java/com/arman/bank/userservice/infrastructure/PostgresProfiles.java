@@ -21,6 +21,7 @@ public final class PostgresProfiles implements ProfileStore {
         Profile.validatePhone(phone);
         database.transaction(sql -> {
             lockRegistration(sql);
+            PostgresMigrationBaselineStore.requireUnreserved(sql, identity);
             var claim = sql.fetchOne("select phone_number from registration_phone_claims where identity_id = ?", identity);
             if (claim != null && !phone.equals(claim.get("phone_number", String.class))) throw new RegistrationConflict();
             if (sql.fetchOne("select identity_id from registration_phone_claims where phone_number = ? and identity_id <> ?", phone, identity) != null ||
@@ -40,6 +41,8 @@ public final class PostgresProfiles implements ProfileStore {
         String selected = shards.select(email); // Validate even when placement already exists.
         Placement placement = database.transaction(sql -> {
             lockRegistration(sql);
+            Placement existing = placement(sql.fetchOne("select * from profile_directory where identity_id = ?", profile.identityId()));
+            if (existing != null) return existing;
             sql.execute("""
                 insert into profile_directory(identity_id, profile_id, shard_id, phone_number)
                 values (?, ?, ?, (select phone_number from registration_phone_claims where identity_id = ?))
@@ -48,11 +51,19 @@ public final class PostgresProfiles implements ProfileStore {
             return placement(sql.fetchOne("select * from profile_directory where identity_id = ?", profile.identityId()));
         });
         // No primary transaction is held over shard IO. UUID and placement survive lost responses.
-        Profile saved = shards.database(placement.shard()).transaction(sql -> read(sql.fetchOne("""
+        Profile saved = shards.database(placement.shard()).transaction(sql -> {
+            // Each owned database takes its registration lock before physical row locks.
+            // This is local shard IO; no central transaction is held across it.
+            lockRegistration(sql);
+            if (placement.initialized()) return read(sql.fetchOne(
+                "update profiles set display_name = ? where identity_id = ? and id = ? returning *",
+                profile.displayName(), profile.identityId(), placement.id()));
+            return read(sql.fetchOne("""
             insert into profiles(id, identity_id, display_name) values (?, ?, ?)
             on conflict(identity_id) do update set display_name = excluded.display_name
             returning *
-            """, placement.id(), profile.identityId(), profile.displayName())));
+            """, placement.id(), profile.identityId(), profile.displayName()));
+        });
         if (!saved.id().equals(placement.id())) throw new IllegalStateException("Profile placement mismatch");
         Placement confirmed = database.transaction(sql -> {
             lockRegistration(sql);
@@ -126,6 +137,7 @@ public final class PostgresProfiles implements ProfileStore {
             throw new IllegalArgumentException("Operator and evidence references required");
         database.transaction(sql -> {
             lockRegistration(sql);
+            PostgresMigrationBaselineStore.requireUnreserved(sql, identity);
             if (sql.fetchOne("select identity_id from verification_projection_current where identity_id = ?", identity) != null)
                 throw new IllegalStateException("Projected identity requires current authority");
             Placement placed = placement(sql.fetchOne("select * from profile_directory where identity_id = ? for update", identity));

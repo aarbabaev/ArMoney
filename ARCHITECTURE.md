@@ -1,20 +1,37 @@
 # ArMoney  -  System and Agent Team Architecture
 
-> The main project map, updated 2026-10-13 from main
-> `ce5175bbf2d4183b16f76977ef6f7627c2ed5ee2`, including the assistant release in PR #46.
-> Exact-head checks and deployment evidence are recorded separately in that PR.
+> Source map for main and the current managed-banking integration in PR #96.
+> Exact-head checks and deployment evidence are recorded separately in the delivery PR.
 > Describes the source code, not the guaranteed state of running containers.
 > This revision adds the #30 Saga design and #31 optional Kafka infrastructure
 > source; Kafka cluster acceptance and deployment remain unverified.
 
-The staged internal proof-creation consumer described in
-[ADR 0042](docs/adr/0042-staged-proof-eligibility-consumption.md) now rereads
-current eligibility evidence after persistence work. Its source security review
-and execution audits are clear: the local Auth check passed 766 tests across 43
-suites on 2026-10-16 with no failures, errors or skips. Exact integration-head CI
-and runtime acceptance remain pending. Production proof routes
-retain UNAVAILABLE, managed banking denial remains unconditional, and no
-provider adapter, ACTIVE status or session activation is added.
+The integration implements registration completion, durable code-intent
+confirmation and strict managed-session admission behind default-off configuration.
+The staged consumer described in [ADR 0042](docs/adr/0042-staged-proof-eligibility-consumption.md)
+rereads current eligibility evidence after persistence work. Production provider
+packaging and fresh-realm configuration have isolated evidence. Twelve scoped
+production registration, native-code, Gateway, negative-grant, concurrent
+browser callback and response-loss recovery cases passed. Complete migration and
+recovery acceptance and exact-head CI remain pending. Unsupported migration
+contact mutations still fail closed. Existing stored sessions retain
+their original expiry and revocation behavior until successful atomic FINAL.
+
+Registration required-action routing suppresses repeated email scheduling only
+after fresh Auth confirmation bound to the original flow and contact version;
+phone and banking admission remain independently enforced. The lifecycle fix
+and its acceptance limits are described in [ADR 0051](docs/adr/0051-registration-required-action-routing.md).
+
+Managed registration admission uses Auth-owned current contact receipts; migration
+retains its provider verification requirement. The source-specific policy and
+explicit provider-claim format boundary are implemented in the integration source in
+[ADR 0052](docs/adr/0052-registration-email-admission-authority.md).
+
+Global pair classification, native banking confirmation and migration observation
+use separate validated projections. The dedicated account client remains legacy
+and cannot produce banking confirmation. Configuration evidence and remaining
+startup limits are recorded in
+[ADR 0054](docs/adr/0054-managed-and-migration-pair-projections.md).
 
 ## Navigation
 
@@ -38,7 +55,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | Area | Current state | Next steps |
 | --- | --- | --- |
 | Auth | Password login and Keycloak exchange, stable local identities, opaque sessions | Global provider logout/revocation integration |
-| SSO | Optional Keycloak realm, browser authorization code + PKCE | Production identity controls, MFA, email verification |
+| SSO | Optional Keycloak realm, browser authorization code + PKCE; registration verification and code-confirmation provider under integration | Complete provider/browser acceptance and deployment; MFA |
 | iOS | Existing native SwiftUI login, wallets/balances, transfers/history, notifications and profile (iOS 18+); feature development paused | Physical iPhone validation and regression CI paused by owner |
 | Android | Native Kotlin/Compose SSO, wallets/balances, phone transfers/history, inbox and profile (API26+) | Physical-device/LAN acceptance; exact-revision CI evidence in the delivery PR |
 | User | Profile, optional immutable email-prefix sharding and central unique UAE registration-phone directory | Prefixes do not guarantee uniform load; automated ownership proof requires a separate approved provider |
@@ -1296,7 +1313,7 @@ PR #70 passed exact-head CI and was deployed at af1f7975 with the bridge disable
 
 ### Default-off banking eligibility barrier
 
-Auth includes the independent strict AUTH_BANKING_ELIGIBILITY_ENFORCED switch, default false. Its deny-only path rejects all authority-associated V9 staging identities before profile provisioning and during session creation/validation under the shared control prefix. Off preserves compatibility for unmanaged historical identities, including populated staging. Permanent V10 managed-principal denial applies in every flag mode, as described below. This is not complete dual-OTP enforcement, provider proof or activation. Source and checks are tracked separately; no deployment enables the switch. See [ADR 0038](docs/adr/0038-default-off-banking-eligibility.md).
+Auth includes the independent strict AUTH_BANKING_ELIGIBILITY_ENFORCED switch, default false. Its deny-only path rejects authority-associated V9 staging identities before profile provisioning and new session creation under the shared control prefix. Existing stored live sessions retain original expiry, logout and security revocation behavior before successful atomic migration FINAL, including when enforcement is enabled. Pending migration lookup additionally checks its original continuity snapshot; permanent managed classification still denies historical sessions in every flag mode. This is not complete dual-OTP enforcement, provider proof or activation. Source and checks are tracked separately; no deployment enables the switch. See [ADR 0038](docs/adr/0038-default-off-banking-eligibility.md) and the proposed [production provider composition](docs/adr/0050-production-provider-code-intent.md).
 
 ### Managed registration completion: source implemented, default-disabled
 
@@ -1451,7 +1468,396 @@ cleans up failed construction and closes owned resources idempotently; callers
 remain responsible for a complete local current/retained secret inventory.
 At `d8638d0eff87c5802c7b4a187e40154d8b14a4fe`, isolated Java 21 compilation and
 32 focused tests across five suites passed with zero failures, errors or skips,
-including four lifecycle tests. Independent QA and security verified the retained
-reports and source provenance. These unit tests use fake clients and do not prove
-physical transport shutdown or key zeroization. It adds no SPI registration, hook or token release.
+including four lifecycle tests. Independent QA and security verified retained
+reports and source provenance. These unit tests use fake clients; they do not
+prove physical transport shutdown or key zeroization. It adds no SPI registration,
+hook or token release. The later fixture and modified deadline source described
+below have separate scoped evidence; neither establishes combined acceptance.
 Runtime lifecycle, combined Auth confirmation, DNS and clock gates remain open.
+
+An acceptance-only code-intent fixture source candidate adds explicit installation,
+bounded control handles, a native required-action continuation, original-request
+transaction outcome tracking and authenticated node-B membership before lookup
+and confirmation. Its local body timer retains only a transport connection and
+serializes completion against expiry. The invocation deadline retains its original
+sample and caps both the outer bound and four-second producer window without
+renewal. An earlier fixture test compilation failed against the pinned
+non-AutoCloseable realm-resource API. Corrected checkpoint `067a829` then passed
+134 tests in 26 suites with zero failures, errors or skips: 104 provider tests
+(including 12 deadline tests) and 30 fixture tests (24 new and six existing).
+The later nine bootstrap and eleven launch-adapter tests were not included in
+that run. A subsequent unfiltered provider/fixture check at `3082f342` passed
+154 tests across 28 suites with zero failures, errors or skips: 104 provider and
+50 fixture cases, including all nine bootstrap and eleven adapter tests.
+Independent audit verified archived source and XML. Physical
+body/DNS termination, classloader compatibility, clocks and genuine combined
+acceptance remain open; production eligibility and activation are unchanged.
+See the acceptance-fixture README for the evidence boundary.
+
+A subsequent acceptance-only bootstrap source owns explicit configuration,
+caller-local secret inventory, install-last lifecycle and one maintenance
+scheduler. Disabled startup allocates nothing. Independent source review passed;
+all nine bootstrap unit tests passed at `3082f342`. Actual scheduler shutdown,
+preprovisioned persisted identity, disposable wiring and combined acceptance are
+still required. No production environment scan or automatic registration is added.
+
+The disposable fixture factory has a separately reviewed launch-adapter source
+that reads an exact environment allowlist only after explicit fixture, CI and
+isolation gates. Atomic configuration/start/close prevents hot replacement and
+reopening closed owners. All eleven adapter unit tests passed at `3082f342`; core
+bootstrap still accepts explicit inputs only. Persisted synthetic provisioning,
+disposable image wiring and native runtime verification remain separate gates.
+
+A dedicated `Dockerfile.code-intent` source now assembles only the disposable
+code-intent realm resource, continuation action and dedicated code-generation
+protocol hook, with fixture-theme discovery and separate provenance. It sets no
+default enable flags or credentials and does not change production SPI packaging.
+At `175c9d1`, this image built and passed Keycloak augmentation plus retained
+JAR/SPI/theme inventory checks. Runtime classloading, theme rendering and
+two-stage disposable startup remain verification gates.
+
+The Auth-side disposable companion has separate image assembly source at
+`auth-service/Dockerfile.code-intent-fixture`. It compiles test classes and service
+distributions, then runs only the test-Java companion with Auth libraries as a
+non-root user; the JDK remains available for its ephemeral local SMTP certificate.
+No default isolation flag, credential, database or host publication is configured.
+At `175c9d1`, this image built and passed non-root Java 21/keytool and artifact
+inventory checks. These offline checks are not enabled companion acceptance.
+
+Separate Auth checkpoint `7aa71f8` recorded 946 unit passes, three authority
+PostgreSQL passes and 17 readiness-helper passes, with one positive readiness
+equivalence case skipped. Therefore its reported 967 cases mean 966 executed
+passes and one unresolved skip, not a complete matrix. Provider observations in
+that experiment were synthetic; local SMTP/STARTTLS, SMS and persisted User ACK
+paths do not establish native Keycloak/password/cross-node or activation evidence.
+Later diagnostics exposed a test SQL parameter typing failure at `3fbc50c`;
+that failed result remains retained. After an explicit test-only timestamp cast,
+checkpoint `f274266` passed 972 tests across 41 suites with zero failures, errors
+or skips: 951 unit and 21 PostgreSQL cases (18 readiness-helper and three
+authority scenarios). Independent audit confirmed actual positive readiness
+execution and the strict zero-skip selection gate. These scoped results do not
+establish genuine Keycloak or combined runtime acceptance.
+
+The first disposable image build at `84a7db5` failed during Keycloak
+augmentation: legacy visibility and code-intent control resources exposed
+duplicate root POST endpoints. Replacing SPI descriptors alone did not isolate
+annotated resources. The SSO final image was not verified, and the sequential
+Auth image stage did not run. Retain this failed result; separate fixture
+artifact profiles were subsequently implemented and verified by the `175c9d1`
+image build. The earlier failed result remains retained.
+
+The source fix introduces `codeIntentJar`, producing
+`armoney-code-intent-acceptance-fixture-0.1.0.jar` with only the code-intent
+control resources and a dedicated `CodeIntentFixtureLoginProtocol`/factory.
+Legacy visibility resources, protocol and state are excluded. The existing
+observer JAR excludes code-intent classes, and its restored visibility protocol
+has no reference to those excluded classes. Both profiles compile all fixture
+sources and retain the full test suite; `check` also verifies actual JAR class,
+SPI-target and scope inventories. Production provider packaging is unchanged.
+The code-intent Dockerfile selects the dedicated artifact and protocol SPI.
+Archive checks also reject retained class references to excluded profile classes.
+At `175c9d1`, the fresh sequential SSO/Auth image build passed in 190.438
+seconds; independent audit verified exact archived inputs, retained artifact
+hashes, selected SPI/theme classes, Keycloak augmentation and offline Auth
+Java/keytool checks. Separate unfiltered checks at the same `175c9d1` archive passed 157 tests
+across 29 suites with zero failures, errors or skips: 104 provider and 53
+fixture cases, including all three new protocol negative cases. Independent
+audit verified actual archive-check task execution and both JAR profiles. Native
+login, startup configuration, physical body/DNS termination and activation
+remain outside this image-build evidence.
+
+## Isolated native-flow wiring source
+
+`compose.sso-code-intent.yaml` is a separate disposable acceptance topology. It uses
+three empty tmpfs PostgreSQL instances, real Auth/User/SMS processes, the Auth
+companion, two dedicated Keycloak nodes and a private HTTPS Caddy edge. There
+are no host ports, external networks or named volumes. All images and component
+environment files are required explicit inputs; the lifecycle owner must bind
+verified image IDs, newly owned private paths and a fresh isolated Docker daemon.
+The Compose file itself does not prove that isolation or reserve build capacity.
+
+The canonical issuer is `https://sso-edge:8443/sso/realms/armoney`; only node B has
+the private `sso-service` alias. Both nodes share the disposable SSO database and
+JDBC discovery. The edge uses newly generated private fixture certificates (server certificate
+and key only, never the CA private key) and HTTP/1.1 upstream. It restores only
+NET_BIND_SERVICE to match the official Caddy executable file capability; this
+is not host publication or a claim of tested startup. The test browser must explicitly trust the ephemeral fixture
+CA in its own disposable trust store; global host trust and TLS verification
+must not be weakened. No realm import, secrets or enablement are baked into
+images. Phase-specific private SSO inputs select disabled provisioning, then the
+root stops both nodes before restarting enabled with the read-back UUID.
+
+The four Gradle-based fixture runtime services explicitly mount a bounded 16 MiB
+tmpfs at `/home/gradle/.gradle`, with UID/GID 1000, mode 0700 and `nosuid,nodev`,
+while retaining their separate `/tmp` tmpfs. This shadows the Gradle base image's
+cache volume without permitting anonymous volumes in the lifecycle guard. The
+combined run at `c8917b6c` passed prerequisites and OFF provisioning, then failed
+closed at `dependencies / service-mounts / sms-sandbox` in 260.406 seconds.
+The rejected mount destination was not retained; the inherited cache volume is
+the source-supported explanation. With the tmpfs correction, a fresh isolated
+run at `d7ea3e46` completed OFF provisioning,
+the same-database ON lifecycle, transport preparation, both control probes and
+controller input construction. It failed closed at native READY observation in
+364.328 seconds; owned resources were removed and the CI runner restored.
+Native confirmation and actual browser trust usage remain unverified. Failure
+receipts at this stage may now include a strictly validated finite diagnostic:
+setup deadline, control status, control schema, allowlisted provider state or
+unknown transport failure. They exclude response bodies, identifiers and error
+messages; readiness and authority requirements and time limits are unchanged.
+
+The companion image Dockerfile also defines separate `fixture-user` and
+`fixture-sms` targets using real production service distributions without test
+classes. A bounded isolated run at `d579ebbf` built all four targets and started the
+disposable PostgreSQL database and Caddy. Both Keycloak nodes exited with a
+build-time `kc.http-relative-path` mismatch before realm provisioning. The run
+failed at OFF readiness in 313.921 seconds; owned resources were removed. The
+fixture Dockerfile now pins `/sso` before augmentation, matching optimized runtime
+configuration. A fresh run at `f01ef2f3` rebuilt all four images and passed both-node
+HTTP and verified edge-TLS readiness. It then failed at provisioning in 232.078
+seconds; the runner exited 1, owned resources were removed and the CI controller
+restored. A diagnostic run at `64d007c0` failed at discovery validation on node A despite HTTP 200, in 229.093 seconds; owned resources were removed. Source analysis identified the full `KC_HOSTNAME` URL missing `/sso`. All three fixture hostname settings now include that path; strict issuer validation is preserved. A fresh run at `af81b793` passed discovery and then failed at client readback on node A (HTTP 200), in 231.656 seconds; owned resources were removed. A diagnostic run at `3daf3bfc` identified the rejected predicate as `logout-redirects` (node A, HTTP 200), in 231.312 seconds; owned resources were removed. The actual returned attribute value was not retained. Pinned Keycloak source analysis shows an omitted logout redirect attribute receives a login-redirect fallback. The fixture now explicitly sets the logout-deny sentinel `-`, and readback requires that exact value. This denies logout redirects rather than allowing the fallback; A fresh run at `2eb1cadf` passed client validation and then failed at flow readback (node A, HTTP 200), in 224.141 seconds; owned resources were removed. Pinned Keycloak analysis shows leaf listings may omit their nullable flow-kind flag. The helper now validates the canonical execution ID and reads its authoritative representation, requiring the exact authenticator, REQUIRED and explicit non-flow flag. Contradictory or malformed listing flags remain rejected. A fresh run at `777132bc` passed flow and action validation, then received HTTP 401 at the disabled-control probe on node A, in 241.062 seconds; owned resources were removed. The helper omitted the required control header. Private provisioning input now carries the generated controller-role key for fixed-node STATE requests only; admin and provider credentials remain separate. Provider authorization ordering and OFF configuration are unchanged. OFF-mode HTTP 503 proves unavailable support, not a successful key comparison. A fresh run at `674e4f05` completed OFF provisioning in 253.14 seconds: four fixture images, both-node HTTP and verified edge TLS, realm/client/flow/action checks, synthetic user readbacks and all four OFF probes passed. Independent artifact verification matched all 857 source files and the sanitized receipt/manifest. Owned resources were removed and the CI runner restored. This verifies OFF preparation only; ON restart, native confirmation and activation remain unverified. The disposed database and its subject cannot be reused for the next phase. The helper now records only a fixed
+checkpoint, optional node A/B and optional HTTP status on private failure output.
+Client, flow, action and user readback failures identify a fixed checkpoint-specific predicate without
+recording observed values; strict client acceptance remains unchanged. The
+expanded provisioning suite passed 27 portable tests with mocked transport;
+15 environment-generator tests also passed,
+independently retested; this is separate from runtime proof. Success output remains unchanged. Diagnostic reporting
+does not fix provisioning. Cluster association, realm/user provisioning and the
+complete native topology remain unverified. The companion has
+no health endpoint; only Auth/User/SMS expose `/health/ready`.
+
+`provision-code-intent-realm.py` is the phase-one private-input helper. It accepts
+literal isolation/disabled gates, a validated canonical issuer, synthetic admin
+credentials and a complete synthetic UAE user through a private JSON file or
+stdin, then writes an exclusive private result file. It refuses an existing
+realm on either fixed node before mutation, validates realm/client/flow/user
+readbacks and captures the persisted subject. Nine lightweight synthetic unit
+tests passed; no actual import or login is implied. A failed import/provision
+requires owned disposable teardown, not an automatic retry against the partial
+realm. Observed 503 fixture responses show unavailability only. Physical DNS
+cancellation, flags, native flow and authority remain independent runtime gates.
+
+## Provider-owned continuation binding
+
+The fixture bind request is now exactly `experiment_handle` and `command_id`;
+the former caller-supplied `stage_handle` is rejected as an extra field. The
+provider retrieves Auth readiness using its existing provider credential and
+immutable preparation association, validates the canonical handle and pins the
+first successful value. A successful bind replay freshly revalidates that same
+handle without replacing it or extending any deadline. Changed commands, busy
+ownership, claimed continuation, malformed/changed evidence, cancellation and
+late responses remain fail-closed. Pure state reads perform no work.
+
+This repairs a fixture-only gap: diagnostic READY exposed no handle through the
+controller interface, yet the previous bind request required one. The controller
+does not gain provider-to-Auth credentials, Flow input or authority. Native form
+validation, genuine code generation, stage13, transaction COMMIT, real node-B
+membership and original lookup/confirm remain unchanged. All eight new regression
+cases executed in unfiltered checks at `d579ebbf`: 165 tests across 29 suites,
+zero failures, errors or skips, with `verifyFixtureJars` executed. Independent
+artifact verification matched the archived sources to that revision. The run
+took 93.5 seconds and owned resources were removed. Fresh augmentation/startup
+and actual native acceptance remain required. Production and Auth wire contracts
+are unchanged.
+
+Provider preparation now waits one second after each PREPARING response before
+polling Auth STATE. Waiting is bounded by the original setup and experiment
+cutoffs, with cancellation checked before and after. This avoids exhausting the
+existing Auth control budget; no rate limit, mutation retry or deadline renewal
+was added. Readiness observation can be delayed by up to one polling interval.
+All four new pacing/cutoff/rate-rejection/cancellation regressions executed at
+`64d007c0`: 169 tests across 29 suites, zero failures, errors or skips, with
+`verifyFixtureJars` executed. Independent artifact verification matched all 857
+archived source files to that revision. Native acceptance and mandatory CI
+remain separate gates. Mandatory CI run `39083572626` completed successfully for
+`64d007c0`; neither that CI nor the 169-test result covers later source changes.
+
+## Private fixture configuration
+
+`auth-service/src/test/fixtures/build-code-intent-env.py` creates a fresh private
+POSIX-only directory containing separate Auth Main/authority/User/SMS/database
+and disabled-SSO environment files, a provisioning input and material inventory.
+Actual write entrypoints reject non-POSIX execution. The ON operation requires
+a caller-supplied canonical subject captured from successful provisioning; it
+preserves generated material, enables code-session observation and creates a new
+SSO input without overwrite. It does not prove subject persistence or perform
+provisioning/restart. The lifecycle owner must stop both nodes before selecting it.
+
+The provisioning JSON matches the actual helper parser: literal isolation and
+OFF gates, canonical issuer, synthetic admin credentials and a complete UAE
+user. Thirteen lightweight tests passed, including parser-to-parser agreement;
+Windows tests mock the platform guard and establish no POSIX permission or NTFS
+ACL evidence. Files use exclusive no-follow writes on the intended Linux runner.
+Reads assume a trusted owned private parent. Partial failures may leave files;
+retry requires disposal rather than overwrite. Full generated material plus
+explicit additional provider-owned material is checked for raw/decoded aliases;
+unseen external inventories are not proven. Auth retention/encryption keys are
+not copied into SSO. LOCAL SMTP TEST still uses an injected local peer rather
+than real Mailtrap delivery.
+
+The provider's Auth companion destination is the fixed
+`http://auth-code-intent-fixture:8091`; the dedicated Compose service uses that
+name. Configuration and static Compose parsing do not establish DNS or startup.
+
+## Managed banking consumer and legacy migration integration
+
+The separate Auth managed-session consumer and V14 persistence are now wired into
+Main behind `AUTH_MANAGED_BANKING_ENABLED`, disabled by default. Configuration is
+validated before database allocation. Managed and legacy issuer/client pairs are
+explicit and disjoint; missing managed proof never selects a legacy fallback.
+When managed admission is enabled, public local registration/password login and
+legacy-pair SSO new banking admission deny before identity/profile/session writes.
+The restricted migration proof routes and already stored live sessions remain
+separate; migration-purpose OIDC tokens do not authorize a new banking session.
+The historical SSO constructor remains available only when the consumer is off,
+both pair lists are empty and no managed key material is configured. This narrow
+compatibility mode retains generic permanent-managed-principal denial; configuring
+any managed material or pair selects explicit routing and unknown-pair denial.
+Enabled mode owns its observer and cleanup worker; disabled mode allocates neither
+the managed database adapter nor those background resources. Sessions remain bound
+to their original proof expiry, which can be shorter than the legacy session TTL.
+See [ADR 0046](docs/adr/0046-managed-banking-session-consumer.md).
+
+User V7 supplies durable migration baselines, contact fences, publication evidence
+and immutable acknowledgements through default-off internal routes. Independent
+name changes remain permitted; a missing normal projection is represented explicitly,
+not as a fabricated verified contact version. Publication does not grant banking
+authority. See [ADR 0047](docs/adr/0047-legacy-user-migration-baseline.md) and the
+[migration guide](docs/legacy-user-migration.md).
+
+Auth V15–V20 source adds generation/session fences, restricted account admission,
+server-owned PKCE custody, durable provider claims and migration-specific OTP
+evidence, retained publication decisions, strict User ACK custody and typed
+migration-source metadata. These components are not a completed migration:
+isolated positive atomic cutover and rollback evidence does not establish the
+complete production browser flow or subsequent native-login acceptance.
+Default-off browser ingress, provider adapters and resource composition are
+present in the integration source. Auth Main selects the browser and private
+decision handlers, genuine registration authority, current-User observation and
+source-aware native consumers explicitly. Integrated startup and positive
+acceptance are still pending; this does not describe an enabled deployment. The
+web edge explicitly rejects the migration namespace rather than serving the SPA.
+
+Passwordless historical SSO identities cannot acquire an email in the credential
+row under the existing credentials-pair constraint. The proposed separate owner
+contact flow uses genuine existing-account proof, an explicit email candidate
+and actual OTP consumption; a provider email claim is not contact ownership.
+This extension remains under implementation. User's staged email version/digest
+are immutable opaque Auth attestations, distinct from a verified-contact generation.
+
+Retained publication decisions and scoped uncertainty recovery have component
+acceptance evidence. Atomic classification/session revocation and source-aware
+native consumers have source implementations, with positive readiness disabled
+pending complete migration acceptance. The isolated registration OTP continuation
+and subsequent native Gateway admission have scoped production-image evidence;
+this does not establish existing-owner migration or persistent activation.
+The accepted live-contact design adds a fresh User observation and durable Auth
+classification before a relevant User mutation. The current integration denies
+unsupported new migration contact commands without a write; it does not add a
+new command producer or claim successful migration-suspension race acceptance.
+This integration is not deployed.
+See [ADR 0049](docs/adr/0049-live-migration-contact-revisions.md).
+Existing owners must retain UUIDs, wallets, balances and history; old sessions may
+be revoked only after successful migration. Component test results do not establish
+complete browser, deployment or feature-activation readiness. Full acceptance
+remains required.
+
+## Disposable response-loss acceptance
+
+The separate `compose.production-provider-recovery-acceptance.yaml` has isolated
+production-image response-loss evidence; it is not an activated deployment. It keeps
+the production provider and actual Auth Main, adding a fixed-destination peer on
+the existing private SSO transport name. Gateway traffic bypasses this peer.
+The peer can discard a complete actual STAGE or CONFIRM response once; it cannot
+fabricate a successful Auth authority response, replay authority or fault enrollment/KEY calls. Private selected
+identifiers support read-only commit checks and never appear in public receipts.
+
+Auth's pre-token HTTP observer and the provider's enrollment observer emit only
+fixed diagnostic categories. They contain no contacts, session identifiers,
+credentials or response bodies. An HTTP-success category does not establish
+successful decoding, valid evidence or banking authority. These diagnostics do
+not resolve the pending two-node enrollment acceptance gate by themselves.
+
+The Auth observer's separate `AUTH_ENROLLMENT_TRANSPORT` trace classifies HTTP
+version, content type, body framing and a fixture-router marker using fixed enums.
+It records subscriber state once before forced cleanup; it never records header
+values or body content. A marker is diagnostic only and grants no authority.
+Real loopback tests cover completed, chunked, stalled and dripping response bodies.
+The multi-process login test retains its readiness deadline and admission checks;
+startup failures expose only bounded process/status categories, never child logs.
+
+```mermaid
+flowchart LR
+  Root[Owned disposable test runner] -->|Independent one-shot control| Peer[Fixture peer: auth-service]
+  SSO[Production Keycloak provider] -->|Original authenticated POSTs| Peer
+  Peer -->|Unchanged request and real response| Auth[Actual Auth Main: auth-backend]
+  Gateway[Actual Gateway] --> Auth
+  Auth --> DB[(Disposable Auth database)]
+  Root --> Evidence[Read-only evidence adapter]
+  Evidence -->|Bounded SELECT only| DB
+```
+
+Concurrent callbacks have scoped production-image evidence: two independent
+browser flows each produce one confirmation and one banking session; crossed
+PKCE redemption is rejected without side effects. This does not prove node
+replacement or full migration. Both STAGE and CONFIRM response-loss cases passed with actual Auth commit and
+read-only evidence of unchanged original records, no banking writes from the
+failed attempt, and one fresh confirmation linked to its banking session.
+Separate master-realm and disabled-provider stock browser cases also passed.
+Independent read-only snapshots retained identical rows across eleven Auth tables;
+STAGE/CONFIRM transport counters were unchanged, and the original provider profile
+was restored. Master routing exists only inside the unpublished disposable edge.
+These before/after snapshots do not prove the absence of transient writes later
+undone. A separate 2026-10-21 fresh-image run passed scoped node replacement:
+actual membership changed from two nodes to one and back to two, the survivor
+remained, and the replacement received a new identity without realm reimport.
+The original code was redeemed on the survivor and replay was denied after
+rejoin in 14.78 seconds within its original 60-second TTL. Independent security
+review verified the receipts and owned cleanup. This is scoped node evidence;
+complete migration and persistent activation require separate acceptance.
+Recovery requires a genuine fresh login/code after an uncertain failed attempt;
+the original provider deadline and Auth replay exclusion remain unchanged.
+See [ADR 0053](docs/adr/0053-disposable-provider-response-loss-evidence.md).
+
+The pending migration recovery patch makes account-form command consumption and
+managed-attempt allocation one Auth transaction. Confirmed local rollback keeps
+the original form and deadline usable; successful replay and uncertain provider
+callbacks remain fail closed. This introduces no new service or trust boundary.
+On 2026-10-21, scoped PostgreSQL/HTTP verification passed 22 tests with no failures,
+errors or skips and verified owned cleanup; this does not establish full migration.
+The migration redirect helper also explicitly declares HTML, as already required
+by the gateway for the existing empty 303 response; its actual HTTP regression
+failed before the header fix and passed afterward. Full gateway migration
+requires separate verification. A separate complete-migration acceptance fixture
+has 14 passing offline protocol tests; those protocol tests establish neither
+actual delivery nor snapshot/admission acceptance or complete migration.
+See [ADR 0055](docs/adr/0055-atomic-migration-managed-start.md).
+
+Migration account and managed proof freshness use whole-second precision for
+the signed OIDC authentication time and the challenge start. An authentication
+from an earlier whole second remains invalid; signature, nonce, provider
+observation, token age, deadlines and one-shot callback rules are unchanged.
+The read-only account receipt evidence query uses the same precision. This
+changes no HTTP contract, database schema, service ownership or diagram boundary.
+On 2026-10-21, the unchanged PostgreSQL regression suite reproduced exactly two
+same-second failures before the fix and passed all 28 tests afterward, with no
+errors or skips and verified cleanup. Independent security verified the scoped
+source and runtime evidence. Complete live migration and delivered-code
+acceptance remain separate gates. See [ADR 0056](docs/adr/0056-oidc-migration-authentication-time-precision.md).
+
+On 2026-10-21, a separate exact-revision manual web check at `94dbe49` passed
+installation, the mandatory high-severity audit with zero vulnerabilities,
+production build, 57 unit tests, browser installation and 13 browser tests,
+with verified cleanup and independent evidence review. The Vite 8.3.3 override
+preserves Angular versions and changes no banking API or trust boundary.
+This manual result does not replace required exact-head CI or release acceptance.
+
+The local PR #96 migration recovery candidate validates bounded RSA JWKS inventories containing
+signing and encryption keys, then caches only eligible RS256 verification keys.
+Key IDs must be unique across the complete inventory. Existing metadata/material,
+signature, issuer, audience, nonce, freshness and callback replay checks remain
+enforced; non-RSA inventories fail closed. Auth failure diagnostics contain only
+fixed phase markers and grant no authority. This changes no HTTP contract,
+database schema, service ownership or diagram boundary. Controlled RED/GREEN
+verification passed; rebuilt live migration and release acceptance remain pending.
+See [ADR 0057](docs/adr/0057-migration-jwks-signing-key-selection.md).

@@ -20,11 +20,15 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
     private final CodeIntentRetentionKeys keys;
     private final CodeIntentDetailCrypto crypto;
     private final PostgresCodeIntentKeyCatalog catalog;
+    private final LegacyMigrationManagedProofCrypto migrationCrypto;
+    private final com.arman.bank.authservice.application.MigrationUserCurrentPort userCurrent;
     public PostgresCodeIntentStore(Database database, LoginProof.Policy policy, CodeIntentRetentionKeys keys) {
         this(database,policy,keys,null);
     }
-    public PostgresCodeIntentStore(Database database,LoginProof.Policy policy,CodeIntentRetentionKeys keys,CodeIntentDetailCrypto crypto){
-        this.database=Objects.requireNonNull(database); this.policy=Objects.requireNonNull(policy); this.keys=Objects.requireNonNull(keys);
+    public PostgresCodeIntentStore(Database database,LoginProof.Policy policy,CodeIntentRetentionKeys keys,CodeIntentDetailCrypto crypto){this(database,policy,keys,crypto,null);}
+    public PostgresCodeIntentStore(Database database,LoginProof.Policy policy,CodeIntentRetentionKeys keys,CodeIntentDetailCrypto crypto,LegacyMigrationManagedProofCrypto migrationCrypto){this(database,policy,keys,crypto,migrationCrypto,null);}
+    public PostgresCodeIntentStore(Database database,LoginProof.Policy policy,CodeIntentRetentionKeys keys,CodeIntentDetailCrypto crypto,LegacyMigrationManagedProofCrypto migrationCrypto,com.arman.bank.authservice.application.MigrationUserCurrentPort userCurrent){
+        this.userCurrent=userCurrent;this.migrationCrypto=migrationCrypto;this.database=Objects.requireNonNull(database); this.policy=Objects.requireNonNull(policy); this.keys=Objects.requireNonNull(keys);
         this.crypto=crypto;this.catalog=crypto==null?null:new PostgresCodeIntentKeyCatalog(crypto);
     }
     private <T> T transaction(Function<DSLContext,T> action) { return transaction(false,action); }
@@ -48,29 +52,39 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
     }
     @Override public CodeIntent.Snapshot stage(String actor,LoginProof.Write input){return inRequest(actor,request->request.stage(input));}
     private CodeIntent.Snapshot stage(PostgresLoginRequestScope.Request request,LoginProof.Write input){
-        request.check(); String actor=request.actor();
+        request.check();long monotonicStart=System.nanoTime(); String actor=request.actor();
         CodeIntent.validate(input,actor,policy);
         try {
             if(crypto==null)fail(Error.UNAVAILABLE);
             boolean admitted=request.transaction(sql->admit(sql,actor,now(sql)));
             if(!admitted)fail(Error.RATE_LIMITED);
-            Outcome preparation=request.transaction(sql->stage(sql,actor,input,null,null));
+            var migration=request.transaction(sql->{
+                catalog.synchronize(sql,true);
+                if(sql.fetchOne("select identity_id from migration_banking_authority_current where issuer=? and subject=?",input.issuer(),input.subject())==null)return null;
+                if(userCurrent==null)fail(Error.UNAVAILABLE);
+                return new UserAdmission(SourceEligibilitySql.requireCurrent(sql,input.issuer(),input.subject(),migrationCrypto),now(sql));
+            });
+            var liveUser=migration==null?null:SourceEligibilitySql.observeUser(request,migration.source(),input.commandId(),migration.startedAt(),monotonicStart,userCurrent);
+            Outcome preparation=request.transaction(sql->stage(sql,actor,input,null,null,liveUser));
             if(preparation.snapshot()!=null)return preparation.snapshot();
             Prepared prepared=preparation.prepared();
             request.check();
             // Acknowledged nonce COMMIT precedes encryption; this operation still owns the same connection.
             byte[] encrypted=crypto.encrypt(prepared.reservation().keyId(),prepared.reservation().nonce(),input.authenticationSessionId(),aad(prepared,input));
-            return request.transaction(sql->stage(sql,actor,input,prepared,encrypted)).snapshot();
+            return request.transaction(sql->stage(sql,actor,input,prepared,encrypted,liveUser)).snapshot();
         } catch(LoginProof.Failure rejected){throw rejected;}
         catch(RuntimeException unavailable){fail(Error.UNAVAILABLE);return null;}
     }
+    private record UserAdmission(SourceEligibilitySql.Current source,Instant startedAt){}
     private record Prepared(UUID id,String retentionKey,byte[] binding,byte[] payload,byte[] authority,Instant admittedAt,PostgresCodeIntentKeyCatalog.Reservation reservation){}
     private record Outcome(CodeIntent.Snapshot snapshot,Prepared prepared){}
     private byte[] aad(Prepared p,LoginProof.Write input){return CodeIntentDetailCrypto.aad(p.id(),p.retentionKey(),p.binding(),p.payload(),input.codeKeyId(),input.issuedAt(),input.expiresAt());}
-    private Outcome stage(DSLContext sql,String actor,LoginProof.Write input,Prepared prepared,byte[] encrypted) {
+    private Outcome stage(DSLContext sql,String actor,LoginProof.Write input,Prepared prepared,byte[] encrypted,SourceEligibilitySql.UserObservation liveUser) {
         catalog.synchronize(sql,true);
         if(prepared!=null)catalog.fence(sql,prepared.reservation());
         Instant now=now(sql);
+        if(sql.fetchOne("select identity_id from migration_banking_authority_current where issuer=? and subject=?",input.issuer(),input.subject())!=null)
+            return stageMigration(sql,actor,input,prepared,encrypted,now,liveUser);
         var authority=sql.fetchOne("""
             select a.*,e.issuer,e.subject,e.expires_at as enrollment_deadline from verification_authorities a
             join verification_enrollments e on e.id=a.enrollment_id
@@ -145,10 +159,60 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
         LoginProof.unexpired(time(authority,"expires_at"),now(sql)); LoginProof.unexpired(time(authority,"enrollment_deadline"),now(sql));
         return new Outcome(new CodeIntent.Snapshot(id,input.codeKeyId(),input.issuedAt(),input.expiresAt()),null);
     }
+    /** Closed migration source: never represented by a registration authority/enrollment row. */
+    private Outcome stageMigration(DSLContext sql,String actor,LoginProof.Write input,Prepared prepared,byte[] encrypted,Instant now,SourceEligibilitySql.UserObservation liveUser){
+        if(liveUser==null)fail(Error.UNAVAILABLE);liveUser.require(sql,true,migrationCrypto);
+        var source=SourceEligibilitySql.requireCurrent(sql,input.issuer(),input.subject(),migrationCrypto);
+        var row=sql.fetchOne("select * from sso_code_intents where code_digest=? for update",input.codeDigest());
+        var commands=sql.fetch("select i.*,c.actor_hash as command_actor from sso_code_intent_commands c join sso_code_intents i on i.id=c.intent_id where c.command_id=?",input.commandId());
+        if(commands.size()>16)fail(Error.UNAVAILABLE);
+        for(var command:commands)if(MessageDigest.isEqual(command.get("command_actor",byte[].class),actor(command.get("retention_key_id",String.class),actor)))
+            if(row==null||!command.get("id",UUID.class).equals(row.get("id",UUID.class)))fail(Error.CONFLICT);
+        String key=row==null?keys.currentId():row.get("retention_key_id",String.class);
+        byte[] actorHash=actor(key,actor),payload=payload(key,input),stamp=migrationStamp(key,"armoney-intent-authority-v1",source);
+        if(row!=null){
+            same(row.get("actor_hash",byte[].class),actorHash);same(row.get("payload_hash",byte[].class),payload);same(row.get("authority_hash",byte[].class),stamp);
+            LoginProof.unexpired(time(row,"expires_at"),now);
+            var detail=sql.fetchOne("select * from sso_code_intent_details where intent_id=?",row.get("id",UUID.class));
+            if(detail==null||!time(detail,"erase_at").equals(time(row,"expires_at").plusSeconds(300)))fail(Error.UNAVAILABLE);
+            alias(sql,row.get("id",UUID.class),actorHash,input.commandId());
+            catalog.requireActive(sql,detail.get("encryption_key_id",String.class),detail.get("encryption_generation",Long.class));
+            String original=crypto.decrypt(detail.get("encryption_key_id",String.class),detail.get("nonce",byte[].class),detail.get("ciphertext",byte[].class),aad(row));
+            if(!original.equals(input.authenticationSessionId()))fail(Error.UNAVAILABLE);
+            same(stamp,migrationStamp(key,"armoney-intent-authority-v1",SourceEligibilitySql.requireCurrent(sql,input.issuer(),input.subject(),migrationCrypto)));
+            LoginProof.unexpired(time(row,"expires_at"),now(sql));liveUser.require(sql,true,migrationCrypto);return new Outcome(snapshot(row),null);
+        }
+        LoginProof.fresh(input,now);LoginProof.unexpired(input.expiresAt(),now);
+        var health=sql.fetchOne("select swept_at,healthy from sso_code_intent_cleanup where id=1");
+        if(health==null||!Boolean.TRUE.equals(health.get("healthy",Boolean.class))||health.get("swept_at")==null||time(health,"swept_at").isBefore(now.minusSeconds(60)))fail(Error.UNAVAILABLE);
+        if(count(sql,"sso_code_intents")>=100_000||count(sql,"sso_code_intent_commands")>=100_000)fail(Error.RATE_LIMITED);
+        if(prepared==null){
+            PostgresLoginCreationBudget.requireAvailable(sql,now,policy.maxHourly());
+            var reserved=new Prepared(UUID.randomUUID(),key,keys.hash(key,"armoney-intent-binding-v1",input.issuer(),input.subject(),input.clientId(),input.userSessionId()),payload,stamp,now,catalog.reserve(sql));
+            liveUser.require(sql,true,migrationCrypto);return new Outcome(null,reserved);
+        }
+        same(prepared.payload(),payload);same(prepared.authority(),stamp);if(!prepared.retentionKey().equals(key))fail(Error.CONFLICT);
+        UUID id=prepared.id();PostgresLoginCreationBudget.reserve(sql,id,"INTENT",now,policy.maxHourly());
+        sql.execute("""
+            insert into sso_code_intents(id,code_digest,code_key_id,retention_key_id,actor_hash,payload_hash,binding_hash,authority_hash,issued_at,expires_at,admitted_at,stage_cutoff,retained_until)
+            values(?,?,?,?,?,?,?,?,cast(? as timestamptz),cast(? as timestamptz),cast(? as timestamptz),cast(? as timestamptz),cast(? as timestamptz))
+            """,id,input.codeDigest(),input.codeKeyId(),key,actorHash,payload,prepared.binding(),stamp,input.issuedAt().toString(),input.expiresAt().toString(),prepared.admittedAt().toString(),input.issuedAt().plusSeconds(30).toString(),input.expiresAt().plusSeconds(604800).toString());
+        sql.execute("insert into sso_code_intent_details values(?,?,cast(? as timestamptz),cast(? as timestamptz),?,?,?,?)",id,input.eventId(),input.passwordAuthenticatedAt().toString(),input.expiresAt().plusSeconds(300).toString(),prepared.reservation().keyId(),prepared.reservation().generation(),prepared.reservation().nonce(),encrypted);
+        alias(sql,id,actorHash,input.commandId());
+        same(stamp,migrationStamp(key,"armoney-intent-authority-v1",SourceEligibilitySql.requireCurrent(sql,input.issuer(),input.subject(),migrationCrypto)));
+        LoginProof.fresh(input,now(sql));LoginProof.unexpired(input.expiresAt(),now(sql));liveUser.require(sql,true,migrationCrypto);return new Outcome(new CodeIntent.Snapshot(id,input.codeKeyId(),input.issuedAt(),input.expiresAt()),null);
+    }
+    private byte[] migrationStamp(String key,String domain,SourceEligibilitySql.Current source){
+        var a=source.authority();return keys.hash(key,domain,SourceEligibilitySql.MIGRATION,a.get("decision_id").toString(),a.get("identity_id").toString(),a.get("classification_generation").toString(),a.get("verification_epoch").toString(),a.get("source_revision").toString(),HexFormat.of().formatHex(source.stamp()));
+    }
     private byte[] aad(Record row){return CodeIntentDetailCrypto.aad(row.get("id",UUID.class),row.get("retention_key_id",String.class),row.get("binding_hash",byte[].class),row.get("payload_hash",byte[].class),row.get("code_key_id",String.class),time(row,"issued_at"),time(row,"expires_at"));}
     boolean owns(Database candidate){return database==candidate;}
     byte[] confirmationHash(String key,String domain,String... values){return keys.hash(key,domain,values);}
-    record ConfirmationContext(Record intent,Record authority,UUID identity,LoginProof.Write write,Instant localDeadline){
+    record ConfirmationContext(Record intent,Record authority,UUID identity,LoginProof.Write write,Instant localDeadline,SourceEligibilitySql.Current migration){
+        ConfirmationContext(Record intent,Record authority,UUID identity,LoginProof.Write write,Instant deadline){this(intent,authority,identity,write,deadline,null);}
+        boolean isMigration(){return migration!=null;}
+        long epoch(){return isMigration()?migration.authority().get("verification_epoch",Long.class):authority.get("verification_epoch",Long.class);}
+        long revision(){return isMigration()?migration.authority().get("source_revision",Long.class):authority.get("revision",Long.class);}
         // Stamp-only views do not perform admission or return confirmation capabilities.
         ConfirmationContext(Record intent,Record authority,UUID identity,LoginProof.Write write){this(intent,authority,identity,write,null);}
     }
@@ -159,6 +223,8 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
     ConfirmationContext confirmationContext(DSLContext sql,String actor,LoginProof.Resolve code,byte[] expectedStamp){
         PostgresVerificationProjectionStore.requireLocked(sql);LoginProof.writer(actor,policy);LoginProof.validate(code,policy);
         if(catalog==null)fail(Error.UNAVAILABLE);catalog.synchronize(sql,true);
+        if(sql.fetchOne("select identity_id from migration_banking_authority_current where issuer=? and subject=?",code.issuer(),code.subject())!=null)
+            return migrationConfirmationContext(sql,actor,code,expectedStamp);
         var authority=sql.fetchOne("""
             select a.*,e.expires_at as enrollment_deadline,e.state as enrollment_state from verification_authorities a
             join verification_enrollments e on e.id=a.enrollment_id where e.issuer=? and e.subject=? for update of a,e
@@ -197,7 +263,24 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
         LoginProof.unexpired(time(authority,"expires_at"),now(sql));LoginProof.unexpired(time(authority,"enrollment_deadline"),now(sql));
         return new ConfirmationContext(intent,authority,identity,write,localDeadline);
     }
+    private ConfirmationContext migrationConfirmationContext(DSLContext sql,String actor,LoginProof.Resolve code,byte[] expectedStamp){
+        var source=SourceEligibilitySql.requireCurrent(sql,code.issuer(),code.subject(),migrationCrypto);
+        LoginProof.Write write=reconstructLocked(sql,actor,code);
+        Record intent=sql.fetchOne("select * from sso_code_intents where code_digest=?",code.codeDigest());
+        String key=intent.get("retention_key_id",String.class);
+        same(intent.get("authority_hash",byte[].class),migrationStamp(key,"armoney-intent-authority-v1",source));
+        var context=new ConfirmationContext(intent,null,source.authority().get("identity_id",UUID.class),write,write.expiresAt(),source);
+        if(expectedStamp!=null)same(expectedStamp,confirmationStamp(context));
+        LoginProof.unexpired(write.expiresAt(),now(sql));return context;
+    }
+    void requireCurrentMigration(DSLContext sql,ConfirmationContext original,byte[] expected){
+        if(!original.isMigration())fail(Error.UNAVAILABLE);
+        var source=SourceEligibilitySql.requireCurrent(sql,original.write().issuer(),original.write().subject(),migrationCrypto);
+        var current=new ConfirmationContext(original.intent(),null,source.authority().get("identity_id",UUID.class),original.write(),original.localDeadline(),source);
+        same(expected,confirmationStamp(current));LoginProof.unexpired(original.write().expiresAt(),now(sql));
+    }
     byte[] confirmationStamp(ConfirmationContext context){
+        if(context.isMigration())return migrationStamp(context.intent().get("retention_key_id",String.class),"armoney-confirmation-authority-v1",context.migration());
         var a=context.authority();String key=context.intent().get("retention_key_id",String.class);
         return keys.hash(key,"armoney-confirmation-authority-v1",context.identity().toString(),a.get("enrollment_id").toString(),a.get("state").toString(),a.get("verification_epoch").toString(),a.get("revision").toString(),
             Objects.toString(a.get("email_candidate_id"),""),Objects.toString(a.get("phone_candidate_id"),""),Objects.toString(a.get("projection_operation_id"),""),a.get("projection_revision").toString(),Objects.toString(a.get("projection_command_id"),""),time(a,"expires_at").toString(),time(a,"enrollment_deadline").toString());

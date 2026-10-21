@@ -14,23 +14,40 @@ final class InvocationDeadline implements AutoCloseable {
     private static final long BUDGET=4_000_000_000L;
     private final LongSupplier clock;
     private final long start;
+    private final long budget;
+    private final long originalOrigin,originalBudget;
     private long lastElapsed;
     private boolean closed;
     private Registration exchange,body;
 
     static InvocationDeadline start() { return new InvocationDeadline(System::nanoTime); }
-    InvocationDeadline(LongSupplier clock) { this.clock=Objects.requireNonNull(clock); this.start=clock.getAsLong(); }
+    static InvocationDeadline startCapped(Duration remaining) { return new InvocationDeadline(System::nanoTime,remaining); }
+    InvocationDeadline(LongSupplier clock) { this(clock,Duration.ofNanos(BUDGET)); }
+    InvocationDeadline(LongSupplier clock,Duration remaining) { this(clock,0,remaining,false); }
+    /** Retains the caller's original sample: construction pauses consume that budget. */
+    InvocationDeadline(LongSupplier clock,long originalOrigin,Duration remaining) { this(clock,originalOrigin,remaining,true); }
+    private InvocationDeadline(LongSupplier clock,long originalOrigin,Duration remaining,boolean retainOrigin) {
+        this.clock=Objects.requireNonNull(clock);
+        if(remaining==null||remaining.isNegative()||remaining.isZero())throw new IllegalArgumentException("Invalid invocation budget");
+        final long limit;try{limit=remaining.toNanos();}catch(ArithmeticException overflow){throw new IllegalArgumentException("Invalid invocation budget");}
+        this.budget=Math.min(BUDGET,limit);this.start=clock.getAsLong();
+        this.originalOrigin=retainOrigin?originalOrigin:start;this.originalBudget=Math.min(BUDGET,limit);
+        long originalElapsed=start-this.originalOrigin;
+        if(originalElapsed<0||originalElapsed>=originalBudget)throw new Expired();
+    }
 
     Duration remaining() {
-        long elapsed;
+        long elapsed,originalRemaining;
         boolean invalid;
         synchronized(this) {
             elapsed=clock.getAsLong()-start; // Subtraction tolerates nanoTime signed wrap.
-            invalid=closed || elapsed<lastElapsed || elapsed<0 || elapsed>=BUDGET;
+            long originalElapsed=(start-originalOrigin)+elapsed;
+            originalRemaining=originalBudget-originalElapsed;
+            invalid=closed || elapsed<lastElapsed || elapsed<0 || elapsed>=budget || originalElapsed<0 || originalRemaining<=0;
             if(!invalid) lastElapsed=elapsed;
         }
         if(invalid) { cancelOwnedExchange(); throw new Expired(); }
-        return Duration.ofNanos(BUDGET-elapsed);
+        return Duration.ofNanos(Math.min(budget-elapsed,originalRemaining));
     }
     void requireOpen() { remaining(); }
 
@@ -47,7 +64,8 @@ final class InvocationDeadline implements AutoCloseable {
         boolean late,duplicate;
         synchronized(this) {
             long elapsed=clock.getAsLong()-start;
-            late=closed || elapsed<lastElapsed || elapsed<0 || elapsed>=BUDGET;
+            long originalElapsed=(start-originalOrigin)+elapsed;
+            late=closed || elapsed<lastElapsed || elapsed<0 || elapsed>=budget || originalElapsed<0 || originalElapsed>=originalBudget;
             if(late) closed=true;
             else lastElapsed=elapsed;
             duplicate=!late && (isExchange?exchange:body)!=null;

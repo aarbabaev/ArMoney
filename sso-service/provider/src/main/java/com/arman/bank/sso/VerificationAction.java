@@ -12,23 +12,42 @@ final class VerificationAction implements RequiredActionProvider {
     private final String purpose;
     private final String id;
     private final java.util.function.BooleanSupplier enabled;
-    VerificationAction(String purpose, String id) { this(purpose, id, Bridge::enabled); }
+    private final java.util.function.Predicate<RequiredActionContext> registration;
+    private final java.util.function.Consumer<RequiredActionContext> continuation;
+    private final java.util.function.BiFunction<RequiredActionContext,String,JsonNode> routingStatus;
+    private final java.util.function.Supplier<String> routingKey;
+    VerificationAction(String purpose, String id) { this(purpose, id, Bridge::enabled,CodeIntentRegistrationGuard::permits); }
     VerificationAction(String purpose, String id, java.util.function.BooleanSupplier enabled) {
-        this.purpose = purpose; this.id = id; this.enabled = enabled;
+        this(purpose,id,enabled,CodeIntentRegistrationGuard::permits);
+    }
+    /** Explicit synthetic guard seam; production factories always use the genuine creation guard. */
+    VerificationAction(String purpose,String id,java.util.function.BooleanSupplier enabled,java.util.function.Predicate<RequiredActionContext> registration){
+        this(purpose,id,enabled,registration,CodeIntentRegistrationContinuation::show);
+    }
+    VerificationAction(String purpose,String id,java.util.function.BooleanSupplier enabled,java.util.function.Predicate<RequiredActionContext> registration,java.util.function.Consumer<RequiredActionContext> continuation){
+        this(purpose,id,enabled,registration,continuation,null,()->Bridge.required("ARMONEY_PROVIDER_BINDING_KEY"));
+    }
+    /** Synthetic collaborators exercise the same routing codec and fresh-version checks. */
+    VerificationAction(String purpose,String id,java.util.function.BooleanSupplier enabled,java.util.function.Predicate<RequiredActionContext> registration,java.util.function.Consumer<RequiredActionContext> continuation,
+            java.util.function.BiFunction<RequiredActionContext,String,JsonNode> routingStatus,java.util.function.Supplier<String> routingKey){
+        this.purpose = purpose; this.id = id; this.enabled = enabled;this.registration=registration;this.continuation=continuation;this.routingStatus=routingStatus;this.routingKey=routingKey;
     }
     @Override public void evaluateTriggers(RequiredActionContext context) {
-        if (enabled.getAsBoolean()) context.getAuthenticationSession().addRequiredAction(id);
+        if (enabled.getAsBoolean()&&registration.test(context)&&!completedEmailRoute(context)) context.getAuthenticationSession().addRequiredAction(id);
     }
     @Override public void requiredActionChallenge(RequiredActionContext context) {
-        if (!enabled.getAsBoolean()) { context.failure(); return; }
+        if (!enabled.getAsBoolean()||!registration.test(context)) { context.failure(); return; }
         // A separate private HTTP request can only observe committed state. Do not
         // bootstrap authority inside the request which first renders this action.
         render(context, null);
     }
 
     @Override public void processAction(RequiredActionContext context) {
-        if (!enabled.getAsBoolean()) { context.failure(); return; }
+        if (!enabled.getAsBoolean()||!registration.test(context)) { context.failure(); return; }
+        String operation=null;
         try {
+            operation=operation(context);
+            if("status".equals(operation)){projectionStatus(context);return;}
             var session = context.getAuthenticationSession();
             var bridge = Bridge.configured();
             // Re-resolve against current server contacts on every submission. UUID alone grants nothing.
@@ -36,7 +55,6 @@ final class VerificationAction implements RequiredActionProvider {
             String enrollmentId = uuid(enrollment, "enrollment_id");
             if (complete(context, status(context, bridge, enrollmentId))) return;
             int version = version(enrollment);
-            String operation = context.getHttpRequest().getDecodedFormParameters().getFirst("operation");
             if ("send".equals(operation)) {
                 var body = command(context, "issue");
                 body.put("purpose", purpose); body.put("contact_version", version);
@@ -54,11 +72,65 @@ final class VerificationAction implements RequiredActionProvider {
             if (!"CONSUMED".equals(receipt.path("state").asText())
                     || receipt.path("contact_version").asInt(-1) != version) throw new Bridge.Unavailable();
             session.removeAuthNote(note("challenge")); session.removeAuthNote(note("consume"));
-            if (!complete(context, status(context, bridge, enrollmentId)))
-                render(context, "Contact verified. Account activation is pending; try again shortly.");
-        } catch (Bridge.Rejected rejected) { context.getAuthenticationSession().removeAuthNote(note("consume")); render(context, "Code not accepted. Request a new code or try again."); }
+            JsonNode current=status(context,bridge,enrollmentId);
+            if (!complete(context,current)){
+                rememberProjection(context,current);
+                renderPending(context);
+            }
+        } catch (Bridge.Rejected rejected) { if("verify".equals(operation))context.getAuthenticationSession().removeAuthNote(note("consume")); render(context, "Code not accepted. Request a new code or try again."); }
         catch (RuntimeException unavailable) { render(context, "Verification is unavailable. Please try again."); }
     }
+    static String operation(RequiredActionContext context){
+        var values=context.getHttpRequest().getDecodedFormParameters().get("operation");
+        if(values==null||values.size()!=1||!Set.of("send","verify","status").contains(values.getFirst()))throw new Bridge.Rejected();
+        return values.getFirst();
+    }
+    /** Written only after actual PHONE CONSUMED acknowledgement and a fresh dual-receipt status. */
+    void rememberProjection(RequiredActionContext context,JsonNode input){
+        JsonNode current=projectionFacts(input);
+        if(!registration.test(context)||!"PROJECTION_PENDING".equals(current.path("state").textValue()))throw new Bridge.Unavailable();
+        String enrollment=uuid(current,"enrollment_id");int email=current.path("email_contact_version").intValue(),phone=current.path("phone_contact_version").intValue();
+        try{
+            context.getAuthenticationSession().setAuthNote(note("projection-pending"),org.keycloak.util.JsonSerialization.writeValueAsString(Map.of(
+                    "enrollment_id",enrollment,"email_version",email,"phone_version",phone,"binding",projectionBinding(context,enrollment,email,phone))));
+        }catch(Exception unavailable){throw new Bridge.Unavailable();}
+    }
+    private void projectionStatus(RequiredActionContext context){
+        try{
+            String pending=context.getAuthenticationSession().getAuthNote(note("projection-pending"));
+            if(pending==null||pending.length()>2048)throw new Bridge.Unavailable();
+            JsonNode marker=Bridge.strictJson(pending.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            LoginProof.fields(marker,Set.of("enrollment_id","email_version","phone_version","binding"));
+            String enrollment=LoginProof.uuid(LoginProof.text(marker,"enrollment_id")).toString();
+            int email=markerVersion(marker,"email_version"),phone=markerVersion(marker,"phone_version");
+            if(!SessionBinding.matches(projectionBinding(context,enrollment,email,phone),LoginProof.text(marker,"binding")))throw new Bridge.Unavailable();
+            JsonNode observed;
+            try{
+                observed=routingStatus==null?Bridge.configured().post("/internal/enrollments/"+enrollment+"/status",bindingFields(context)):routingStatus.apply(context,enrollment);
+            }catch(Bridge.Unavailable unavailable){
+                // Only the already validated original routing marker permits retry UI.
+                // No current authority is inferred from an unavailable observation.
+                render(context,"Status is temporarily unavailable. Check status to try again.",true);return;
+            }
+            JsonNode current=projectionFacts(observed);
+            if(!enrollment.equals(uuid(current,"enrollment_id"))||email!=current.path("email_contact_version").intValue()||phone!=current.path("phone_contact_version").intValue())throw new Bridge.Unavailable();
+            if(!complete(context,current))renderPending(context);
+        }catch(Bridge.Rejected|Bridge.Unavailable refusal){throw refusal;}
+        catch(Exception unavailable){throw new Bridge.Unavailable();}
+    }
+    private JsonNode projectionFacts(JsonNode input){
+        JsonNode current=EnrollmentObservation.enrollment(input);
+        if(!"REGISTRATION_PHONE".equals(purpose)||!current.path("email_verified").booleanValue()||!current.path("phone_verified").booleanValue()
+                ||!Set.of("PROJECTION_PENDING","PROJECTED").contains(current.path("state").textValue()))throw new Bridge.Unavailable();
+        return current;
+    }
+    private static int markerVersion(JsonNode marker,String name){JsonNode version=marker.get(name);if(version==null||!version.isIntegralNumber()||!version.canConvertToInt()||version.intValue()<1)throw new Bridge.Unavailable();return version.intValue();}
+    private String projectionBinding(RequiredActionContext context,String enrollment,int email,int phone){
+        var auth=context.getAuthenticationSession();var user=context.getUser();
+        if(!EnrollmentObservation.canonicalEmail(user.getEmail())||!EnrollmentObservation.canonicalPhone(user.getUsername()))throw new Bridge.Unavailable();
+        return SessionBinding.derive(routingKey.get(),"registration-projection-route-v1",purpose,context.getRealm().getId(),auth.getParentSession().getId(),auth.getTabId(),auth.getClient().getId(),user.getId(),user.getEmail(),user.getUsername(),Integer.toString(email),Integer.toString(phone),enrollment);
+    }
+    private void renderPending(RequiredActionContext context){render(context,"Contact verified. Account activation is pending; check status to continue.",true);}
 
     void issue(AuthenticationSessionModel session, Bridge bridge, String enrollmentId, int version, Map<String, Object> body) {
         body.put("command_id", stable(session, note("issue")));
@@ -80,16 +152,57 @@ final class VerificationAction implements RequiredActionProvider {
         var body = command(context, "status"); body.remove("command_id");
         return bridge.enrollment("/internal/enrollments/" + enrollment + "/status", body);
     }
-    private boolean complete(RequiredActionContext context, JsonNode status) {
+    boolean complete(RequiredActionContext context, JsonNode status) {
         boolean done = permitsCompletion(purpose, status);
-        if (done) context.success();
+        if(done){
+            if(!registration.test(context))throw new Bridge.Unavailable();
+            if("REGISTRATION_PHONE".equals(purpose))continuation.accept(context);else{
+                rememberEmailRoute(context,status);
+                context.success();
+            }
+        }
         return done;
+    }
+    /** UI routing only. A retained marker cannot replace a fresh authoritative status/version. */
+    private boolean completedEmailRoute(RequiredActionContext context){
+        if(!"REGISTRATION_EMAIL".equals(purpose))return false;
+        var auth=context.getAuthenticationSession();String pending=auth.getAuthNote(note("routing-complete"));
+        if(pending==null)return false; // Initial registration never performs remote I/O in evaluateTriggers.
+        try{
+            if(pending.length()>2048)throw new Bridge.Unavailable();
+            JsonNode marker=Bridge.strictJson(pending.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            LoginProof.fields(marker,Set.of("enrollment_id","contact_version","binding"));
+            String enrollment=LoginProof.uuid(LoginProof.text(marker,"enrollment_id")).toString();
+            JsonNode encodedVersion=marker.get("contact_version");
+            if(!encodedVersion.isIntegralNumber()||!encodedVersion.canConvertToInt()||encodedVersion.intValue()<1)throw new Bridge.Unavailable();
+            int version=encodedVersion.intValue();
+            if(!SessionBinding.matches(routeBinding(context,enrollment,version),LoginProof.text(marker,"binding")))throw new Bridge.Unavailable();
+            JsonNode current=routingStatus==null?status(context,Bridge.configured(),enrollment):routingStatus.apply(context,enrollment);
+            current=EnrollmentObservation.enrollment(current);
+            if(!enrollment.equals(uuid(current,"enrollment_id"))||version!=current.path("email_contact_version").intValue()
+                    ||!permitsCompletion(purpose,current))throw new Bridge.Unavailable();
+            return true;
+        }catch(Exception unavailable){auth.removeAuthNote(note("routing-complete"));return false;}
+    }
+    private void rememberEmailRoute(RequiredActionContext context,JsonNode status){
+        if(!"REGISTRATION_EMAIL".equals(purpose))throw new Bridge.Unavailable();
+        JsonNode current=EnrollmentObservation.enrollment(status);
+        String enrollment=uuid(current,"enrollment_id");int version=current.path("email_contact_version").intValue();
+        try{
+            String encoded=org.keycloak.util.JsonSerialization.writeValueAsString(Map.of("enrollment_id",enrollment,"contact_version",version,"binding",routeBinding(context,enrollment,version)));
+            context.getAuthenticationSession().setAuthNote(note("routing-complete"),encoded);
+        }catch(Exception unavailable){throw new Bridge.Unavailable();}
+    }
+    private String routeBinding(RequiredActionContext context,String enrollment,int version){
+        var auth=context.getAuthenticationSession();
+        return SessionBinding.derive(routingKey.get(),"registration-purpose-route-v1",purpose,context.getRealm().getId(),auth.getParentSession().getId(),auth.getTabId(),auth.getClient().getId(),
+                context.getUser().getId(),context.getUser().getEmail(),Integer.toString(version),enrollment);
     }
     static boolean permitsCompletion(String purpose, JsonNode status) {
         boolean email = status.path("email_verified").isBoolean() && status.path("email_verified").booleanValue();
         boolean phone = status.path("phone_verified").isBoolean() && status.path("phone_verified").booleanValue();
         return purpose.equals("REGISTRATION_EMAIL") ? email
-                : purpose.equals("REGISTRATION_PHONE") && email && phone && "ACTIVE".equals(status.path("state").asText());
+                : purpose.equals("REGISTRATION_PHONE") && email && phone && "PROJECTED".equals(status.path("state").asText());
     }
 
     private JsonNode enroll(RequiredActionContext context, Bridge bridge) {
@@ -109,6 +222,10 @@ final class VerificationAction implements RequiredActionProvider {
         var session = context.getAuthenticationSession();
         var body = new LinkedHashMap<String, Object>();
         body.put("command_id", stable(session, note(operation)));
+        body.putAll(bindingFields(context));return body;
+    }
+    private Map<String,Object> bindingFields(RequiredActionContext context){
+        var session=context.getAuthenticationSession();var body=new LinkedHashMap<String,Object>();
         body.put("issuer", Urls.realmIssuer(context.getUriInfo().getBaseUri(), context.getRealm().getName()));
         body.put("subject", context.getUser().getId());
         body.put("client_id", session.getClient().getClientId());
@@ -128,8 +245,12 @@ final class VerificationAction implements RequiredActionProvider {
         catch (IllegalArgumentException invalid) { throw new Bridge.Unavailable(); }
     }
     private void render(RequiredActionContext context, String message) {
+        render(context,message,false);
+    }
+    private void render(RequiredActionContext context,String message,boolean pending){
         context.challenge(context.form().setAttribute("verificationKind", purpose.equals("REGISTRATION_EMAIL") ? "email" : "phone")
                 .setAttribute("verificationMessage", message == null ? "Verify your contact before continuing." : message)
+                .setAttribute("verificationPending",pending)
                 .createForm("armoney-code.ftl"));
     }
     @Override public void close() { }

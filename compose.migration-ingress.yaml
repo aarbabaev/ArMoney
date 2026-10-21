@@ -1,0 +1,8 @@
+# Explicit ingress selection only. Auth/Gateway/provider flags remain separately gated.
+services:
+  edge:
+    environment:
+      MIGRATION_PUBLIC_ORIGIN: ${MIGRATION_PUBLIC_ORIGIN:?Set the exact canonical HTTPS migration origin}
+      MIGRATION_EDGE_TO_GATEWAY_KEY: ${MIGRATION_EDGE_TO_GATEWAY_KEY:?Set the separate private migration edge key}
+    volumes:
+      - ./infra/edge/Caddyfile.migration:/etc/caddy/Caddyfile:ro

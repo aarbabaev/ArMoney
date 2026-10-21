@@ -3,6 +3,16 @@ info:
   title: auth-service
   version: 0.1.0
   description: Operational API and identity registration/session API. New registrations require an immutable unique UAE mobile claim. Local email and phone ownership are not verified. Trusted SSO email verification is retained separately for private notification contact lookup.
+tags:
+  - name: LegacyMigrationBrowser
+    description: 'Implemented private Gateway-to-Auth browser handler; selected only by strict AUTH_MIGRATION_BROWSER_ENABLED=true
+      (default false), not enabled by this document. Dedicated Gateway credential and exact public-origin assertion
+      precede cookies/body/facade; caller Forwarded/identity/Authorization/X-Service-Key headers are rejected. POST
+      requires exact HTTPS public Origin and strict duplicate-free application/x-www-form-urlencoded <=8192 bytes
+      with a four-second absolute HTTP/1.1 body-read deadline. Cookies are host-only __Secure-ArMoneyMigrationForm/Account/Attempt,
+      Path=/migration/, Secure, HttpOnly, SameSite=Lax and original deadline <=120 seconds; no Domain, renewal or
+      raw capability JSON. Wrong binders cannot clear/replace a valid flow. Malformed Gateway/origin assertions are
+      rejected with 400; authenticated service-level credential denials may return 401. '
 paths:
   /internal/enrollments:
     {
@@ -537,7 +547,7 @@ paths:
   /v1/auth/register:
     post:
       operationId: register
-      description: Reserves a unique canonical UAE mobile number and provisions its user-service claim. An identical email and phone retry preserves the identity and password. Conflicting email or phone claims return a generic conflict. A dependency failure may leave a durable identity for a later registration or credential-authenticated login retry.
+      description: Legacy compatibility registration only. When managed banking is enabled, returns 401 before identity or profile writes; registration must use the verified Keycloak flow. In default-off compatibility mode, reserves a unique canonical UAE mobile number and provisions its user-service claim. An identical email and phone retry preserves identity and password. Conflicting claims return a generic conflict. A dependency failure may leave a durable identity for a later authenticated retry.
       security: [{ServiceKey: []}]
       requestBody:
         $ref: '#/components/requestBodies/Registration'
@@ -568,7 +578,7 @@ paths:
   /v1/auth/login:
     post:
       operationId: login
-      description: Verifies credentials and reasserts the registered phone in user-service before issuing a session. Historical identities with no registered phone retain login compatibility without automatic enrollment.
+      description: Legacy compatibility login only. When managed banking is enabled, returns 401 without provisioning or session creation; restricted migration password proof remains separate. Default-off compatibility verifies credentials and reasserts the registered phone before issuing a session. Historical phone-less identities are not automatically enrolled.
       security: [{ServiceKey: []}]
       requestBody:
         $ref: '#/components/requestBodies/Credentials'
@@ -594,7 +604,7 @@ paths:
   /v1/auth/sso:
     post:
       operationId: exchangeSsoToken
-      description: Validates a Keycloak access token and creates an independent 30-minute opaque local session after user-service acknowledges the phone claim. New issuer/subject mappings require a canonical UAE phone_number from trusted introspection. An existing registered phone must match exactly and cannot be omitted. Historical phone-less mappings remain compatible without automatic enrollment. No email or phone account linking; phone possession is not verified. Trusted provider email and literal boolean email_verified refresh separate notification contact fields atomically with the subject mapping, before profile acknowledgement. Missing or invalid email clears contact; missing, false or malformed verification clears verified status. Login credentials are unchanged.
+      description: Validates a Keycloak access token. Enabled managed banking accepts only configured managed pairs through confirmed interactive proof and durable eligibility; ordinary legacy or migration-purpose tokens return 401 without identity, profile or session writes. Managed expiry is bounded by original evidence and never exceeds 1800 seconds. Default-off compatibility creates an independent local session after the phone claim is acknowledged; trusted issuer/subject mapping, immutable canonical phone matching and generic contact-update rules remain enforced. Contact equality never links accounts. Already stored sessions retain their separate validation/revocation contract.
       security: [{ServiceKey: []}]
       requestBody:
         required: true
@@ -666,8 +676,1458 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '503':
           $ref: '#/components/responses/Unavailable'
+  /v1/internal/migrations/legacy/decision:
+    post:
+      operationId: readLegacyMigrationDecision
+      description: Private Auth PRIMARY readback, selected only by explicit default-OFF migration configuration. Dedicated
+        decision credential precedes parsing; no X-Service-Key substitution. Strict duplicate-free JSON <=12 KiB,
+        HTTP/1.1 absolute four-second body-read deadline, local 16-call/120-per-minute admission. Historical read
+        only; no event, session, grant or expiry renewal.
+      security:
+      - MigrationDecisionKey: []
+      x-max-body-bytes: 12288
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MigrationDecisionQuery'
+      responses:
+        '200':
+          description: Durably bound result; not a banking grant
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                - no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationDecision'
+        '400':
+          $ref: '#/components/responses/MigrationPrivateFailure'
+        '401':
+          $ref: '#/components/responses/MigrationPrivateFailure'
+        '409':
+          $ref: '#/components/responses/MigrationPrivateFailure'
+        '429':
+          $ref: '#/components/responses/MigrationPrivateFailure'
+        '503':
+          $ref: '#/components/responses/MigrationPrivateFailure'
+        '404':
+          description: Unregistered when the selecting feature is disabled
+  /v1/internal/migrations/legacy/publication-evidence:
+    post:
+      operationId: readLegacyMigrationPublicationEvidence
+      description: Private default-OFF Auth PRIMARY publication evidence read. Same dedicated decision credential
+        and bounded strict 12 KiB HTTP/1.1 body/readback admission as decision. Original tuple/key/provenance must
+        match; unavailable or malformed state never becomes positive evidence.
+      security:
+      - MigrationDecisionKey: []
+      x-max-body-bytes: 12288
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MigrationEvidenceQuery'
+      responses:
+        '200':
+          description: Durably bound result; not a banking grant
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                - no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationPublicationEvidence'
+        '400':
+          $ref: '#/components/responses/MigrationPrivateFailure'
+        '401':
+          $ref: '#/components/responses/MigrationPrivateFailure'
+        '409':
+          $ref: '#/components/responses/MigrationPrivateFailure'
+        '429':
+          $ref: '#/components/responses/MigrationPrivateFailure'
+        '503':
+          $ref: '#/components/responses/MigrationPrivateFailure'
+        '404':
+          description: Unregistered when the selecting feature is disabled
+  /v1/internal/migrations/legacy/user-mutation-suspend:
+    post:
+      operationId: suspendMigrationForUserMutation
+      description: 'Private User-to-Auth purpose endpoint, unregistered unless AUTH_MIGRATION_USER_REVISION_ENABLED=true
+        (default false). Credential before body/protocol/admission; strict JSON <=4096 bytes; HTTP/1.1 four-second
+        absolute body deadline. One shared 20/2 admission and global16 PRIMARY permit; same owned backend and final
+        original invocation checks. Exact immutable receipt replay precedes the 100000-retained-row cap; changed payload/owner
+        conflicts. NOT_MIG is restricted to genuine permanent REG/current receipts/original projection-command provenance.
+        Current release lacks a genuine MIG projection-command producer: unsupported MIG operations return503 with
+        no Auth receipt/transition or User write. No fallback from unknown/pending/expired migration and no positive
+        authority.'
+      security:
+      - MigrationUserMutationKey: []
+      x-max-body-bytes: 4096
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MigrationUserMutationRequest'
+      responses:
+        '200':
+          description: Durably bound result; not a banking grant
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                - no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationUserMutationResponse'
+        '400':
+          $ref: '#/components/responses/MigrationPrivateFailure'
+        '401':
+          $ref: '#/components/responses/MigrationPrivateFailure'
+        '409':
+          $ref: '#/components/responses/MigrationPrivateFailure'
+        '429':
+          $ref: '#/components/responses/MigrationPrivateFailure'
+        '503':
+          $ref: '#/components/responses/MigrationPrivateFailure'
+        '404':
+          description: Unregistered when the selecting feature is disabled
+  /migration/legacy:
+    get:
+      operationId: legacyMigrationForm
+      description: No query fields. Issues only form CSRF/server command custody; no account authority. An active
+        existing attempt is denied without implicit retirement.
+      security:
+      - MigrationGatewayKey: []
+        MigrationOriginAssertion: []
+      responses:
+        '200':
+          $ref: '#/components/responses/MigrationBrowserHtml'
+        '400':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '401':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '409':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '429':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '503':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '404':
+          description: Unregistered when migration browser configuration is disabled
+      parameters:
+      - in: cookie
+        name: __Secure-ArMoneyMigrationAttempt
+        required: false
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: header
+        name: Origin
+        required: false
+        schema:
+          type: string
+          format: uri
+        description: Exact configured HTTPS public origin; required on POST, checked if present on GET. Duplicate
+          Origin headers are rejected.
+      tags:
+      - LegacyMigrationBrowser
+  /migration/legacy/password:
+    post:
+      operationId: legacyMigrationPassword
+      description: Exact form fields authenticate the existing historical email/password in one owned scope; no owner
+        allocation, contact link or early session revocation.
+      security:
+      - MigrationGatewayKey: []
+        MigrationOriginAssertion: []
+      responses:
+        '200':
+          $ref: '#/components/responses/MigrationBrowserHtml'
+        '400':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '401':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '409':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '429':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '503':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '404':
+          description: Unregistered when migration browser configuration is disabled
+      parameters:
+      - in: cookie
+        name: __Secure-ArMoneyMigrationForm
+        required: true
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          type: string
+          format: uri
+        description: Exact configured HTTPS public origin; required on POST, checked if present on GET. Duplicate
+          Origin headers are rejected.
+      x-max-body-bytes: 8192
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MigrationPasswordForm'
+      tags:
+      - LegacyMigrationBrowser
+  /migration/legacy/email:
+    post:
+      operationId: legacyMigrationEmailCandidate
+      description: Exact email candidate CSRF purpose follows genuine passwordless-SSO account proof; possession still
+        requires actual EMAIL OTP.
+      security:
+      - MigrationGatewayKey: []
+        MigrationOriginAssertion: []
+      responses:
+        '200':
+          $ref: '#/components/responses/MigrationBrowserHtml'
+        '400':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '401':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '409':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '429':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '503':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '404':
+          description: Unregistered when migration browser configuration is disabled
+      parameters:
+      - in: cookie
+        name: __Secure-ArMoneyMigrationAccount
+        required: true
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          type: string
+          format: uri
+        description: Exact configured HTTPS public origin; required on POST, checked if present on GET. Duplicate
+          Origin headers are rejected.
+      x-max-body-bytes: 8192
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MigrationEmailForm'
+      tags:
+      - LegacyMigrationBrowser
+  /migration/legacy/account-oidc/start:
+    post:
+      operationId: legacyMigrationAccountOidcStart
+      description: Starts genuine forced existing-SSO account authentication with server-held original PKCE/state/nonce.
+        No existing mapping bypass or password fallback.
+      security:
+      - MigrationGatewayKey: []
+        MigrationOriginAssertion: []
+      responses:
+        '303':
+          $ref: '#/components/responses/MigrationBrowserRedirect'
+        '400':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '401':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '409':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '429':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '503':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '404':
+          description: Unregistered when migration browser configuration is disabled
+      parameters:
+      - in: cookie
+        name: __Secure-ArMoneyMigrationForm
+        required: true
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: cookie
+        name: __Secure-ArMoneyMigrationAttempt
+        required: false
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          type: string
+          format: uri
+        description: Exact configured HTTPS public origin; required on POST, checked if present on GET. Duplicate
+          Origin headers are rejected.
+      x-max-body-bytes: 8192
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MigrationBoundForm'
+      tags:
+      - LegacyMigrationBrowser
+  /migration/managed/start:
+    post:
+      operationId: legacyMigrationManagedStart
+      description: Original restricted account cookie plus one-use CSRF/server command creates the attempt cookie.
+        An active existing attempt is rejected without renewal.
+      security:
+      - MigrationGatewayKey: []
+        MigrationOriginAssertion: []
+      responses:
+        '303':
+          $ref: '#/components/responses/MigrationBrowserRedirect'
+        '400':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '401':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '409':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '429':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '503':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '404':
+          description: Unregistered when migration browser configuration is disabled
+      parameters:
+      - in: cookie
+        name: __Secure-ArMoneyMigrationAccount
+        required: true
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: cookie
+        name: __Secure-ArMoneyMigrationAttempt
+        required: false
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          type: string
+          format: uri
+        description: Exact configured HTTPS public origin; required on POST, checked if present on GET. Duplicate
+          Origin headers are rejected.
+      x-max-body-bytes: 8192
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MigrationBoundForm'
+      tags:
+      - LegacyMigrationBrowser
+  /migration/legacy/account-oidc/callback:
+    get:
+      operationId: legacyMigrationAccountOidcCallback
+      description: Query is exactly code+state; original attempt cookie is required before claim/exchange. No public
+        attempt UUID or frontend verifier. Uncertain consumed-code exchange requires fresh authorization; no code
+        resurrection.
+      security:
+      - MigrationGatewayKey: []
+        MigrationOriginAssertion: []
+      responses:
+        '200':
+          $ref: '#/components/responses/MigrationBrowserHtml'
+        '400':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '401':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '409':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '429':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '503':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '404':
+          description: Unregistered when migration browser configuration is disabled
+      parameters:
+      - in: cookie
+        name: __Secure-ArMoneyMigrationAttempt
+        required: true
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: query
+        name: state
+        required: true
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+      - in: query
+        name: code
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          pattern: ^[!-~]{1,2048}$
+      - in: header
+        name: Origin
+        required: false
+        schema:
+          type: string
+          format: uri
+        description: Exact configured HTTPS public origin; required on POST, checked if present on GET. Duplicate
+          Origin headers are rejected.
+      tags:
+      - LegacyMigrationBrowser
+  /migration/managed/callback:
+    get:
+      operationId: legacyMigrationManagedCallback
+      description: Query is exactly code+state and BOTH original attempt/account cookies are required before claim/exchange.
+        Produces server-bound verification forms, not tokens or a banking session.
+      security:
+      - MigrationGatewayKey: []
+        MigrationOriginAssertion: []
+      responses:
+        '200':
+          $ref: '#/components/responses/MigrationBrowserHtml'
+        '400':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '401':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '409':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '429':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '503':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '404':
+          description: Unregistered when migration browser configuration is disabled
+      parameters:
+      - in: cookie
+        name: __Secure-ArMoneyMigrationAttempt
+        required: true
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: cookie
+        name: __Secure-ArMoneyMigrationAccount
+        required: true
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: query
+        name: state
+        required: true
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+      - in: query
+        name: code
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          pattern: ^[!-~]{1,2048}$
+      - in: header
+        name: Origin
+        required: false
+        schema:
+          type: string
+          format: uri
+        description: Exact configured HTTPS public origin; required on POST, checked if present on GET. Duplicate
+          Origin headers are rejected.
+      tags:
+      - LegacyMigrationBrowser
+  /migration/legacy/verify/stage:
+    post:
+      operationId: legacyMigrationUserStage
+      description: Actual User stage/ACK before delivery; no synthetic baseline.
+      security:
+      - MigrationGatewayKey: []
+        MigrationOriginAssertion: []
+      responses:
+        '200':
+          $ref: '#/components/responses/MigrationBrowserHtml'
+        '400':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '401':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '409':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '429':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '503':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '404':
+          description: Unregistered when migration browser configuration is disabled
+      parameters:
+      - in: cookie
+        name: __Secure-ArMoneyMigrationAccount
+        required: true
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          type: string
+          format: uri
+        description: Exact configured HTTPS public origin; required on POST, checked if present on GET. Duplicate
+          Origin headers are rejected.
+      x-max-body-bytes: 8192
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MigrationBoundForm'
+      tags:
+      - LegacyMigrationBrowser
+  /migration/legacy/otp/issue:
+    post:
+      operationId: legacyMigrationOtpIssue
+      description: Issue the server-selected sequential EMAIL then PHONE OTP through the real outbox; no browser channel/challenge/owner
+        IDs.
+      security:
+      - MigrationGatewayKey: []
+        MigrationOriginAssertion: []
+      responses:
+        '200':
+          $ref: '#/components/responses/MigrationBrowserHtml'
+        '400':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '401':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '409':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '429':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '503':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '404':
+          description: Unregistered when migration browser configuration is disabled
+      parameters:
+      - in: cookie
+        name: __Secure-ArMoneyMigrationAccount
+        required: true
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          type: string
+          format: uri
+        description: Exact configured HTTPS public origin; required on POST, checked if present on GET. Duplicate
+          Origin headers are rejected.
+      x-max-body-bytes: 8192
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MigrationBoundForm'
+      tags:
+      - LegacyMigrationBrowser
+  /migration/legacy/otp/consume:
+    post:
+      operationId: legacyMigrationOtpConsume
+      description: Consume only the original server-selected challenge/code. Different code replay conflicts; expiry/retry
+        never renews the original account/proof budget.
+      security:
+      - MigrationGatewayKey: []
+        MigrationOriginAssertion: []
+      responses:
+        '200':
+          $ref: '#/components/responses/MigrationBrowserHtml'
+        '400':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '401':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '409':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '429':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '503':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '404':
+          description: Unregistered when migration browser configuration is disabled
+      parameters:
+      - in: cookie
+        name: __Secure-ArMoneyMigrationAccount
+        required: true
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          type: string
+          format: uri
+        description: Exact configured HTTPS public origin; required on POST, checked if present on GET. Duplicate
+          Origin headers are rejected.
+      x-max-body-bytes: 8192
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MigrationOtpForm'
+      tags:
+      - LegacyMigrationBrowser
+  /migration/legacy/verify/decision:
+    post:
+      operationId: legacyMigrationAuthorizePublication
+      description: Authorizes immutable publication only after genuine current dual receipts and original User stage
+        binding; this is not FINAL.
+      security:
+      - MigrationGatewayKey: []
+        MigrationOriginAssertion: []
+      responses:
+        '200':
+          $ref: '#/components/responses/MigrationBrowserHtml'
+        '400':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '401':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '409':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '429':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '503':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '404':
+          description: Unregistered when migration browser configuration is disabled
+      parameters:
+      - in: cookie
+        name: __Secure-ArMoneyMigrationAccount
+        required: true
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          type: string
+          format: uri
+        description: Exact configured HTTPS public origin; required on POST, checked if present on GET. Duplicate
+          Origin headers are rejected.
+      x-max-body-bytes: 8192
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MigrationBoundForm'
+      tags:
+      - LegacyMigrationBrowser
+  /migration/legacy/verify/publication:
+    post:
+      operationId: legacyMigrationPublish
+      description: Obtain and persist the actual User final ACK for the original publication; no early marker or legacy-session
+        revocation.
+      security:
+      - MigrationGatewayKey: []
+        MigrationOriginAssertion: []
+      responses:
+        '200':
+          $ref: '#/components/responses/MigrationBrowserHtml'
+        '400':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '401':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '409':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '429':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '503':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '404':
+          description: Unregistered when migration browser configuration is disabled
+      parameters:
+      - in: cookie
+        name: __Secure-ArMoneyMigrationAccount
+        required: true
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          type: string
+          format: uri
+        description: Exact configured HTTPS public origin; required on POST, checked if present on GET. Duplicate
+          Origin headers are rejected.
+      x-max-body-bytes: 8192
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MigrationBoundForm'
+      tags:
+      - LegacyMigrationBrowser
+  /migration/legacy/verify/final-command:
+    post:
+      operationId: legacyMigrationPrepareFinal
+      description: Reserve original durable server-owned FINAL command custody; never remint on uncertainty.
+      security:
+      - MigrationGatewayKey: []
+        MigrationOriginAssertion: []
+      responses:
+        '200':
+          $ref: '#/components/responses/MigrationBrowserHtml'
+        '400':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '401':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '409':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '429':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '503':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '404':
+          description: Unregistered when migration browser configuration is disabled
+      parameters:
+      - in: cookie
+        name: __Secure-ArMoneyMigrationAccount
+        required: true
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          type: string
+          format: uri
+        description: Exact configured HTTPS public origin; required on POST, checked if present on GET. Duplicate
+          Origin headers are rejected.
+      x-max-body-bytes: 8192
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MigrationBoundForm'
+      tags:
+      - LegacyMigrationBrowser
+  /migration/legacy/verify/final:
+    post:
+      operationId: legacyMigrationFinalize
+      description: Genuine final capabilities atomically bind migration source/grant/completion and revoke original
+        legacy sessions only after all current evidence/User ACK checks. No banking token is minted; a fresh confirmed
+        native login is required.
+      security:
+      - MigrationGatewayKey: []
+        MigrationOriginAssertion: []
+      responses:
+        '200':
+          $ref: '#/components/responses/MigrationBrowserHtml'
+        '400':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '401':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '409':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '429':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '503':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '404':
+          description: Unregistered when migration browser configuration is disabled
+      parameters:
+      - in: cookie
+        name: __Secure-ArMoneyMigrationAccount
+        required: true
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          type: string
+          format: uri
+        description: Exact configured HTTPS public origin; required on POST, checked if present on GET. Duplicate
+          Origin headers are rejected.
+      x-max-body-bytes: 8192
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MigrationBoundForm'
+      tags:
+      - LegacyMigrationBrowser
+  /migration/legacy/verify/status:
+    get:
+      operationId: legacyMigrationReadOnlyStatus
+      description: No query/body or mutating command. Retained bounded readback never performs provider I/O, renews
+        a cookie or creates proof. COMPLETED/RECOVERY_REQUIRED return200 HTML; PENDING_RESULT returns503 HTML. Completed
+        clears migration cookies and instructs fresh native sign-in.
+      security:
+      - MigrationGatewayKey: []
+        MigrationOriginAssertion: []
+      responses:
+        '200':
+          $ref: '#/components/responses/MigrationBrowserHtml'
+        '400':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '401':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '409':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '429':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '503':
+          $ref: '#/components/responses/MigrationBrowserFailure'
+        '404':
+          description: Unregistered when migration browser configuration is disabled
+      parameters:
+      - in: cookie
+        name: __Secure-ArMoneyMigrationAccount
+        required: true
+        schema:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+        description: Original opaque server-issued HttpOnly binder, never a caller identity/proof claim.
+      - in: header
+        name: Origin
+        required: false
+        schema:
+          type: string
+          format: uri
+        description: Exact configured HTTPS public origin; required on POST, checked if present on GET. Duplicate
+          Origin headers are rejected.
+      tags:
+      - LegacyMigrationBrowser
 components:
   schemas:
+    MigrationUuid:
+      type: string
+      format: uuid
+      minLength: 36
+      maxLength: 36
+      pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+      not:
+        enum:
+        - 00000000-0000-0000-0000-000000000000
+    MigrationDigest:
+      type: string
+      pattern: ^[0-9a-f]{64}$
+      minLength: 64
+      maxLength: 64
+    MigrationCsrf:
+      type: string
+      pattern: ^[A-Za-z0-9_-]{43}$
+      minLength: 43
+      maxLength: 43
+      writeOnly: true
+      description: Original server-issued one-use CSRF value; never a caller-created authority claim.
+    MigrationUserBefore:
+      type: object
+      additionalProperties: false
+      required:
+      - profile_id
+      - shard_id
+      - baseline_generation
+      - contact_mutation_revision
+      - projection_present
+      - projection_revision
+      - phone_contact_version
+      - verification_epoch
+      properties:
+        profile_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        shard_id:
+          type: string
+          pattern: ^[A-Za-z0-9_-]{1,64}$
+        baseline_generation:
+          type: integer
+          format: int64
+          minimum: 0
+        contact_mutation_revision:
+          type: integer
+          format: int64
+          minimum: 0
+        projection_present:
+          type: boolean
+        projection_revision:
+          type: integer
+          format: int64
+          minimum: 1
+          nullable: true
+        phone_contact_version:
+          type: integer
+          format: int64
+          minimum: 1
+          nullable: true
+        verification_epoch:
+          type: integer
+          format: int64
+          minimum: 1
+          nullable: true
+      description: Exact User8. All three projection fields are null when projection_present is false, and all are positive
+        when true. Null whole object is allowed only for genuine initial REG bootstrap.
+    MigrationUserBaseline:
+      type: object
+      additionalProperties: false
+      required:
+      - migration_id
+      - decision_id
+      - publication_revision
+      - final_ack_hash
+      properties:
+        migration_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        decision_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        publication_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        final_ack_hash:
+          $ref: '#/components/schemas/MigrationDigest'
+    MigrationProjectionAfter:
+      type: object
+      additionalProperties: false
+      required:
+      - expected_version
+      - version
+      - phone_contact_version
+      - verification_epoch
+      - projection_payload_hash
+      properties:
+        expected_version:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 2147483646
+        version:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 2147483647
+        phone_contact_version:
+          type: integer
+          format: int32
+          minimum: 1
+        verification_epoch:
+          type: integer
+          format: int64
+          minimum: 1
+        projection_payload_hash:
+          $ref: '#/components/schemas/MigrationDigest'
+      description: Original Auth projection command only; version equals expected_version + 1. No caller source/epoch
+        selection.
+    MigrationMutationBinding:
+      type: object
+      additionalProperties: false
+      required:
+      - source_kind
+      - migration_id
+      - decision_id
+      - classification_generation
+      - previous_epoch
+      - previous_source_revision
+      - resulting_epoch
+      - resulting_source_revision
+      properties:
+        source_kind:
+          type: string
+          enum:
+          - MIG
+        migration_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        decision_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        classification_generation:
+          type: integer
+          format: int64
+          minimum: 1
+        previous_epoch:
+          type: integer
+          format: int64
+          minimum: 1
+        previous_source_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        resulting_epoch:
+          type: integer
+          format: int64
+          minimum: 1
+        resulting_source_revision:
+          type: integer
+          format: int64
+          minimum: 1
+      description: Denial-only server-derived MIG binding. An already suspended new operation preserves the actual current
+        epoch/revision; exact replay returns its original result.
+    MigrationDecisionQuery:
+      type: object
+      additionalProperties: false
+      required:
+      - migration_id
+      - stage_operation_id
+      - command_id
+      - payload_hash
+      properties:
+        migration_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        stage_operation_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        command_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        payload_hash:
+          $ref: '#/components/schemas/MigrationDigest'
+      description: Exact original publication tuple. command_id is the original publication command, not a new browser
+        FINAL command.
+    MigrationEvidenceQuery:
+      type: object
+      additionalProperties: false
+      required:
+      - migration_id
+      - decision_id
+      - stage_operation_id
+      - command_id
+      - payload_hash
+      properties:
+        migration_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        decision_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        stage_operation_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        command_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        payload_hash:
+          $ref: '#/components/schemas/MigrationDigest'
+    MigrationDecision:
+      type: object
+      additionalProperties: false
+      required:
+      - decision_id
+      - migration_id
+      - stage_operation_id
+      - payload_hash
+      - state
+      properties:
+        decision_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        migration_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        stage_operation_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        payload_hash:
+          $ref: '#/components/schemas/MigrationDigest'
+        state:
+          type: string
+          enum:
+          - PUBLICATION_AUTHORIZED
+          - COMPLETED
+      description: COMPLETED is derived only from validated immutable Auth completion and provenance. This historical
+        readback is not current eligibility or a banking/session grant.
+    MigrationPublicationEvidence:
+      type: object
+      additionalProperties: false
+      required:
+      - protocol_version
+      - migration_id
+      - decision_id
+      - stage_operation_id
+      - identity_id
+      - baseline_hash
+      - stage_ack_hash
+      - email_contact_version
+      - email_digest
+      - email_receipt_id
+      - email_receipt_generation
+      - phone_receipt_id
+      - phone_receipt_generation
+      - receipt_snapshot_hash
+      - policy_version
+      - payload_hash
+      - state
+      properties:
+        protocol_version:
+          type: integer
+          enum:
+          - 1
+        migration_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        decision_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        stage_operation_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        identity_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        baseline_hash:
+          $ref: '#/components/schemas/MigrationDigest'
+        stage_ack_hash:
+          $ref: '#/components/schemas/MigrationDigest'
+        email_contact_version:
+          type: integer
+          format: int64
+          minimum: 1
+        email_digest:
+          $ref: '#/components/schemas/MigrationDigest'
+        email_receipt_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        email_receipt_generation:
+          type: integer
+          format: int64
+          minimum: 1
+        phone_receipt_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        phone_receipt_generation:
+          type: integer
+          format: int64
+          minimum: 1
+        receipt_snapshot_hash:
+          $ref: '#/components/schemas/MigrationDigest'
+        policy_version:
+          type: integer
+          format: int64
+          minimum: 1
+        payload_hash:
+          $ref: '#/components/schemas/MigrationDigest'
+        state:
+          type: string
+          enum:
+          - PUBLICATION_AUTHORIZED
+          - COMPLETED
+      description: Exact retained publication evidence; independent EMAIL/PHONE receipt IDs differ. No current User
+        observation, provider proof or banking authority is created by this read.
+    MigrationUserMutationRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - protocol_version
+      - operation_id
+      - identity_id
+      - baseline
+      - before
+      - after
+      - payload_hash
+      properties:
+        protocol_version:
+          type: integer
+          enum:
+          - 1
+        operation_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        identity_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        baseline:
+          type: object
+          additionalProperties: false
+          required:
+          - migration_id
+          - decision_id
+          - publication_revision
+          - final_ack_hash
+          properties:
+            migration_id:
+              $ref: '#/components/schemas/MigrationUuid'
+            decision_id:
+              $ref: '#/components/schemas/MigrationUuid'
+            publication_revision:
+              type: integer
+              format: int64
+              minimum: 1
+            final_ack_hash:
+              $ref: '#/components/schemas/MigrationDigest'
+          nullable: true
+        before:
+          type: object
+          additionalProperties: false
+          required:
+          - profile_id
+          - shard_id
+          - baseline_generation
+          - contact_mutation_revision
+          - projection_present
+          - projection_revision
+          - phone_contact_version
+          - verification_epoch
+          properties:
+            profile_id:
+              $ref: '#/components/schemas/MigrationUuid'
+            shard_id:
+              type: string
+              pattern: ^[A-Za-z0-9_-]{1,64}$
+            baseline_generation:
+              type: integer
+              format: int64
+              minimum: 0
+            contact_mutation_revision:
+              type: integer
+              format: int64
+              minimum: 0
+            projection_present:
+              type: boolean
+            projection_revision:
+              type: integer
+              format: int64
+              minimum: 1
+              nullable: true
+            phone_contact_version:
+              type: integer
+              format: int64
+              minimum: 1
+              nullable: true
+            verification_epoch:
+              type: integer
+              format: int64
+              minimum: 1
+              nullable: true
+          description: Exact User8. All three projection fields are null when projection_present is false, and all are
+            positive when true. Null whole object is allowed only for genuine initial REG bootstrap.
+          nullable: true
+        after:
+          $ref: '#/components/schemas/MigrationProjectionAfter'
+        payload_hash:
+          $ref: '#/components/schemas/MigrationDigest'
+      description: Exact seven fields. before:null requires baseline:null and expected_version:0. H(suspend-request)
+        binds the configured purpose writer and original tuple; identity IDs are trusted peer bindings, not browser
+        input. Fractions, exponent numbers, duplicate/missing/extra fields are rejected.
+    MigrationUserMutationResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - protocol_version
+      - operation_id
+      - identity_id
+      - payload_hash
+      - outcome
+      - binding
+      - recorded_at_us
+      properties:
+        protocol_version:
+          type: integer
+          enum:
+          - 1
+        operation_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        identity_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        payload_hash:
+          $ref: '#/components/schemas/MigrationDigest'
+        outcome:
+          type: string
+          enum:
+          - NOT_MIG
+          - SUSPENDED
+        binding:
+          type: object
+          additionalProperties: false
+          required:
+          - source_kind
+          - migration_id
+          - decision_id
+          - classification_generation
+          - previous_epoch
+          - previous_source_revision
+          - resulting_epoch
+          - resulting_source_revision
+          properties:
+            source_kind:
+              type: string
+              enum:
+              - MIG
+            migration_id:
+              $ref: '#/components/schemas/MigrationUuid'
+            decision_id:
+              $ref: '#/components/schemas/MigrationUuid'
+            classification_generation:
+              type: integer
+              format: int64
+              minimum: 1
+            previous_epoch:
+              type: integer
+              format: int64
+              minimum: 1
+            previous_source_revision:
+              type: integer
+              format: int64
+              minimum: 1
+            resulting_epoch:
+              type: integer
+              format: int64
+              minimum: 1
+            resulting_source_revision:
+              type: integer
+              format: int64
+              minimum: 1
+          description: Denial-only server-derived MIG binding. An already suspended new operation preserves the actual
+            current epoch/revision; exact replay returns its original result.
+          nullable: true
+        recorded_at_us:
+          type: integer
+          format: int64
+          minimum: 0
+      description: NOT_MIG requires binding:null and conclusive permanent REG provenance; SUSPENDED requires the exact
+        nonnull MIG binding. recorded_at_us is diagnostic, not freshness authority. No success is returned before durable
+        receipt COMMIT.
+    MigrationBoundForm:
+      type: object
+      additionalProperties: false
+      required:
+      - csrf
+      - command_id
+      properties:
+        csrf:
+          $ref: '#/components/schemas/MigrationCsrf'
+        command_id:
+          $ref: '#/components/schemas/MigrationUuid'
+      description: Both fields must match the original server-issued cookie/purpose/command; the browser cannot mint
+        a command UUID.
+    MigrationPasswordForm:
+      type: object
+      additionalProperties: false
+      required:
+      - csrf
+      - command_id
+      - legacy_login
+      - password
+      properties:
+        csrf:
+          $ref: '#/components/schemas/MigrationCsrf'
+        command_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        legacy_login:
+          type: string
+          format: email
+          maxLength: 254
+        password:
+          type: string
+          writeOnly: true
+          maxLength: 128
+          minLength: 15
+          description: At least 15 code points and at most 128 UTF-16 code units, matching historical Auth validation.
+      description: Historical email login only; generic credential failure. No identity UUID, frontend PKCE verifier
+        or provider token input.
+    MigrationEmailForm:
+      type: object
+      additionalProperties: false
+      required:
+      - csrf
+      - command_id
+      - email
+      properties:
+        csrf:
+          $ref: '#/components/schemas/MigrationCsrf'
+        command_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        email:
+          type: string
+          format: email
+          maxLength: 254
+      description: Explicit canonical email candidate after genuine account proof; a candidate does not assert possession.
+        Provider email is not copied as authority.
+    MigrationOtpForm:
+      type: object
+      additionalProperties: false
+      required:
+      - csrf
+      - command_id
+      - code
+      properties:
+        csrf:
+          $ref: '#/components/schemas/MigrationCsrf'
+        command_id:
+          $ref: '#/components/schemas/MigrationUuid'
+        code:
+          type: string
+          pattern: ^[0-9]{6}$
+          minLength: 6
+          maxLength: 6
+          writeOnly: true
+      description: Only the six-digit generated OTP is browser supplied; channel/challenge/owner/migration/attempt remain
+        server-owned.
     AuthorityEnrollmentRequest:
       {
         "type": "object",
@@ -1023,7 +2483,9 @@ components:
           enum: [Bearer]
         expires_in:
           type: integer
-          enum: [1800]
+          minimum: 1
+          maximum: 1800
+          description: Legacy sessions advertise 1800 seconds. Managed sessions advertise the positive whole seconds remaining; an already expired or subsecond remaining managed lifetime is rejected.
         expires_at:
           type: string
           format: date-time
@@ -1072,6 +2534,24 @@ components:
         error:
           type: string
   securitySchemes:
+    MigrationDecisionKey:
+      type: apiKey
+      in: header
+      name: X-ArMoney-Migration-Decision-Key
+    MigrationUserMutationKey:
+      type: apiKey
+      in: header
+      name: X-ArMoney-Migration-User-Mutation-Key
+    MigrationGatewayKey:
+      type: apiKey
+      in: header
+      name: X-ArMoney-Migration-Auth-Key
+    MigrationOriginAssertion:
+      type: apiKey
+      in: header
+      name: X-ArMoney-Migration-Origin
+      description: Exact configured HTTPS public origin asserted only by the authenticated private Gateway hop; not
+        a user identity.
     VerificationBridge:
       {
         "type": "apiKey",
@@ -1100,6 +2580,62 @@ components:
           schema:
             $ref: '#/components/schemas/Credentials'
   responses:
+    MigrationPrivateFailure:
+      description: Generic rejected/conflict/unavailable result only; no provider, credential, request body or exception
+        details.
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+            enum:
+            - no-store
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    MigrationBrowserHtml:
+      description: Bounded HTML form or read-only result. No raw proof, OTP, capability or access/refresh/session token
+        is returned as JSON. COMPLETED instructs a fresh native sign-in; it does not mint a banking session.
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+            enum:
+            - no-store
+      content:
+        text/html:
+          schema:
+            type: string
+    MigrationBrowserFailure:
+      description: Generic HTML rejection/unavailability; no raw inputs, codes, credentials or exception text.
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+            enum:
+            - no-store
+      content:
+        text/html:
+          schema:
+            type: string
+    MigrationBrowserRedirect:
+      description: 303 to the fixed trusted authorization endpoint with exact server-created code/openid/S256/prompt=login/max_age=0
+        request. No caller redirect or verifier.
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+            enum:
+            - no-store
+        Location:
+          schema:
+            type: string
+            format: uri
+        Set-Cookie:
+          schema:
+            type: string
+          description: Host-only __Secure-ArMoneyMigrationAttempt; Path=/migration/; Secure; HttpOnly; SameSite=Lax;
+            bounded by the original deadline, never renewed.
     BadRequest:
       description: Malformed JSON, invalid email, password or registration phone
       content:

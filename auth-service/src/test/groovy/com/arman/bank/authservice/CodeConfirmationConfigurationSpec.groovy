@@ -18,6 +18,55 @@ class CodeConfirmationConfigurationSpec extends Specification {
                 [issuer:CodeIntentConfigurationSpec.environment().SSO_ISSUER,client_id:'armoney-ios']]),ARMONEY_SSO_LEGACY_PAIRS:'[]']
         env.remove('SSO_CODE_INTENT_ISSUERS');env.remove('SSO_CODE_INTENT_CLIENTS');env
     }
+    static Map coenabledEnvironment(){
+        def env=com.arman.bank.authservice.infrastructure.LegacyMigrationConfigurationSpec.environment()+environment()
+        env.AUTH_MANAGED_BANKING_ENABLED='true';env.AUTH_MANAGED_BANKING_KEY_ID='bank-v1'
+        env.AUTH_MANAGED_BANKING_KEY=CodeIntentConfigurationSpec.encoded(18)
+        env.AUTH_MIGRATION_LEGACY_CLIENT_ID='armoney-migration-account';env.AUTH_MIGRATION_MANAGED_CLIENT_ID='armoney-android'
+        env.SSO_VERIFICATION_CLIENT_IDS='armoney-web,armoney-ios,armoney-android'
+        env.ARMONEY_SSO_MANAGED_PAIRS=JsonOutput.toJson(['armoney-web','armoney-ios','armoney-android'].collect{[issuer:env.SSO_ISSUER,client_id:it]})
+        env.ARMONEY_SSO_LEGACY_PAIRS=JsonOutput.toJson([[issuer:env.SSO_ISSUER,client_id:'armoney-migration-account']])
+        ['LEGACY','MANAGED'].each{mode->['AUTHORIZATION_ENDPOINT':'auth','TOKEN_ENDPOINT':'token','JWKS_URI':'certs'].each{suffix,path->
+            env['AUTH_MIGRATION_'+mode+'_'+suffix]=env.SSO_ISSUER+'/protocol/openid-connect/'+path
+        }}
+        env
+    }
+    def 'coenabled Main configuration graph keeps migration account global LEGACY and excludes it from C2 banking'(){
+        given:def env=coenabledEnvironment();def original=new HashMap(env)
+        when:
+        def c2=new CodeConfirmationConfiguration(env)
+        def banking=new com.arman.bank.authservice.infrastructure.ManagedBankingConfiguration(env)
+        def migration=com.arman.bank.authservice.infrastructure.LegacyMigrationConfiguration.from(env,[:])
+        then:
+        c2.enabled && banking.enabled && migration.enabled
+        env==original
+        c2.scopes().managedClients()==['armoney-web','armoney-ios','armoney-android'] as Set
+        c2.scopes().classify(env.SSO_ISSUER,'armoney-migration-account')==com.arman.bank.authservice.infrastructure.CodeIntentPairScopes.Classification.UNKNOWN
+        banking.scopes().classify(env.SSO_ISSUER,'armoney-migration-account')==com.arman.bank.authservice.infrastructure.CodeIntentPairScopes.Classification.LEGACY
+        migration.observation.allowedPairs().size()==2
+    }
+    def 'dedicated account exception requires exact migration settings and never adds verification or C2 scope #change'(){
+        given:def env=coenabledEnvironment();env.putAll(change)
+        when:new CodeConfirmationConfiguration(env)
+        then:thrown(IllegalArgumentException)
+        where:change << [
+            [AUTH_MIGRATION_BROWSER_ENABLED:'false'],[AUTH_MIGRATION_BROWSER_ENABLED:'TRUE'],
+            [AUTH_MIGRATION_LEGACY_CLIENT_ID:'other-account'],[AUTH_MIGRATION_MANAGED_CLIENT_ID:'armoney-migration-account'],
+            [AUTH_MIGRATION_MANAGED_CLIENT_ID:null],[AUTH_MIGRATION_MANAGED_CLIENT_ID:'unknown'],
+            [SSO_VERIFICATION_CLIENT_IDS:'armoney-web,armoney-ios,armoney-android,armoney-migration-account'],
+            [SSO_CODE_INTENT_CLIENTS:'armoney-web,armoney-ios,armoney-android,armoney-migration-account'],
+            [ARMONEY_SSO_LEGACY_PAIRS:JsonOutput.toJson([[issuer:environment().SSO_ISSUER,client_id:'arbitrary-fourth']])],
+            [ARMONEY_SSO_LEGACY_PAIRS:JsonOutput.toJson([[issuer:'https://wrong.example/sso/realms/armoney',client_id:'armoney-migration-account']])],
+            [ARMONEY_SSO_MANAGED_PAIRS:JsonOutput.toJson([[issuer:environment().SSO_ISSUER,client_id:'armoney-migration-account']])]
+        ]
+    }
+    def 'dormant C2 preserves complete validated global classification without selecting account banking'(){
+        given:def env=coenabledEnvironment();env.AUTH_SSO_CODE_INTENT_CONFIRMATION_ENABLED='false'
+        expect:
+        !new CodeConfirmationConfiguration(env).enabled
+        new CodeConfirmationConfiguration(env).scopes().classify(env.SSO_ISSUER,'armoney-migration-account')==com.arman.bank.authservice.infrastructure.CodeIntentPairScopes.Classification.LEGACY
+    }
+
     def 'default false allocates no resources and needs no dormant secrets or dependency configuration'(){
         given:def config=new CodeConfirmationConfiguration([:])
         expect:!config.enabled;config.scopes().managed().isEmpty();config.toString()=='CodeConfirmationConfiguration[redacted]'

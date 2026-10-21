@@ -184,6 +184,10 @@ class VerificationLockOrderIntegrationSpec extends Specification {
             'COMPLETED'
         } catch (VerificationProjection.Failure denied) { denied.error().name() }
         catch (Verification.Failure denied) { denied.error().name() }
+        catch (com.arman.bank.authservice.application.AuthFailure denied) {
+            if (operation != 'auth_gate' || denied.kind() != com.arman.bank.authservice.application.AuthFailure.Kind.UNAUTHORIZED) throw denied
+            'UNAUTHORIZED'
+        }
         // SQL/deadlock/timeouts deliberately propagate and fail the regression.
     }
     private static VerificationProjection.Command command() { VerificationProjection.create(UUID.randomUUID(),UUID.randomUUID(),0,1,'+971501234567',1,1) }

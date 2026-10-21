@@ -12,6 +12,7 @@ COPY sso-service/themes/armoney/login/ ./sso-service/themes/armoney/login/
 RUN bash sso-service/provider/package-provider.sh /provider-package
 
 FROM quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c AS keycloak-build
+ENV KC_HTTP_RELATIVE_PATH=/sso
 COPY --from=provider-build --chown=keycloak:keycloak /provider-package/providers/ /opt/keycloak/providers/
 COPY --from=provider-build --chown=keycloak:keycloak /provider-package/themes/ /opt/keycloak/themes/
 # Keycloak augmentation discovers existing SPI implementations; no server/database or realm import runs.
@@ -19,6 +20,7 @@ RUN touch -m --date=@1743465600 /opt/keycloak/providers/armoney-keycloak-provide
     && /opt/keycloak/bin/kc.sh build --db=postgres
 
 FROM quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c
+ENV KC_HTTP_RELATIVE_PATH=/sso
 COPY --from=keycloak-build --chown=keycloak:keycloak /opt/keycloak/ /opt/keycloak/
 COPY --from=provider-build --chown=keycloak:keycloak /provider-package/provenance/ /opt/keycloak/conf/armoney-provider-package/
 LABEL org.opencontainers.image.title="ArMoney disabled Keycloak provider" \

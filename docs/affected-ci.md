@@ -26,6 +26,15 @@ Service code has no direct cross-service Java dependency. The shared
 `platform-runtime` is a dependency of the service modules. Acceptance links are
 explicit in `scripts/ci-impact.py`; update them when contracts or ownership change.
 
+Auth registration-readiness process acceptance launches the real User distribution
+to obtain persisted projection acknowledgements and the local SMS sandbox to verify
+actual delivery. Auth's integration task therefore depends on
+`:user-service:installDist` and `:sms-sandbox:installDist` without adding their
+classes to Auth's classpath. Production, build, resource and migration changes in
+either consumed module also select the Auth check; test-only changes remain scoped
+to their own module. These test-consumer edges add no unrelated client suites or
+production Java dependency.
+
 The existing required job names remain stable. An unaffected job checks out the
 revision and records that no component build/tests were executed; it does not
 report that omitted tests passed. These lightweight jobs still incur local runner
@@ -49,3 +58,17 @@ Selector/Gradle safety tests run on every PR. Full mode is also required when th
 selector or workflow changes, so this optimization validates its own deployment
 with the existing complete suite. iOS remains paused; emulator execution is never
 part of these jobs.
+
+When SSO checks are selected, the existing backend job also runs the isolated
+registration-fixture module's unfiltered `check jar` and its JAR-profile guard,
+plus offline realm-provisioning, private-configuration and native-controller unit
+tests. The browser is not launched by those unit tests. This adds no parallel job
+and does not establish native acceptance. Local backend artifacts retain JUnit
+XML as well as HTML test reports, including the standalone fixture module.
+
+The backend job has a bounded 180-minute aggregate budget for cold full-suite
+execution followed by linked Compose acceptance. An observed cold PostgreSQL
+suite alone took 79 minutes and 25 seconds; the previous 90-minute aggregate
+budget cancelled the job during SMS acceptance. Individual test and acceptance
+deadlines, selected checks and failure conditions are unchanged. An incomplete
+or cancelled job does not satisfy required CI.

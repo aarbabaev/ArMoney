@@ -4,7 +4,16 @@ version = '0.1.0'
 repositories { mavenCentral() }
 java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
 def keycloakVersion = '26.7.4'
+// Pinned server APIs only: never bundled into the disposable fixture JAR.
+def reactiveVersion = '3.33.3.2'
+def providerArtifact = files('../build/libs/armoney-keycloak-provider-0.1.0.jar')
 dependencies {
+    compileOnly 'io.vertx:vertx-core:4.5.31'
+    testImplementation 'io.vertx:vertx-core:4.5.31'
+    compileOnly providerArtifact
+    testImplementation providerArtifact
+    compileOnly "io.quarkus.resteasy.reactive:resteasy-reactive:${reactiveVersion}"
+    testImplementation "io.quarkus.resteasy.reactive:resteasy-reactive:${reactiveVersion}"
     compileOnly "org.keycloak:keycloak-server-spi:${keycloakVersion}"
     compileOnly "org.keycloak:keycloak-server-spi-private:${keycloakVersion}"
     compileOnly "org.keycloak:keycloak-services:${keycloakVersion}"
@@ -20,3 +29,136 @@ tasks.withType(AbstractArchiveTask).configureEach {
     reproducibleFileOrder = true
 }
 jar { manifest { attributes('ArMoney-Artifact-Scope': 'disposable-observer-acceptance-only') } }
+
+// Compile and test every fixture together; isolate discoverable control planes only at packaging.
+def codeIntentClasses = 'com/arman/bank/sso/CodeIntent*.class'
+def legacyControlClasses = [
+    'com/arman/bank/sso/acceptance/ObserverFixtureFactory*.class',
+    'com/arman/bank/sso/acceptance/ObserverFixtureResource*.class',
+    'com/arman/bank/sso/fixture/VisibilityResource*.class',
+    'com/arman/bank/sso/fixture/VisibilityLoginProtocol*.class',
+    'com/arman/bank/sso/fixture/VisibilityState*.class'
+]
+def realmSpi = 'META-INF/services/org.keycloak.services.resource.RealmResourceProviderFactory'
+def actionSpi = 'META-INF/services/org.keycloak.authentication.RequiredActionFactory'
+def protocolSpi = 'META-INF/services/org.keycloak.protocol.LoginProtocolFactory'
+def profileResources = layout.buildDirectory.dir('generated/fixture-profiles')
+def generateFixtureProfiles = tasks.register('generateFixtureProfiles') {
+    inputs.dir('src/main/resources')
+    outputs.dir(profileResources)
+    doLast {
+        def root = profileResources.get().asFile
+        delete(root)
+        def writeSpi = { String profile, String path, List<String> entries ->
+            def target = new File(root, "${profile}/${path}")
+            target.parentFile.mkdirs()
+            target.setText(entries.join('\n') + '\n', 'UTF-8')
+        }
+        // Keep the existing visibility image's optional registration, but never code-intent SPI.
+        def observerFactories = file("src/main/resources/${realmSpi}").readLines('UTF-8')
+            .collect { it.trim() }.findAll { it && !it.startsWith('#') && !it.startsWith('com.arman.bank.sso.CodeIntent') }
+        if (!observerFactories.contains('com.arman.bank.sso.acceptance.ObserverFixtureFactory')) {
+            observerFactories.add(0, 'com.arman.bank.sso.acceptance.ObserverFixtureFactory')
+        }
+        writeSpi('observer', realmSpi, observerFactories)
+        if (file("src/main/resources/${protocolSpi}").exists()) {
+            writeSpi('observer', protocolSpi, ['com.arman.bank.sso.fixture.VisibilityLoginProtocolFactory'])
+        }
+        writeSpi('code-intent', realmSpi, ['com.arman.bank.sso.CodeIntentFixtureResourceFactory'])
+        writeSpi('code-intent', actionSpi, ['com.arman.bank.sso.CodeIntentFixtureActionFactory'])
+        writeSpi('code-intent', protocolSpi, ['com.arman.bank.sso.CodeIntentFixtureLoginProtocolFactory'])
+    }
+}
+
+jar {
+    dependsOn(generateFixtureProfiles)
+    exclude(codeIntentClasses)
+    // Replace only these registrations; preserve the optional legacy visibility protocol.
+    // Filter the original resource entries while including generated profile metadata.
+    exclude { details -> details.file.toPath().startsWith(sourceSets.main.output.resourcesDir.toPath()) &&
+        details.path in [realmSpi, actionSpi, protocolSpi] }
+    from(profileResources.map { it.dir('observer') })
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+def codeIntentJar = tasks.register('codeIntentJar', Jar) {
+    dependsOn(tasks.named('classes'), generateFixtureProfiles)
+    archiveBaseName = 'armoney-code-intent-acceptance-fixture'
+    from(sourceSets.main.output) {
+        exclude(legacyControlClasses)
+        exclude(realmSpi, actionSpi, protocolSpi)
+    }
+    from(profileResources.map { it.dir('code-intent') })
+    manifest { attributes('ArMoney-Artifact-Scope': 'disposable-code-intent-only') }
+}
+
+// Fail closed on actual archive contents, including nested classes and SPI targets.
+def verifyFixtureJars = tasks.register('verifyFixtureJars') {
+    dependsOn(tasks.named('jar'), codeIntentJar)
+    inputs.files(tasks.named('jar').flatMap { it.archiveFile }, codeIntentJar.flatMap { it.archiveFile })
+    doLast {
+        [observer: tasks.named('jar').get(), 'code-intent': codeIntentJar.get()].each { profile, archive ->
+            new java.util.jar.JarFile(archive.archiveFile.get().asFile).withCloseable { jarFile ->
+                def entries = Collections.list(jarFile.entries())*.name
+                def requireEntry = { String name ->
+                    if (!entries.contains(name)) throw new GradleException("${profile}: missing ${name}")
+                }
+                if (profile == 'observer') {
+                    if (entries.any { it.startsWith('com/arman/bank/sso/CodeIntent') && it.endsWith('.class') }) {
+                        throw new GradleException('observer: code-intent classes must not be packaged')
+                    }
+                    requireEntry('com/arman/bank/sso/acceptance/ObserverFixtureFactory.class')
+                    requireEntry('com/arman/bank/sso/acceptance/ObserverFixtureResource.class')
+                    ['VisibilityState', 'VisibilityLoginProtocol', 'VisibilityLoginProtocolFactory'].each {
+                        requireEntry("com/arman/bank/sso/fixture/${it}.class")
+                    }
+                } else {
+                    if (entries.any { it ==~ /com\/arman\/bank\/sso\/(acceptance\/ObserverFixture(Factory|Resource)|fixture\/Visibility(Resource(Factory)?|LoginProtocol(Factory)?|State))(\$.*)?\.class/ }) {
+                        throw new GradleException('code-intent: legacy control-plane classes must not be packaged')
+                    }
+                    ['CodeIntentFixtureResource', 'CodeIntentFixtureResourceFactory', 'CodeIntentFixtureActionFactory',
+                     'CodeIntentFixtureLoginProtocol', 'CodeIntentFixtureLoginProtocolFactory'].each {
+                        requireEntry("com/arman/bank/sso/${it}.class")
+                    }
+                }
+                // Class-file UTF-8 constants include symbolic references even when SPI is correct.
+                // Scan every retained fixture class so excluded control planes cannot be linked lazily.
+                entries.findAll { it.endsWith('.class') }.each { path ->
+                    def constants = jarFile.getInputStream(jarFile.getJarEntry(path)).withCloseable {
+                        new String(it.readAllBytes(), java.nio.charset.StandardCharsets.ISO_8859_1)
+                    }
+                    def forbidden = profile == 'observer' ? 'com/arman/bank/sso/CodeIntent' : 'com/arman/bank/sso/fixture/Visibility'
+                    if (constants.contains(forbidden)) {
+                        throw new GradleException("${profile}: ${path} references excluded fixture classes")
+                    }
+                }
+                def registrations = [:]
+                entries.findAll { it.startsWith('META-INF/services/') && !it.endsWith('/') }.each { path ->
+                    def providers = jarFile.getInputStream(jarFile.getJarEntry(path)).withCloseable {
+                        it.getText('UTF-8').readLines().collect { line -> line.replaceFirst(/#.*/, '').trim() }.findAll { it }
+                    }
+                    registrations[path] = providers
+                    providers.each { requireEntry(it.replace('.', '/') + '.class') }
+                }
+                def expectedRealm = profile == 'observer' ? 'com.arman.bank.sso.acceptance.ObserverFixtureFactory' : 'com.arman.bank.sso.CodeIntentFixtureResourceFactory'
+                if (!registrations[realmSpi]?.contains(expectedRealm)) throw new GradleException("${profile}: missing realm registration")
+                if (profile == 'observer' && (registrations[realmSpi].any {
+                    !(it in ['com.arman.bank.sso.acceptance.ObserverFixtureFactory', 'com.arman.bank.sso.fixture.VisibilityResourceFactory'])
+                } || registrations.containsKey(actionSpi) || (registrations.containsKey(protocolSpi) &&
+                    registrations[protocolSpi] != ['com.arman.bank.sso.fixture.VisibilityLoginProtocolFactory']))) {
+                    throw new GradleException('observer: unexpected SPI registration')
+                }
+                if (profile == 'code-intent' && (registrations[realmSpi] != [expectedRealm] ||
+                    registrations[actionSpi] != ['com.arman.bank.sso.CodeIntentFixtureActionFactory'] ||
+                    registrations[protocolSpi] != ['com.arman.bank.sso.CodeIntentFixtureLoginProtocolFactory'])) {
+                    throw new GradleException('code-intent: unexpected SPI registration')
+                }
+                def expectedScope = profile == 'observer' ? 'disposable-observer-acceptance-only' : 'disposable-code-intent-only'
+                if (jarFile.manifest.mainAttributes.getValue('ArMoney-Artifact-Scope') != expectedScope) {
+                    throw new GradleException("${profile}: invalid artifact scope")
+                }
+            }
+        }
+    }
+}
+tasks.named('check') { dependsOn(verifyFixtureJars) }

@@ -68,7 +68,7 @@ class VerificationProjectionRoutesSpec extends Specification {
         def malformed=request(runtime.port(),KEY,'{')
         then:
         1 * store.admit('auth') >> true
-        0 * store.commit(_, _)
+        0 * store.commit(_, _, _)
         malformed.statusCode()==400
         !malformed.body().contains(KEY)
         cleanup:
@@ -84,7 +84,7 @@ class VerificationProjectionRoutesSpec extends Specification {
         def response=request(runtime.port(),KEY,new ObjectMapper().writeValueAsString(body()))
         then:
         1 * store.admit('auth') >> true
-        1 * store.commit('auth',command) >> command.ack()
+        1 * store.commit('auth',command,{long start->long elapsed=System.nanoTime()-start;elapsed>=0&&elapsed<4_000_000_000L}) >> command.ack()
         response.statusCode()==200
         new ObjectMapper().readTree(response.body()).fieldNames().toList().sort()==
             ['identity_id','operation_id','payload_hash','phone_contact_version','verification_epoch','version']
@@ -93,7 +93,7 @@ class VerificationProjectionRoutesSpec extends Specification {
         def denied=request(runtime.port(),KEY,'{')
         then:
         1 * store.admit('auth') >> false
-        0 * store.commit(_, _)
+        0 * store.commit(_, _, _)
         denied.statusCode()==429
         denied.headers().firstValue('Retry-After').orElse('')=='60'
         cleanup:
@@ -119,7 +119,7 @@ class VerificationProjectionRoutesSpec extends Specification {
             boolean admit(String writer) {
                 admits.incrementAndGet()
                 entered.countDown()
-                if (!release.await(40,java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException('Synthetic barrier timed out')
+                if (!release.await(3500,java.util.concurrent.TimeUnit.MILLISECONDS)) throw new IllegalStateException('Synthetic barrier timed out')
                 return true
             }
             com.arman.bank.userservice.domain.VerificationProjection.Ack commit(String writer,
@@ -132,18 +132,19 @@ class VerificationProjectionRoutesSpec extends Specification {
         def routes=new VerificationProjectionRoutes(store,new VerificationProjectionConfiguration(true,[auth:KEY]))
         def runtime=ServiceRuntime.start('user-service',0,null,routes::configure)
         def executor=java.util.concurrent.Executors.newFixedThreadPool(16)
+        def client=HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()
         def json=new ObjectMapper().writeValueAsString(body())
         def pending=(1..16).collect {
             executor.submit({
                 def builder=HttpRequest.newBuilder(URI.create("http://localhost:${runtime.port()}"+VerificationProjectionRoutes.PATH))
-                    .timeout(java.time.Duration.ofSeconds(45)).header('Content-Type','application/json')
+                    .timeout(java.time.Duration.ofSeconds(5)).header('Content-Type','application/json')
                     .header('X-ArMoney-Verification-Projection-Key',KEY)
-                HttpClient.newHttpClient().send(builder.POST(HttpRequest.BodyPublishers.ofString(json)).build(),HttpResponse.BodyHandlers.ofString())
+                client.send(builder.POST(HttpRequest.BodyPublishers.ofString(json)).build(),HttpResponse.BodyHandlers.ofString())
             } as java.util.concurrent.Callable<HttpResponse<String>>)
         }
         when:
-        assert entered.await(15,java.util.concurrent.TimeUnit.SECONDS) : 'Expected sixteen admitted requests held by the synthetic barrier'
-        def denied=request(runtime.port(),KEY,json)
+        assert entered.await(2,java.util.concurrent.TimeUnit.SECONDS) : 'Expected sixteen admitted requests held within original body budget'
+        def denied=client.send(HttpRequest.newBuilder(URI.create("http://localhost:${runtime.port()}"+VerificationProjectionRoutes.PATH)).timeout(java.time.Duration.ofSeconds(1)).header('Content-Type','application/json').header('X-ArMoney-Verification-Projection-Key',KEY).POST(HttpRequest.BodyPublishers.ofString(json)).build(),HttpResponse.BodyHandlers.ofString())
         then:
         denied.statusCode()==429
         denied.headers().firstValue('Retry-After').orElse('')=='60'
@@ -151,7 +152,7 @@ class VerificationProjectionRoutesSpec extends Specification {
         commits.get()==0
         when:
         release.countDown()
-        def responses=pending.collect { it.get(15,java.util.concurrent.TimeUnit.SECONDS) }
+        def responses=pending.collect { it.get(5,java.util.concurrent.TimeUnit.SECONDS) }
         def recovered=request(runtime.port(),KEY,json)
         then:
         responses.every { it.statusCode()==200 }
@@ -161,6 +162,7 @@ class VerificationProjectionRoutesSpec extends Specification {
         cleanup:
         release?.countDown()
         executor?.shutdownNow()
+        client?.close()
         runtime?.close()
     }
 }

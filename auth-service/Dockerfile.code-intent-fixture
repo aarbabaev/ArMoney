@@ -1,0 +1,50 @@
+# DISPOSABLE TEST-JAVA COMPANION ONLY. Repository-root build context.
+# Compilation creates artifacts; it does not constitute executed acceptance tests.
+FROM gradle:8.14.3-jdk21@sha256:21bd311ed01360c189b8870c6b6e988199ff10f72d445d02fb39d3cff9da91d7 AS fixture-build
+USER root
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+WORKDIR /workspace
+COPY settings.gradle build.gradle gradlew ./
+COPY gradle/wrapper/ ./gradle/wrapper/
+COPY platform-runtime/build.gradle ./platform-runtime/
+COPY platform-runtime/src/ ./platform-runtime/src/
+COPY auth-service/build.gradle ./auth-service/
+COPY auth-service/src/ ./auth-service/src/
+COPY user-service/build.gradle ./user-service/
+COPY user-service/src/ ./user-service/src/
+COPY sms-sandbox/build.gradle ./sms-sandbox/
+COPY sms-sandbox/src/ ./sms-sandbox/src/
+COPY auth-service/Dockerfile.code-intent-fixture ./auth-service/
+RUN bash ./gradlew :auth-service:testClasses :auth-service:installDist :user-service:installDist :sms-sandbox:installDist --no-daemon --max-workers=1 \
+    && mkdir -p /fixture-provenance \
+    && find auth-service/build/classes/java/test auth-service/build/install/auth-service/lib -type f -print0 | sort -z | xargs -0 sha256sum > /fixture-provenance/artifacts.sha256 \
+    && find settings.gradle build.gradle gradlew gradle/wrapper platform-runtime/build.gradle platform-runtime/src auth-service/build.gradle auth-service/src auth-service/Dockerfile.code-intent-fixture user-service/build.gradle user-service/src sms-sandbox/build.gradle sms-sandbox/src -type f -print0 | sort -z | xargs -0 sha256sum > /fixture-provenance/source.sha256
+
+# Separate disposable service targets share compilation, never fixture test classes.
+FROM gradle:8.14.3-jdk21@sha256:21bd311ed01360c189b8870c6b6e988199ff10f72d445d02fb39d3cff9da91d7 AS fixture-user
+COPY --from=fixture-build --chown=gradle:gradle /workspace/user-service/build/install/user-service/ /opt/service/
+COPY --from=fixture-build --chown=gradle:gradle /fixture-provenance/source.sha256 /opt/fixture/provenance/source.sha256
+USER gradle
+WORKDIR /tmp
+LABEL com.armoney.artifact.scope="disposable-code-intent-user-only"
+ENTRYPOINT ["/opt/service/bin/user-service"]
+
+FROM gradle:8.14.3-jdk21@sha256:21bd311ed01360c189b8870c6b6e988199ff10f72d445d02fb39d3cff9da91d7 AS fixture-sms
+COPY --from=fixture-build --chown=gradle:gradle /workspace/sms-sandbox/build/install/sms-sandbox/ /opt/service/
+COPY --from=fixture-build --chown=gradle:gradle /fixture-provenance/source.sha256 /opt/fixture/provenance/source.sha256
+USER gradle
+WORKDIR /tmp
+LABEL com.armoney.artifact.scope="disposable-code-intent-sms-only"
+ENTRYPOINT ["/opt/service/bin/sms-sandbox"]
+
+# Keep the already pinned JDK image: the local SMTP test peer requires keytool.
+FROM gradle:8.14.3-jdk21@sha256:21bd311ed01360c189b8870c6b6e988199ff10f72d445d02fb39d3cff9da91d7 AS fixture-authority
+COPY --from=fixture-build --chown=gradle:gradle /workspace/auth-service/build/classes/java/test/ /opt/fixture/test-classes/
+COPY --from=fixture-build --chown=gradle:gradle /workspace/auth-service/build/install/auth-service/lib/ /opt/auth/lib/
+COPY --from=fixture-build --chown=gradle:gradle /fixture-provenance/ /opt/fixture/provenance/
+USER gradle
+WORKDIR /tmp
+LABEL org.opencontainers.image.title="ArMoney DISPOSABLE code-intent authority fixture - never deploy" \
+      com.armoney.artifact.scope="disposable-code-intent-authority-only"
+ENTRYPOINT ["java", "-Xms32m", "-Xmx256m", "-cp", "/opt/fixture/test-classes:/opt/auth/lib/*", "com.arman.bank.authservice.infrastructure.CodeIntentAuthorityFixture"]
+# No default CI/isolation flags, database configuration, credentials or host ports.

@@ -16,6 +16,8 @@ import java.util.concurrent.Flow;
 
 /** Existing sandbox transports only; no protocol/body logging or redirect following. */
 public final class VerificationDeliveryTransport implements VerificationDeliveryWorker.Sender {
+    /** Closed wire purposes; never infer migration delivery as registration. */
+    enum SmsPurpose { REGISTRATION_PHONE, LEGACY_MIGRATION_PHONE }
     @FunctionalInterface interface MailSender { Result send(String recipient, String subject, String text, String html) throws InterruptedException; }
     private static final ObjectMapper JSON = new ObjectMapper()
         .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
@@ -43,17 +45,27 @@ public final class VerificationDeliveryTransport implements VerificationDelivery
         if (closed || lease == null || payload == null || !payload.code().matches("[0-9]{6}")) return false;
         String text = "Your ArMoney registration verification code is " + payload.code() + ". It expires in 5 minutes. Do not share this code.";
         if (lease.purpose() == Purpose.REGISTRATION_EMAIL) {
-            if (!EmailConfiguration.validEmail(payload.destination())) return false;
             var email = VerificationEmail.render(payload.code());
-            return mail.send(payload.destination(), email.subject(), email.text(), email.html()) == Result.ACCEPTED;
+            return sendEmail(payload.destination(), email.subject(), email.text(), email.html());
         }
-        if (lease.purpose() != Purpose.REGISTRATION_PHONE || !VerificationService.canonicalPhone(payload.destination())) return false;
+        if (lease.purpose() != Purpose.REGISTRATION_PHONE) return false;
+        return sendSms(lease.deliveryId(), payload.destination(), text, SmsPurpose.REGISTRATION_PHONE);
+    }
+    /** Borrowed by migration delivery; SMTP acceptance is not possession or exactly-once proof. */
+    boolean sendEmail(String destination, String subject, String text, String html) throws InterruptedException {
+        if (closed || !EmailConfiguration.validEmail(destination) || subject == null || text == null) return false;
+        return mail.send(destination, subject, text, html) == Result.ACCEPTED;
+    }
+    /** No registration lease/version is required by this purpose-explicit transport port. */
+    boolean sendSms(UUID deliveryId, String destination, String text, SmsPurpose purpose) throws InterruptedException {
+        if (closed || deliveryId == null || purpose == null || !VerificationService.canonicalPhone(destination)
+                || text == null || text.isBlank() || text.length() > 2048) return false;
         CompletableFuture<HttpResponse<byte[]>> pending = null;
         byte[] requestBody = null, responseBody = null;
         try {
-            requestBody = JSON.writeValueAsBytes(Map.of("destination", payload.destination(), "text", text, "purpose", lease.purpose().name()));
+            requestBody = JSON.writeValueAsBytes(Map.of("destination", destination, "text", text, "purpose", purpose.name()));
             var request = HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(4))
-                .header("Authorization", "Bearer " + smsToken).header("Idempotency-Key", lease.deliveryId().toString())
+                .header("Authorization", "Bearer " + smsToken).header("Idempotency-Key", deliveryId.toString())
                 .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofByteArray(requestBody)).build();
             pending = client.sendAsync(request, info -> new BoundedBody());
             var response = pending.get(4, TimeUnit.SECONDS);

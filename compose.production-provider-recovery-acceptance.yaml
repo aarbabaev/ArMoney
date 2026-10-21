@@ -1,0 +1,108 @@
+# Disposable response-loss acceptance. Scoped runtime cases are verified, not deployment.
+# Explicit fresh owned DinD and the root recovery runner are required.
+# No published ports, host sockets, bind mounts, persistent volumes or default secrets.
+# Root injects the verified Caddy configuration into its private tmpfs after creation.
+x-process: &process
+  init: true
+  restart: "no"
+  pull_policy: never
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ["/tmp:rw,nosuid,nodev,mode=1777,size=256m"]
+  pids_limit: 256
+  networks: [production-acceptance]
+x-postgres: &postgres
+  <<: *process
+  image: ${PRODUCTION_ACCEPTANCE_POSTGRES_IMAGE:?Supply verified pinned disposable PostgreSQL}
+  tmpfs: ["/tmp:rw,nosuid,nodev,mode=1777,size=64m", "/var/run/postgresql:rw,nosuid,nodev,mode=1777,size=16m", "/var/lib/postgresql/data:rw,nosuid,nodev,size=512m"]
+  cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+  healthcheck:
+    test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+    interval: 2s
+    timeout: 3s
+    retries: 40
+services:
+  auth-db:
+    <<: *postgres
+    env_file: ["${PRODUCTION_ACCEPTANCE_AUTH_DB_ENV:?Supply private Auth database configuration}"]
+  user-db:
+    <<: *postgres
+    env_file: ["${PRODUCTION_ACCEPTANCE_USER_DB_ENV:?Supply private User database configuration}"]
+  sso-db:
+    <<: *postgres
+    env_file: ["${PRODUCTION_ACCEPTANCE_SSO_DB_ENV:?Supply private Keycloak database configuration}"]
+  sso-service:
+    <<: *process
+    image: ${PRODUCTION_ACCEPTANCE_SSO_IMAGE:?Supply verified production-only provider image}
+    command: [start, --optimized]
+    env_file: ["${PRODUCTION_ACCEPTANCE_SSO_ENV:?Supply private provider configuration}"]
+    environment:
+      JAVA_OPTS_KC_HEAP: -Xms64m -Xmx512m
+    tmpfs: ["/tmp:rw,nosuid,nodev,mode=1777,size=256m", "/opt/keycloak/data:rw,nosuid,nodev,uid=1000,gid=0,mode=0700,size=256m"]
+    pids_limit: 512
+    depends_on:
+      sso-db: {condition: service_healthy}
+  user-service:
+    <<: *process
+    image: ${PRODUCTION_ACCEPTANCE_USER_IMAGE:?Supply verified actual User Main image}
+    env_file: ["${PRODUCTION_ACCEPTANCE_USER_ENV:?Supply private User configuration}"]
+    environment: {JAVA_TOOL_OPTIONS: "-Xms32m -Xmx256m -Djava.security.properties=/opt/service/java-security.properties"}
+    depends_on:
+      user-db: {condition: service_healthy}
+  sms-sandbox:
+    <<: *process
+    image: ${PRODUCTION_ACCEPTANCE_SMS_IMAGE:?Supply verified actual local SMS image}
+    env_file: ["${PRODUCTION_ACCEPTANCE_SMS_ENV:?Supply private SMS configuration}"]
+    environment: {JAVA_TOOL_OPTIONS: "-Xms32m -Xmx128m -Djava.security.properties=/opt/service/java-security.properties", SMS_SANDBOX_DATA_DIR: /tmp/sms-inbox}
+  auth-backend:
+    <<: *process
+    image: ${PRODUCTION_ACCEPTANCE_AUTH_IMAGE:?Supply verified actual Auth Main image}
+    env_file: ["${PRODUCTION_ACCEPTANCE_AUTH_ENV:?Supply private Auth configuration}"]
+    environment: {JAVA_TOOL_OPTIONS: "-Xms32m -Xmx256m -Djava.security.properties=/opt/service/java-security.properties"}
+    depends_on:
+      auth-db: {condition: service_healthy}
+      user-service: {condition: service_started}
+  auth-service:
+    <<: *process
+    # Private peer only: the actual Auth Main is auth-backend, never this role.
+    image: ${PRODUCTION_ACCEPTANCE_PYTHON_IMAGE:?Supply verified disposable Python image}
+    user: "1000:1000"
+    mem_limit: 128m
+    cpus: 1
+    pids_limit: 64
+    tmpfs: ["/tmp:rw,nosuid,nodev,mode=1777,size=32m"]
+    entrypoint: [/bin/sh, -ec]
+    command: ['i=0; while [ ! -f /tmp/fault-peer.py ] || [ ! -f /tmp/fault-peer.json ]; do i=$$((i+1)); [ "$$i" -lt 120 ]; sleep 1; done; exec python -B /tmp/fault-peer.py /tmp/fault-peer.json']
+    depends_on:
+      auth-backend: {condition: service_started}
+  app-gateway:
+    <<: *process
+    image: ${PRODUCTION_ACCEPTANCE_GATEWAY_IMAGE:?Supply verified actual Gateway Main image}
+    env_file: ["${PRODUCTION_ACCEPTANCE_GATEWAY_ENV:?Supply private Gateway configuration}"]
+    environment: {JAVA_TOOL_OPTIONS: "-Xms32m -Xmx128m -Djava.security.properties=/opt/service/java-security.properties", AUTH_BASE_URL: "http://auth-backend:8080"}
+    depends_on:
+      auth-backend: {condition: service_started}
+  production-controller:
+    <<: *process
+    profiles: [acceptance-controller]
+    # Start explicitly only after real Main migrations/readiness and fresh-realm provisioning.
+    image: ${PRODUCTION_ACCEPTANCE_CONTROLLER_IMAGE:?Supply verified six-family disposable controller image}
+    env_file: ["${PRODUCTION_ACCEPTANCE_CONTROLLER_ENV:?Supply private isolated controller configuration}"]
+    tmpfs: ["/tmp:rw,nosuid,nodev,mode=1777,size=256m", "/home/gradle/.gradle:rw,nosuid,nodev,uid=1000,gid=1000,mode=0700,size=16m"]
+    depends_on:
+      auth-backend: {condition: service_started}
+      sms-sandbox: {condition: service_started}
+  acceptance-edge:
+    <<: *process
+    profiles: [acceptance-edge]
+    image: ${PRODUCTION_ACCEPTANCE_CADDY_IMAGE:?Supply verified pinned disposable Caddy image}
+    user: "1000:1000"
+    cap_add: [NET_BIND_SERVICE]
+    tmpfs: ["/tmp:rw,nosuid,nodev,mode=1777,size=64m", "/data:rw,nosuid,nodev,uid=1000,gid=1000,mode=0700,size=16m", "/config:rw,nosuid,nodev,uid=1000,gid=1000,mode=0700,size=16m"]
+    environment: {XDG_CONFIG_HOME: /tmp/config, XDG_DATA_HOME: /tmp/data}
+    entrypoint: [/bin/sh, -ec]
+    command: ['i=0; while [ ! -f /tmp/Caddyfile ]; do i=$$((i+1)); [ "$$i" -lt 120 ]; sleep 1; done; exec caddy run --config /tmp/Caddyfile --adapter caddyfile']
+networks:
+  production-acceptance:
+    internal: true

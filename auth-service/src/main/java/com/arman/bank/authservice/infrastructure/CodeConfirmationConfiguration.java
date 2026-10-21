@@ -21,17 +21,30 @@ public final class CodeConfirmationConfiguration {
         Objects.requireNonNull(environment);
         Objects.requireNonNull(localMaterials);
         enabled=flag(environment,"AUTH_SSO_CODE_INTENT_CONFIRMATION_ENABLED");
-        scopes=new CodeIntentPairScopes(value(environment,"ARMONEY_SSO_MANAGED_PAIRS"),value(environment,"ARMONEY_SSO_LEGACY_PAIRS"));
-        if(!enabled){stage=null;actor=confirmKey=lookupKey=statusKey=null;observerOrigin=null;proofRetentionKey=null;return;}
+        var globalScopes=new CodeIntentPairScopes(value(environment,"ARMONEY_SSO_MANAGED_PAIRS"),value(environment,"ARMONEY_SSO_LEGACY_PAIRS"));
+        if(!enabled){scopes=globalScopes;stage=null;actor=confirmKey=lookupKey=statusKey=null;observerOrigin=null;proofRetentionKey=null;return;}
         for(String name:List.of("AUTH_SSO_CODE_INTENT_STAGE_ENABLED","AUTH_VERIFICATION_AUTHORITY_BRIDGE_ENABLED",
             "AUTH_REGISTRATION_AUTHORITY_COMPLETION_ENABLED","AUTH_REGISTRATION_ELIGIBILITY_GRANTS_ENABLED","AUTH_VERIFICATION_PROJECTION_ENABLED"))if(!flag(environment,name))throw invalid();
         if(flag(environment,"AUTH_SSO_LOGIN_PROOF_ENABLED"))throw invalid();
-        if(scopes.managed().isEmpty())throw invalid();
+        if(globalScopes.managed().isEmpty())throw invalid();
         String issuer=required(environment,"SSO_ISSUER");
         var verificationClients=csv(required(environment,"SSO_VERIFICATION_CLIENT_IDS"));
         var tokenClients=Set.of("armoney-web","armoney-ios","armoney-android");
-        for(var pair:scopes.managed())if(!issuer.equals(pair.issuer())||!verificationClients.contains(pair.clientId())||!tokenClients.contains(pair.clientId()))throw invalid();
-        for(var pair:scopes.legacy())if(!issuer.equals(pair.issuer())||!tokenClients.contains(pair.clientId()))throw invalid();
+        for(var pair:globalScopes.managed())if(!issuer.equals(pair.issuer())||!verificationClients.contains(pair.clientId())||!tokenClients.contains(pair.clientId()))throw invalid();
+        String accountClient="armoney-migration-account";
+        if(verificationClients.contains(accountClient))throw invalid();
+        var nativeLegacy=new com.fasterxml.jackson.databind.ObjectMapper().createArrayNode();
+        for(var pair:globalScopes.legacy()){
+            if(!issuer.equals(pair.issuer()))throw invalid();
+            if(tokenClients.contains(pair.clientId()))nativeLegacy.addObject().put("issuer",pair.issuer()).put("client_id",pair.clientId());
+            else if(!accountClient.equals(pair.clientId())||!flag(environment,"AUTH_MIGRATION_BROWSER_ENABLED")
+                    ||!accountClient.equals(environment.get("AUTH_MIGRATION_LEGACY_CLIENT_ID"))
+                    ||environment.get("AUTH_MIGRATION_MANAGED_CLIENT_ID")==null
+                    ||!tokenClients.contains(environment.get("AUTH_MIGRATION_MANAGED_CLIENT_ID"))
+                    ||globalScopes.classify(issuer,environment.get("AUTH_MIGRATION_MANAGED_CLIENT_ID"))!=CodeIntentPairScopes.Classification.MANAGED)throw invalid();
+        }
+        // Global classification remains intact elsewhere. C2 routes/observation receive native banking pairs only.
+        scopes=new CodeIntentPairScopes(value(environment,"ARMONEY_SSO_MANAGED_PAIRS"),nativeLegacy.toString());
         if(!"/sso/realms/armoney".equals(URI.create(issuer).getRawPath()))throw invalid();
         try{observerOrigin=URI.create(required(environment,"SSO_ENROLLMENT_STATUS_ORIGIN"));HttpVerificationObservations.origin(observerOrigin,false);}
         catch(IllegalArgumentException bad){throw invalid();}
@@ -85,6 +98,8 @@ public final class CodeConfirmationConfiguration {
         var materials=new ArrayList<String>();
         for(var item:env.entrySet()){
             String name=item.getKey(),value=item.getValue();
+            // These two fixed same-issuer endpoints are routing metadata, not secret roles.
+            if(Set.of("AUTH_MIGRATION_LEGACY_TOKEN_ENDPOINT","AUTH_MIGRATION_MANAGED_TOKEN_ENDPOINT").contains(name))continue;
             if(value==null||value.isEmpty()||name.endsWith("_ID")||name.endsWith("_IDS"))continue;
             if(!(name.contains("KEY")||name.contains("SECRET")||name.contains("TOKEN")||name.contains("PASSWORD")))continue;
             if(name.endsWith("_PREVIOUS_KEYS")){

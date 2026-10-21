@@ -64,6 +64,7 @@ jobs:
           python3 -B scripts/test-affected-gradle.py
           python3 -B scripts/test-ci-workflow.py
           python3 -B scripts/test-local-ci-guards.py
+          python3 -B scripts/test-web-ci-guards.py
       - name: Validate metrics collector and disposable acceptance guards (offline)
         run: |
           python3 -B infra/observability/test_collector.py
@@ -126,7 +127,9 @@ jobs:
     # GitHub all_external_contributors approval policy is the external-run gate.
     if: always() && !cancelled() && github.actor == 'aarbabaev' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, armoney-local]
-    timeout-minutes: 60
+    # A cold full PostgreSQL suite took 79 minutes before Compose acceptance.
+    # Bound the complete job separately; retain every test and acceptance deadline.
+    timeout-minutes: 180
     steps:
       - name: Require valid component selection
         env:
@@ -158,12 +161,21 @@ jobs:
       - name: Compile, Spock, ArchUnit and PostgreSQL Testcontainers
         if: needs.impact.outputs.build == 'true'
         env:
+          # The preceding isolation step must pass before actual-process fixtures can run.
+          JAVA_TOOL_OPTIONS: -Dapi.version=1.44 -Darmoney.test.isolated.user.fixture=true
           AFFECTED_MODULES: ${{ needs.impact.outputs.modules }}
           NEED_BANK_IMAGES: ${{ needs.impact.outputs.bank_smoke == 'true' || needs.impact.outputs.sso == 'true' || needs.impact.outputs.sharding == 'true' || needs.impact.outputs.assistant_smoke == 'true' }}
         run: python3 -B scripts/run-affected-gradle.py
       - name: Check and package disabled Keycloak provider
         if: needs.impact.outputs.sso == 'true'
         run: bash sso-service/provider/package-provider.sh
+      - name: Check isolated registration fixture artifacts and offline helpers
+        if: needs.impact.outputs.sso == 'true'
+        run: |
+          bash ./gradlew --project-dir sso-service/provider/acceptance-fixture --no-daemon --console=plain --max-workers=1 check jar
+          python3 -B -m unittest discover -s sso-service/provider/acceptance-fixture -p test_provision_code_intent_realm.py
+          python3 -B -m unittest discover -s auth-service/src/test/fixtures -p test_build_code_intent_env.py
+          python3 -B scripts/test-sso-code-intent-native.py
       - name: Validate local baseline tool safety (offline)
         if: needs.impact.outputs.baseline == 'true'
         run: |
@@ -367,7 +379,7 @@ jobs:
             echo 'No web component exists at this revision.' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          docker run --rm --mount type=bind,source="$PWD/web",target=/app --workdir /app node:24.19.0-bookworm bash -euc 'npm ci; npm audit --audit-level=high; npm run build; npm test; npx playwright install --with-deps chromium; npm run e2e'
+          docker run --rm --mount type=bind,source="$PWD/web",target=/app --mount type=bind,source="$PWD/scripts/run-web-ci.sh",target=/opt/run-web-ci.sh,readonly --workdir /app node:24.19.0-bookworm bash /opt/run-web-ci.sh
       - name: Save web reports locally
         if: always() && needs.impact.outputs.web == 'true'
         run: bash scripts/archive-local-ci.sh web

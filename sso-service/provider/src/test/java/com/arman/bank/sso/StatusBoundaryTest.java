@@ -7,6 +7,31 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 final class StatusBoundaryTest {
+    @Test void enrollmentRejectionLogsAreClosedAndNeverChangeEmptyHttpDenials(){
+        var records=new java.util.ArrayList<java.util.logging.LogRecord>();
+        var logger=java.util.logging.Logger.getLogger(StatusResource.class.getName());
+        var handler=new java.util.logging.Handler(){
+            @Override public void publish(java.util.logging.LogRecord record){records.add(record);}
+            @Override public void flush(){}
+            @Override public void close(){}
+        };
+        logger.addHandler(handler);
+        try{
+            var resource=new StatusResource(null,()->KEY,()->KEY,()->true);
+            assertEmpty(new StatusResource(null,()->"UNTRUSTED_PRIVATE_KEY").enrollment(KEY,null),503);
+            assertEmpty(resource.enrollment("UNTRUSTED_PRIVATE_AUTH",new byte[12289]),401);
+            assertEmpty(resource.enrollment(KEY,json("{UNTRUSTED_PRIVATE_BODY}")),400);
+            assertEmpty(resource.enrollment(KEY,json("{\"issuer\":\"https://issuer.example/realms/armoney\",\"subject\":\"UNTRUSTED_PRIVATE_SUBJECT\",\"client_id\":\"armoney-ios\",\"provider_root_session_id\":\"root\",\"provider_tab_id\":\"tab\",\"authentication_session_id\":\""+"A".repeat(43)+"\"}")),503);
+            assertEquals(List.of("STATUS_KEY_CONFIGURATION","STATUS_AUTHENTICATION","REQUEST_SCHEMA","OBSERVATION_UNAVAILABLE"),records.stream().map(java.util.logging.LogRecord::getMessage).toList());
+            for(var record:records){
+                assertDoesNotThrow(()->StatusResource.EnrollmentRejection.valueOf(record.getMessage()));
+                assertNull(record.getThrown());
+                assertTrue(record.getParameters()==null||record.getParameters().length==0);
+                assertFalse(record.getMessage().contains("UNTRUSTED"));
+                assertFalse(record.getMessage().contains(KEY));
+            }
+        }finally{logger.removeHandler(handler);}
+    }
     @Test void packagedResourceMeetsPinnedKeycloakDiscoveryPrerequisites() throws Exception {
         // Keycloak's custom REST SPI requires an empty archive marker and @Provider.
         // Quarkus 3.33.3.2 excludes archives declaring discovery-mode="none".

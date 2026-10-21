@@ -66,6 +66,39 @@ def valid_selection():
     return dict({flag:'false' for flag in FLAGS}, modules='[]')
 
 
+def web_helper_consumer(body, helper=None):
+    """Resolve only the fixed, read-only mounted helper actually invoked by Docker."""
+    mount = 'type=bind,source=$PWD/scripts/run-web-ci.sh,target=/opt/run-web-ci.sh,readonly'
+    commands = [shlex.split(line) for line in body.splitlines()
+                if line.strip().startswith('docker run ')]
+    if len(commands) != 1:
+        return False
+    command = commands[0]
+    if (command[:3] != ['docker', 'run', '--rm'] or
+            command[-2:] != ['bash', '/opt/run-web-ci.sh'] or
+            sum(command[index:index + 2] == ['--mount', mount]
+                for index in range(len(command) - 1)) != 1):
+        return False
+    if helper is None:
+        path = ROOT / 'scripts/run-web-ci.sh'
+        if not path.is_file() or path.is_symlink():
+            return False
+        helper = path.read_text(encoding='utf-8')
+    expected = [
+        ['INSTALL', 'timeout', '--signal=TERM', '--kill-after=10s', '600s',
+         'npm', 'ci', '--no-audit', '--loglevel=http'],
+        ['AUDIT', 'npm', 'audit', '--audit-level=high'],
+        ['BUILD', 'npm', 'run', 'build'], ['UNIT', 'npm', 'test'],
+        ['BROWSER_INSTALL', 'npx', 'playwright', 'install', '--with-deps', 'chromium'],
+        ['E2E', 'npm', 'run', 'e2e'],
+    ]
+    actual = [shlex.split(line)[1:] for line in helper.splitlines()
+              if line.startswith('run_stage ')]
+    return (actual == expected and '\nset -euo pipefail\n' in helper and
+            '\nrun_stage() {\n' in helper and
+            re.search(r'^  "\$@"$', helper, re.M) is not None)
+
+
 class WorkflowGuards(unittest.TestCase):
     def setUp(self):
         self.jobs = jobs()
@@ -133,6 +166,23 @@ class WorkflowGuards(unittest.TestCase):
                 process=self.shell(body,{'IMPACT_RESULT':'success','SELECTION':json.dumps(value)})
                 self.assertEqual(process.returncode,0,(name,process.stderr))
 
+    def test_actual_main_fixture_opt_in_is_scoped_after_successful_isolation(self):
+        selected = steps(self.jobs['build'])
+        guard_index = next(i for i, (_, step) in enumerate(selected)
+                           if re.search(r'^        run:', step, re.M) and 'bash scripts/check-local-ci.sh' in run_body(step))
+        gradle_index = next(i for i, (_, step) in enumerate(selected)
+                            if re.search(r'^        run:', step, re.M) and 'scripts/run-affected-gradle.py' in run_body(step))
+        guard, gradle = selected[guard_index][1], selected[gradle_index][1]
+        self.assertLess(guard_index, gradle_index)
+        self.assertIn("if: needs.impact.outputs.build == 'true'", guard)
+        self.assertIn("if: needs.impact.outputs.build == 'true'", gradle)
+        self.assertNotIn('continue-on-error:', guard)
+        self.assertNotIn('always()', gradle)
+        marker = '-Darmoney.test.isolated.user.fixture=true'
+        self.assertIn('JAVA_TOOL_OPTIONS: -Dapi.version=1.44 ' + marker, gradle)
+        self.assertEqual(WORKFLOW.read_text(encoding='utf-8').count(marker), 1)
+        self.assertNotIn(marker, guard)
+
     def test_every_selected_flag_has_executable_consumer_not_only_summary(self):
         consumers = {}
         for name in JOBS:
@@ -153,7 +203,35 @@ class WorkflowGuards(unittest.TestCase):
                     'assistant_smoke':'scripts/assistant-smoke.py','sharding':'scripts/users-sharding-smoke.py',
                     'replication':'scripts/ledger-replication-smoke.py','sso':'scripts/sso-smoke.py'}
         for flag, command in expected.items():
-            self.assertTrue(any(command in body for _,body in consumers[flag]),(flag,command))
+            if flag == 'web':
+                self.assertTrue(any(name == 'web' and web_helper_consumer(body)
+                                    for name, body in consumers[flag]), (flag, command))
+            else:
+                self.assertTrue(any(command in body for _,body in consumers[flag]),(flag,command))
+
+    def test_web_helper_requires_readonly_mount_invocation_and_all_mandatory_commands(self):
+        step = next(step for name, step in steps(self.jobs['web'])
+                    if name == 'name: Affected web build, unit and browser fixture checks')
+        body = run_body(step)
+        helper = (ROOT / 'scripts/run-web-ci.sh').read_text(encoding='utf-8')
+        self.assertTrue(web_helper_consumer(body, helper))
+        for changed in (
+                body.replace(',readonly', ''),
+                body.replace('source="$PWD/scripts/run-web-ci.sh"', 'source="$PWD/scripts/other.sh"'),
+                body.replace('bash /opt/run-web-ci.sh', 'echo /opt/run-web-ci.sh'),
+                body.replace('bash /opt/run-web-ci.sh', 'bash /opt/other.sh'),
+                body.replace('docker run', '# docker run')):
+            with self.subTest(body=changed):
+                self.assertFalse(web_helper_consumer(changed, helper))
+        for command in ('run_stage E2E npm run e2e',
+                        'run_stage AUDIT npm audit --audit-level=high'):
+            for changed in (helper.replace(command, '# ' + command),
+                            helper.replace(command, command.replace('npm', 'echo', 1))):
+                with self.subTest(command=command):
+                    self.assertFalse(web_helper_consumer(body, changed))
+        with patch.object(Path, 'is_file', return_value=False):
+            self.assertFalse(web_helper_consumer(body))
+        self.assertFalse(web_helper_consumer(body, helper.replace('  "$@"', '  :')))
 
     def test_inline_manual_full_selection_executes_without_base(self):
         step = next(step for name,step in steps(self.jobs['impact'])

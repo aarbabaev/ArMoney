@@ -35,10 +35,25 @@ public final class AuthRoutes {
     }
 
     public void configure(JavalinConfig config) {
+        configure(config, java.util.List.of());
+    }
+
+    /** Server-selected purpose handlers authenticate themselves; never infer selection from headers. */
+    public void configure(JavalinConfig config, java.util.List<com.arman.bank.runtime.InternalHttp.DedicatedRoute> selected) {
+        if (selected == null) throw new IllegalArgumentException("Dedicated routes required");
+        var routes = java.util.List.copyOf(selected);
+        var allowed = java.util.Set.of(
+            new com.arman.bank.runtime.InternalHttp.DedicatedRoute("POST", LegacyMigrationFinalizationRoutes.PREFIX + "decision"),
+            new com.arman.bank.runtime.InternalHttp.DedicatedRoute("POST", LegacyMigrationFinalizationRoutes.PREFIX + "publication-evidence"),
+            new com.arman.bank.runtime.InternalHttp.DedicatedRoute("POST", MigrationUserMutationRoutes.PATH));
+        if (new java.util.HashSet<>(routes).size() != routes.size() || !allowed.containsAll(routes))
+            throw new IllegalArgumentException("Unrecognized dedicated route");
         config.http.maxRequestSize = 12288;
         config.routes.before(ctx -> {
             if (ctx.path().startsWith("/v1/")) {
                 ctx.header("Cache-Control", "no-store");
+                if (routes.stream().anyMatch(route -> route.method().equals(ctx.req().getMethod())
+                    && route.path().equals(ctx.req().getRequestURI()))) return;
                 var supplied = ctx.header("X-Service-Key");
                 if (supplied == null || supplied.length() > 256 ||
                         !MessageDigest.isEqual(serviceKey, supplied.getBytes(StandardCharsets.UTF_8)))
@@ -86,13 +101,13 @@ public final class AuthRoutes {
             var body = credentials(ctx, false);
             var session = service.login(body.get("email").asText(), body.get("password").asText());
             respond(ctx, 200, Map.of("access_token", session.accessToken(), "token_type", "Bearer",
-                    "expires_in", 1800, "expires_at", session.expiresAt().toString()));
+                    "expires_in", service.expiresIn(session), "expires_at", session.expiresAt().toString()));
         }));
         config.routes.post("/v1/auth/sso", ctx -> {
             var body = com.arman.bank.runtime.InternalHttp.body(ctx, "access_token");
             var session = service.sso(body.get("access_token").textValue(), sso);
             respond(ctx, 200, Map.of("access_token", session.accessToken(), "token_type", "Bearer",
-                    "expires_in", 1800, "expires_at", session.expiresAt().toString()));
+                    "expires_in", service.expiresIn(session), "expires_at", session.expiresAt().toString()));
         });
         config.routes.get("/v1/auth/me", ctx -> {
             var identity = service.me(ctx.header("Authorization"));

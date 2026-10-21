@@ -20,8 +20,10 @@ public final class PostgresBankingEligibilityStore implements BankingEligibility
         private AuthorizedFlow {tupleDigest=tupleDigest.clone();}
     }
     private final DSLContext sql;
-    public PostgresBankingEligibilityStore(DSLContext sql) {
-        this.sql=Objects.requireNonNull(sql);
+    private final LegacyMigrationManagedProofCrypto migrationCrypto;
+    public PostgresBankingEligibilityStore(DSLContext sql) { this(sql,null); }
+    public PostgresBankingEligibilityStore(DSLContext sql,LegacyMigrationManagedProofCrypto migrationCrypto) {
+        this.sql=Objects.requireNonNull(sql);this.migrationCrypto=migrationCrypto;
         PostgresVerificationProjectionStore.requireLocked(sql);
     }
     private record Current(Record enrollment, Record authority, Record email, Record phone,
@@ -152,13 +154,42 @@ public final class PostgresBankingEligibilityStore implements BankingEligibility
         if(!result.completeFor(binding,checked))fail(Verification.Error.UNAVAILABLE);
         return result;
     }
+    /** Migration may consume ONLY authenticated post-token twelve-field observations.
+     * The legacy eight-field LoginProof port cannot create migration evidence. */
+    com.arman.bank.authservice.domain.LoginProof.CurrentEvidence requireMigrationForProof(
+            com.arman.bank.authservice.domain.LoginProof.Binding binding,
+            com.arman.bank.authservice.domain.CodeConfirmation.Facts facts,Instant admittedAt){throw new Verification.Failure(Verification.Error.UNAVAILABLE);}
+    com.arman.bank.authservice.domain.LoginProof.CurrentEvidence requireMigrationForProof(
+            com.arman.bank.authservice.domain.LoginProof.Binding binding,
+            com.arman.bank.authservice.domain.CodeConfirmation.Facts facts,Instant admittedAt,SourceEligibilitySql.UserObservation liveUser){
+        if(liveUser==null)throw new Verification.Failure(Verification.Error.UNAVAILABLE);liveUser.require(sql,true,migrationCrypto);
+        PostgresVerificationProjectionStore.requireLocked(sql);
+        Instant checked=now();
+        Instant deadline=com.arman.bank.authservice.domain.CodeConfirmation.deadline(binding,facts,admittedAt,checked);
+        var current=SourceEligibilitySql.requireCurrent(sql,binding.issuer(),binding.subject(),migrationCrypto);
+        var a=current.authority();
+        if(!facts.enabled()||!facts.userSessionActive()||!facts.clientSessionActive()
+            ||!Objects.equals(facts.username(),a.get("canonical_phone"))||!Objects.equals(facts.email(),a.get("canonical_email"))||!Objects.equals(facts.phone(),a.get("canonical_phone")))fail(Verification.Error.CONFLICT);
+        var grant=new BankingEligibility.MigrationGrant(a.get("identity_id",UUID.class),a.get("decision_id",UUID.class),
+            a.get("classification_generation",Long.class),a.get("verification_epoch",Long.class),a.get("source_revision",Long.class),
+            a.get("email_receipt_id",UUID.class),a.get("phone_receipt_id",UUID.class),a.get("email_receipt_generation",Long.class),a.get("phone_receipt_generation",Long.class),a.get("verified_contact_generation",Long.class),deadline,HexFormat.of().formatHex(current.stamp()));
+        var result=new com.arman.bank.authservice.domain.LoginProof.CurrentEvidence(binding,null,grant,a.get("canonical_email",String.class),admittedAt,deadline);
+        com.arman.bank.authservice.domain.CodeConfirmation.fresh(admittedAt,deadline,now());
+        if(!result.completeFor(binding,now()))fail(Verification.Error.UNAVAILABLE);
+        return result;
+    }
     /** Caller-owned confirmation preflight/final check. Uses persisted local contacts only;
      * this validates no provider flags and creates no positive observation or authority. */
     Instant requireLocalForConfirmation(com.arman.bank.authservice.domain.LoginProof.Binding binding){
+        return requireCurrentLocalRegistration(binding.issuer(),binding.subject());
+    }
+    /** Same local predicate before a native user-session binding exists. No provider facts,
+     * grant creation, transaction ownership or public readiness authority is introduced. */
+    Instant requireCurrentLocalRegistration(String issuer,String subject){
         PostgresVerificationProjectionStore.requireLocked(sql);
-        var enrollment=sql.fetchOne("select id,email,phone from verification_enrollments where issuer=? and subject=?",binding.issuer(),binding.subject());
+        var enrollment=sql.fetchOne("select id,email,phone from verification_enrollments where issuer=? and subject=?",issuer,subject);
         if(enrollment==null)fail(Verification.Error.CONFLICT);
-        Current current=currentLocal(enrollment.get("id",UUID.class),binding.issuer(),binding.subject(),
+        Current current=currentLocal(enrollment.get("id",UUID.class),issuer,subject,
             enrollment.get("email",String.class),enrollment.get("phone",String.class));
         var grant=sql.fetchOne("select * from banking_eligibility_grants where identity_id=? and verification_epoch=?",current.identity(),current.projection().verificationEpoch());
         if(grant==null||!matches(grant,current))fail(Verification.Error.CONFLICT);
@@ -166,6 +197,60 @@ public final class PostgresBankingEligibilityStore implements BankingEligibility
         Instant deadline=Collections.min(List.of(current.deadline(),time(grant,"expires_at")));
         if(!checked.isBefore(deadline))fail(Verification.Error.UNAVAILABLE);
         return deadline;
+    }
+    /** Dedicated managed consumer only; caller already owns V/projection/proof controls.
+     * Provider flags are deliberately not consulted so a fresh negative can be committed. */
+    record ManagedLocal(UUID identity,UUID enrollment,long epoch,Integer emailVersion,Integer phoneVersion,Integer projectionRevision,
+                        String email,String phone,Instant deadline,long authorityRevision,Instant enrollmentDeadline,byte[] stamp,SourceEligibilitySql.Current migration) {
+        ManagedLocal(UUID identity,UUID enrollment,long epoch,Integer emailVersion,Integer phoneVersion,Integer projectionRevision,String email,String phone,Instant deadline,long authorityRevision,Instant enrollmentDeadline,byte[] stamp){this(identity,enrollment,epoch,emailVersion,phoneVersion,projectionRevision,email,phone,deadline,authorityRevision,enrollmentDeadline,stamp,null);}
+        boolean isMigration(){return migration!=null;}
+        ManagedLocal { stamp=stamp.clone(); }
+        @Override public byte[] stamp(){return stamp.clone();}
+        @Override public String toString(){return "ManagedLocal[redacted]";}
+    }
+    ManagedLocal requireManagedLocal(String issuer,String subject){
+        if(sql.fetchOne("select identity_id from migration_banking_authority_current where issuer=? and subject=?",issuer,subject)!=null){
+            var source=SourceEligibilitySql.requireCurrent(sql,issuer,subject,migrationCrypto);var a=source.authority();
+            // Finite operation view only. No durable migration grant expiry is fabricated or renewed.
+            Instant limit=now().plusSeconds(120);
+            return new ManagedLocal(a.get("identity_id",UUID.class),null,a.get("verification_epoch",Long.class),null,null,null,a.get("canonical_email",String.class),a.get("canonical_phone",String.class),limit,a.get("source_revision",Long.class),null,source.stamp(),source);
+        }
+        var enrollment=sql.fetchOne("select id,email,phone from verification_enrollments where issuer=? and subject=?",issuer,subject);
+        if(enrollment==null)fail(Verification.Error.CONFLICT);
+        Current current=currentLocal(enrollment.get("id",UUID.class),issuer,subject,enrollment.get("email",String.class),enrollment.get("phone",String.class));
+        var grant=sql.fetchOne("select * from banking_eligibility_grants where identity_id=? and verification_epoch=?",current.identity(),current.projection().verificationEpoch());
+        if(grant==null||!matches(grant,current))fail(Verification.Error.CONFLICT);
+        Instant deadline=Collections.min(List.of(current.deadline(),time(grant,"expires_at")));
+        if(!now().isBefore(deadline))fail(Verification.Error.UNAVAILABLE);
+        var a=current.authority();
+        byte[] stamp=IdentityVerification.hash("armoney-managed-banking-authority-v1",current.identity().toString(),
+            a.get("enrollment_id").toString(),a.get("state").toString(),a.get("verification_epoch").toString(),a.get("revision").toString(),
+            Objects.toString(a.get("email_candidate_id"),""),Objects.toString(a.get("phone_candidate_id"),""),
+            Objects.toString(a.get("projection_operation_id"),""),a.get("projection_revision").toString(),
+            Objects.toString(a.get("projection_command_id"),""),time(a,"expires_at").toString(),time(current.enrollment(),"expires_at").toString());
+        return new ManagedLocal(current.identity(),a.get("enrollment_id",UUID.class),current.projection().verificationEpoch(),
+            current.email().get("version",Integer.class),current.phone().get("version",Integer.class),current.projection().version(),
+            current.email().get("canonical_value",String.class),current.phone().get("canonical_value",String.class),deadline,a.get("revision",Long.class),time(current.enrollment(),"expires_at"),stamp);
+    }
+    void requireManagedOwnSuspension(ManagedLocal original,String issuer,String subject){
+        PostgresVerificationProjectionStore.requireLocked(sql);
+        if(original.isMigration()){SourceEligibilitySql.requireOwnSuspension(sql,original.migration());if(!now().isBefore(original.deadline()))fail(Verification.Error.UNAVAILABLE);return;}
+        var a=sql.fetchOne("select * from verification_authorities where enrollment_id=?",original.enrollment());
+        var e=sql.fetchOne("select expires_at from verification_enrollments where id=?",original.enrollment());
+        if(a==null||e==null||!"SUSPENDED".equals(a.get("state"))
+                ||a.get("verification_epoch",Long.class)!=Math.addExact(original.epoch(),1)
+                ||a.get("revision",Long.class)!=Math.addExact(original.authorityRevision(),1)
+                ||!original.identity().equals(a.get("mapped_identity_id",UUID.class))
+                ||!original.identity().equals(a.get("pending_identity_id",UUID.class)))fail(Verification.Error.CONFLICT);
+        byte[] prior=IdentityVerification.hash("armoney-managed-banking-authority-v1",original.identity().toString(),
+            a.get("enrollment_id").toString(),"PROJECTED",Long.toString(original.epoch()),Long.toString(original.authorityRevision()),
+            Objects.toString(a.get("email_candidate_id"),""),Objects.toString(a.get("phone_candidate_id"),""),
+            Objects.toString(a.get("projection_operation_id"),""),a.get("projection_revision").toString(),
+            Objects.toString(a.get("projection_command_id"),""),time(a,"expires_at").toString(),time(e,"expires_at").toString());
+        if(!MessageDigest.isEqual(prior,original.stamp())
+                ||sql.fetchOne("select identity_id from managed_registration_principals where identity_id=? and enrollment_id=?",original.identity(),original.enrollment())==null
+                ||sql.fetchOne("select identity_id from external_identities where issuer=? and subject=? and identity_id=?",issuer,subject,original.identity())==null)fail(Verification.Error.CONFLICT);
+        if(!now().isBefore(original.deadline()))fail(Verification.Error.UNAVAILABLE);
     }
     private Current currentLocal(UUID enrollment,String issuer,String subject,String emailValue,String phoneValue) {
         var e=sql.fetchOne("select * from verification_enrollments where id=? for update",enrollment);

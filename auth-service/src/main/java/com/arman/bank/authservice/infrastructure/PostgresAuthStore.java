@@ -27,7 +27,9 @@ public final class PostgresAuthStore implements AuthStore {
         }
     }
     private void requireBankingAccess(org.jooq.DSLContext sql, UUID identityId) {
-        if (sql.fetchOne("select identity_id from managed_registration_principals where identity_id=?", identityId) != null)
+        PostgresLegacyMigrationStore.lockOwner(sql,identityId);
+        PostgresLegacyMigrationStore.requireNoPending(sql,identityId);
+        if (sql.fetchOne("select identity_id from managed_registration_principals where identity_id=? union all select identity_id from managed_identity_sources where identity_id=? limit 1", identityId, identityId) != null)
             throw new AuthFailure(AuthFailure.Kind.UNAUTHORIZED);
         if (eligibilityEnforced && sql.fetchOne("select enrollment_id from verification_authorities where mapped_identity_id=? or pending_identity_id=?", identityId, identityId) != null)
             throw new AuthFailure(AuthFailure.Kind.UNAUTHORIZED);
@@ -58,16 +60,18 @@ public final class PostgresAuthStore implements AuthStore {
             if (reserved == null) {
                 // A concurrent exchange of this same subject may have committed the claim.
                 var winner = external(sql, issuer, subject);
-                if (winner != null) return refreshContact(sql, matchingPhone(winner, phone), principal);
+                if (winner != null) { requireBankingAccess(sql,winner.id()); return refreshContact(sql, matchingPhone(winner, phone), principal); }
                 throw new AuthFailure(AuthFailure.Kind.CONFLICT);
             }
             var inserted = sql.fetchOne("""
                 insert into external_identities(issuer, subject, identity_id) values (?, ?, ?)
                 on conflict (issuer, subject) do nothing returning identity_id
                 """, issuer, subject, candidate);
-            if (inserted != null) return refreshContact(sql, new Identity(candidate, null, phone), principal);
+            if (inserted != null) { requireBankingAccess(sql,candidate); return refreshContact(sql, new Identity(candidate, null, phone), principal); }
             sql.execute("delete from identities where id = ?", candidate);
-            return refreshContact(sql, matchingPhone(external(sql, issuer, subject), phone), principal);
+            var winner=matchingPhone(external(sql,issuer,subject),phone);
+            requireBankingAccess(sql,winner.id());
+            return refreshContact(sql,winner,principal);
         });
     }
 
@@ -114,6 +118,8 @@ public final class PostgresAuthStore implements AuthStore {
             lockEligibility(sql);
             var retry = sql.fetchOne("select id,email,registration_phone from identities where email=?", identity.email());
             if (retry != null) {
+                PostgresLegacyMigrationStore.lockOwner(sql,retry.get("id",UUID.class));
+                PostgresLegacyMigrationStore.requireNoPending(sql,retry.get("id",UUID.class));
                 if (identity.registrationPhone().equals(retry.get("registration_phone", String.class))) return identity(retry);
                 throw new AuthFailure(AuthFailure.Kind.CONFLICT);
             }
@@ -124,24 +130,26 @@ public final class PostgresAuthStore implements AuthStore {
                 insert into identities(id, email, password_hash, registration_phone) values (?, ?, ?, ?)
                 on conflict do nothing returning id, email, registration_phone
                 """, identity.id(), identity.email(), passwordHash, identity.registrationPhone());
-            if (inserted != null) return identity(inserted);
+            if (inserted != null) { PostgresLegacyMigrationStore.lockOwner(sql,inserted.get("id",UUID.class)); return identity(inserted); }
             var existing = sql.fetchOne("select id, email, registration_phone from identities where email = ?", identity.email());
-            if (existing != null && identity.registrationPhone().equals(existing.get("registration_phone", String.class)))
+            if (existing != null && identity.registrationPhone().equals(existing.get("registration_phone", String.class))) {
+                PostgresLegacyMigrationStore.lockOwner(sql,existing.get("id",UUID.class));
+                PostgresLegacyMigrationStore.requireNoPending(sql,existing.get("id",UUID.class));
                 return identity(existing);
+            }
             throw new AuthFailure(AuthFailure.Kind.CONFLICT);
         });
     }
 
-    @Override public Optional<Credentials> findByEmail(String email) {
-        return database.transaction(sql -> {
-            var row = sql.fetchOne("select id, email, password_hash, registration_phone from identities where email = ?", email);
+    @Override public Optional<Credentials> findByEmail(String email){return database.transaction(sql->findByEmail(sql,email));}
+    static Optional<Credentials> findByEmail(org.jooq.DSLContext sql,String email){
+            var row = sql.fetchOne("select i.id,i.email,i.password_hash,i.registration_phone,g.credential_generation,g.owner_generation from identities i join legacy_auth_generations g on g.identity_id=i.id where i.email = ?", email);
             return row == null ? Optional.empty() : Optional.of(new Credentials(
-                identity(row), row.get("password_hash", String.class)));
-        });
+                identity(row), row.get("password_hash", String.class),row.get("credential_generation",Long.class),row.get("owner_generation",Long.class)));
     }
 
-    @Override public boolean allowAttempt(String subjectHash, Instant now) {
-        return database.transaction(sql -> {
+    @Override public boolean allowAttempt(String subjectHash,Instant now){return database.transaction(sql->allowAttempt(sql,subjectHash,now));}
+    static boolean allowAttempt(org.jooq.DSLContext sql,String subjectHash,Instant now){
             var cutoff = time(now.minusSeconds(900));
             sql.execute("delete from auth_attempts where window_start <= cast(? as timestamptz)", cutoff);
             var row = sql.fetchOne("""
@@ -150,7 +158,6 @@ public final class PostgresAuthStore implements AuthStore {
                 returning attempts
                 """, subjectHash, time(now));
             return row.get("attempts", Integer.class) <= 10;
-        });
     }
 
     @Override public void saveSession(String tokenHash, UUID identityId, Instant now, Instant expiresAt) {
@@ -167,16 +174,41 @@ public final class PostgresAuthStore implements AuthStore {
         return database.transaction(sql -> {
             lockEligibility(sql);
             var row = sql.fetchOne("""
-                select i.id, i.email, i.registration_phone from identities i join sessions s on s.identity_id = i.id
+                select i.id, i.email, i.registration_phone, s.created_at as session_created, s.expires_at as session_expiry from identities i join sessions s on s.identity_id = i.id
                 where s.token_hash = ? and s.expires_at > cast(? as timestamptz)
                 """, tokenHash, time(now));
             if (row == null) return Optional.empty();
-            requireBankingAccess(sql, row.get("id", UUID.class));
+            UUID owner=row.get("id",UUID.class);
+            PostgresLegacyMigrationStore.lockOwner(sql,owner);
+            var live=sql.fetchOne("select created_at,expires_at from sessions where token_hash=? and identity_id=? for update",tokenHash,owner);
+            if(live==null||!live.get("expires_at",OffsetDateTime.class).toInstant().isAfter(now))return Optional.empty();
+            if(PostgresLegacyMigrationStore.pending(sql,owner)!=null)
+                PostgresLegacyMigrationStore.requireContinuity(sql,owner,tokenHash,live.get("created_at",OffsetDateTime.class).toInstant(),live.get("expires_at",OffsetDateTime.class).toInstant(),eligibilityEnforced);
+            else {
+                // Existing live sessions survive authority staging until atomic FINAL.
+                // Permanent managed classification still forbids historical bank sessions;
+                // requireBankingAccess remains the stricter gate for every new admission.
+                if (sql.fetchOne("select identity_id from managed_registration_principals where identity_id=? union all select identity_id from managed_identity_sources where identity_id=? limit 1", owner, owner) != null)
+                    throw new AuthFailure(AuthFailure.Kind.UNAUTHORIZED);
+            }
             return Optional.of(identity(row));
         });
     }
 
     @Override public void revoke(String tokenHash) {
-        database.transaction(sql -> { lockEligibility(sql); return sql.execute("delete from sessions where token_hash = ?", tokenHash); });
+        database.transaction(sql -> {
+            lockEligibility(sql);
+            var session=sql.fetchOne("select identity_id from sessions where token_hash=?",tokenHash);
+            if(session!=null)PostgresLegacyMigrationStore.lockOwner(sql,session.get("identity_id",UUID.class));
+            return sql.execute("delete from sessions where token_hash = ?", tokenHash);
+        });
+    }
+    @Override public void revokeOwnerSessions(UUID identityId){
+        database.transaction(sql->{
+            lockEligibility(sql);PostgresLegacyMigrationStore.lockOwner(sql,identityId);
+            // SQL checked bigint overflow aborts the whole security-generation/revocation transaction.
+            sql.execute("update legacy_auth_generations set owner_generation=owner_generation+1 where identity_id=?",identityId);
+            return sql.execute("delete from sessions where identity_id=?",identityId);
+        });
     }
 }

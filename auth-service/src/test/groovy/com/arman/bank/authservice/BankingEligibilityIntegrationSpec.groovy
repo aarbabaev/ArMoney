@@ -49,7 +49,7 @@ class BankingEligibilityIntegrationSpec extends Specification {
         where:
         state << ['PENDING_CONTACTS','PROJECTION_PENDING','PROJECTED','SUSPENDED','BLOCKED_MIGRATION']
     }
-    def 'on denies every associated state before profile or session creation and rejects old sessions'() {
+    def 'on denies new admission for every associated state while preserving stored sessions'() {
         given:
         def old = new AuthService(new PostgresAuthStore(database),new Argon2Passwords(),Clock.fixed(now,ZoneOffset.UTC),Stub(RegistrationProfiles)).login('fixture@example.test',password)
         associate(state)
@@ -63,9 +63,9 @@ class BankingEligibilityIntegrationSpec extends Specification {
         loginFailure.kind() == AuthFailure.Kind.UNAUTHORIZED
         0 * profiles._
         when:
-        service.me('Bearer '+old.accessToken())
+        def existingOwner = service.me('Bearer '+old.accessToken()).id()
         then:
-        thrown(AuthFailure)
+        existingOwner == identity
         when:
         store.saveSession('a'*64,identity,now,now.plusSeconds(60))
         then:
@@ -81,7 +81,7 @@ class BankingEligibilityIntegrationSpec extends Specification {
         def profiles = Mock(RegistrationProfiles)
         def service = new AuthService(new PostgresAuthStore(database,true),new Argon2Passwords(),Clock.fixed(now,ZoneOffset.UTC),profiles)
         when:
-        service.sso('synthetic', { token -> new SsoTokens.Principal('https://issuer.example/realm','fixture','+971501234567') } as SsoTokens)
+        service.sso('synthetic', { token -> new SsoTokens.Principal('https://issuer.example/realm','fixture','+971501234567', null, false, false) } as SsoTokens)
         then:
         thrown(AuthFailure)
         0 * profiles._
