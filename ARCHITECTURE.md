@@ -1725,7 +1725,7 @@ not as a fabricated verified contact version. Publication does not grant banking
 authority. See [ADR 0047](docs/adr/0047-legacy-user-migration-baseline.md) and the
 [migration guide](docs/legacy-user-migration.md).
 
-Auth V15–V20 source adds generation/session fences, restricted account admission,
+Auth V15–V23 source adds generation/session fences, restricted account admission,
 server-owned PKCE custody, durable provider claims and migration-specific OTP
 evidence, retained publication decisions, strict User ACK custody and typed
 migration-source metadata. These components are not a completed migration:
@@ -1737,6 +1737,18 @@ decision handlers, genuine registration authority, current-User observation and
 source-aware native consumers explicitly. Integrated startup and positive
 acceptance are still pending; this does not describe an enabled deployment. The
 web edge explicitly rejects the migration namespace rather than serving the SPA.
+
+Auth V23 retains immutable post-FINAL User release acknowledgements. Browser
+completion and cached completed results require a validated acknowledgement of
+the original publication tuple. Auth owns the bounded `MigrationUserReleaseWorker`
+inside default-off `LegacyMigrationResources`; it starts after the Auth HTTP
+decision endpoint is serving, retries completed migrations without acknowledgements
+outside database transactions, and survives browser expiry or process restart.
+User independently verifies the retained Auth completion before releasing its
+published reservation. This release evidence does not grant banking eligibility
+or replace fresh User-current and source-authority checks. Status reads remain
+read-only. Full LOCAL/SSO runtime and recovery acceptance remain required; see
+[ADR 0058](docs/adr/0058-post-final-user-release.md).
 
 Passwordless historical SSO identities cannot acquire an email in the credential
 row under the existing credentials-pair constraint. The proposed separate owner

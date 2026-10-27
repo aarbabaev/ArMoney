@@ -111,7 +111,9 @@ public final class PostgresLegacyMigrationBrowserService implements LegacyMigrat
     @Override public VerificationPage finish(String cookie,String token,UUID command){return transition(cookie,token,command,null,Set.of(Purpose.FINAL),(owned,c)->{
         boolean completed=completed(owned,c.migrationId());
         if(!completed){continuation.publication().withFinalDecision(owned,c.migrationId(),cookie,c.form().finalCommandId(),(sql,decision,ack,evidence)->continuation.consumer().promote(sql,decision,ack,evidence));completed=completed(owned,c.migrationId());}
-        if(!completed)throw failure(Kind.UNAVAILABLE,false);return commands.complete(owned,cookie,c,List.of(),Status.COMPLETED);
+        if(!completed)throw failure(Kind.UNAVAILABLE,false);
+        continuation.publication().resolveUser(owned,c.migrationId(),cookie);
+        return commands.complete(owned,cookie,c,List.of(),Status.COMPLETED);
     });}
     @Override public VerificationPage status(String cookie){requireContinuation();return continuationOperation(owned->commands.status(owned,cookie));}
     private boolean completed(PostgresLoginRequestScope.Request owned,UUID migration){return owned.transaction(sql->{var journal=PostgresLegacyMigrationFinalizationStore.requireHistoricalJournal(sql,migration,crypto);return PostgresMigrationFinalAckStore.validatedCompletion(sql,journal,crypto,actor).isPresent();});}

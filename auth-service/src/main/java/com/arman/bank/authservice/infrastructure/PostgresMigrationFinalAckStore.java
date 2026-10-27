@@ -32,6 +32,10 @@ public final class PostgresMigrationFinalAckStore implements AutoCloseable {
     private final Set<CompletableFuture<?>> pending=ConcurrentHashMap.newKeySet();
     private final Set<Body> bodies=ConcurrentHashMap.newKeySet();
     private final Semaphore calls=new Semaphore(16);
+    private final Semaphore releaseCalls=new Semaphore(1);
+    private long releaseStarted,releaseDelay;private boolean releaseAttempted;
+    private UUID releaseCursor;
+    private static final String RELEASE_DOMAIN="armoney-legacy-migration-user-release-v1";
     private volatile boolean closed;
     private final Database database;
     private final LegacyMigrationCrypto accountCrypto;
@@ -63,9 +67,12 @@ public final class PostgresMigrationFinalAckStore implements AutoCloseable {
             var request=HttpRequest.newBuilder(userOrigin.resolve("/v1/internal/migrations/legacy/"+operation)).timeout(Duration.ofNanos(remaining(started))).header("Content-Type","application/json").header("X-ArMoney-Migration-Publication-Key",publicationKey).POST(HttpRequest.BodyPublishers.ofByteArray(bytes)).build();
             bodies.add(body);check();future=http.sendAsync(request,ignored->body);pending.add(future);check();
             var response=future.get(remaining(started),TimeUnit.NANOSECONDS);check();remaining(started);
+            if(operation.equals("user-resolve")&&response.statusCode()==429){synchronized(this){releaseStarted=System.nanoTime();releaseDelay=60_000_000_000L;}throw new Failure(Error.RATE_LIMITED);}
+            if(operation.equals("user-resolve")&&(response.body()==null||response.body().length>4096))throw new Failure(Error.UNAVAILABLE);
             if(response.statusCode()!=200||response.headers().allValues("Content-Type").size()!=1||!response.headers().firstValue("Content-Type").orElse("").split(";",2)[0].strip().equalsIgnoreCase("application/json"))throw new Failure(Error.UNAVAILABLE);
             return LegacyMigrationFinalizationRoutes.parse(response.body());
-        }catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new Failure(Error.UNAVAILABLE);}
+        }catch(Failure rejected){throw rejected;}
+        catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new Failure(Error.UNAVAILABLE);}
         catch(Exception unavailable){throw new Failure(Error.UNAVAILABLE);}
         finally{if(future!=null)future.cancel(true);body.cancel();bodies.remove(body);if(future!=null)pending.remove(future);}
     }
@@ -107,6 +114,73 @@ public final class PostgresMigrationFinalAckStore implements AutoCloseable {
         return Collections.unmodifiableMap(new LinkedHashMap<>(j));
     }
     private static Map<String,Object> tuple(Map<String,Object> j){var value=new LinkedHashMap<String,Object>();for(String key:List.of("migration_id","decision_id","stage_operation_id"))value.put(key,scalar(j.get(key)));value.put("command_id",scalar(j.get("publication_command_id")));value.put("payload_hash",j.get("payload_hash"));return Collections.unmodifiableMap(value);}
+    /** Post-FINAL technical reconciliation. HTTP is outside every Auth transaction. */
+    void resolveUser(PostgresLoginRequestScope.Request owned,UUID migration,String capability){
+        Map<String,Object> j=owned.transaction(sql->journal(sql,migration,capability));resolveUser(owned,j);
+    }
+    private synchronized void admitRelease(){
+        check();long now=System.nanoTime();if(releaseAttempted&&now-releaseStarted<releaseDelay)throw new Failure(Error.RATE_LIMITED);
+        releaseAttempted=true;releaseStarted=now;releaseDelay=5_000_000_000L;
+    }
+    private void resolveUser(PostgresLoginRequestScope.Request owned,Map<String,Object> j){
+        check();owned.check();UUID migration=(UUID)j.get("migration_id");
+        boolean acknowledged=owned.transaction(sql->{requireCompleted(sql,j,crypto,actor);return releaseAcknowledged(sql,migration,crypto,actor);});
+        if(acknowledged)return;
+        if(!releaseCalls.tryAcquire())throw new Failure(Error.RATE_LIMITED);
+        boolean acquired=false;
+        try{
+            if(!calls.tryAcquire())throw new Failure(Error.RATE_LIMITED);acquired=true;admitRelease();long started=System.nanoTime();
+            Map<String,Object> response=call("user-resolve",tuple(j),started);validateRelease(response,j);owned.verify();
+            owned.transaction(sql->{
+                Record complete=requireCompleted(sql,j,crypto,actor);
+                if(releaseAcknowledged(sql,migration,crypto,actor))return null;
+                Instant acknowledgedAt=normalized(now(sql));String encoded=json(response);
+                var row=new LinkedHashMap<String,Object>();row.put("decision_id",j.get("decision_id"));row.put("migration_id",migration);row.put("identity_id",j.get("identity_id"));row.put("writer_id",actor);
+                row.put("retention_key_id",j.get("retention_key_id"));row.put("journal_hash",j.get("journal_hash"));row.put("completion_hash",complete.get("provenance_hash",String.class));
+                row.put("response_json",encoded);row.put("acknowledged_at",acknowledgedAt);row.put("provenance_hash",releaseHash(j,complete,encoded,acknowledgedAt,crypto,actor));
+                remaining(started);check();insert(sql,"legacy_migration_user_release_acks",row);return null;
+            });owned.verify();remaining(started);check();
+        }finally{if(acquired)calls.release();releaseCalls.release();}
+    }
+    private static Record requireCompleted(DSLContext sql,Map<String,Object> j,LegacyMigrationManagedProofCrypto crypto,String actor){
+        if(!actor.equals(j.get("writer_id"))||validatedCompletion(sql,j,crypto,actor).isEmpty())throw new Failure(Error.UNAVAILABLE);
+        Record complete=sql.fetchOne("select * from legacy_migration_final_completions where decision_id=?",j.get("decision_id"));if(complete==null)throw new Failure(Error.UNAVAILABLE);return complete;
+    }
+    private static void validateRelease(Map<String,Object> response,Map<String,Object> j){
+        if(!response.keySet().equals(Set.of("migration_id","decision_id","state"))||!scalar(j.get("migration_id")).equals(response.get("migration_id"))
+                ||!scalar(j.get("decision_id")).equals(response.get("decision_id"))||!"RELEASED_AFTER_COMPLETION".equals(response.get("state")))throw new Failure(Error.UNAVAILABLE);
+    }
+    private static String releaseHash(Map<String,Object> j,Record completion,String response,Instant at,LegacyMigrationManagedProofCrypto crypto,String actor){
+        return hex(crypto.hash((String)j.get("retention_key_id"),RELEASE_DOMAIN,"1",actor,scalar(j.get("identity_id")),scalar(j.get("migration_id")),scalar(j.get("decision_id")),
+            scalar(j.get("stage_operation_id")),scalar(j.get("publication_command_id")),scalar(j.get("payload_hash")),scalar(j.get("journal_hash")),completion.get("provenance_hash",String.class),response,LegacyMigrationContact.instant(at)));
+    }
+    /** Read-only gate. Missing evidence is pending; corrupted evidence fails closed. */
+    static boolean releaseAcknowledged(DSLContext sql,UUID migration,LegacyMigrationManagedProofCrypto crypto,String actor){
+        Record ack=sql.fetchOne("select * from legacy_migration_user_release_acks where migration_id=?",migration);if(ack==null)return false;
+        Map<String,Object> j=PostgresLegacyMigrationFinalizationStore.requireHistoricalJournal(sql,migration,crypto);Record complete=requireCompleted(sql,j,crypto,actor);
+        for(String field:List.of("decision_id","identity_id","retention_key_id","journal_hash"))if(!Objects.equals(j.get(field),ack.get(field)))throw new Failure(Error.UNAVAILABLE);
+        if(!actor.equals(ack.get("writer_id"))||!Objects.equals(complete.get("provenance_hash"),ack.get("completion_hash")))throw new Failure(Error.UNAVAILABLE);
+        String encoded=ack.get("response_json",String.class);Map<String,Object> response=LegacyMigrationFinalizationRoutes.parse(encoded.getBytes(java.nio.charset.StandardCharsets.UTF_8));validateRelease(response,j);
+        Instant at=ack.get("acknowledged_at",OffsetDateTime.class).toInstant();
+        if(at.isBefore(complete.get("completed_at",OffsetDateTime.class).toInstant())||!json(response).equals(encoded)
+                ||!MessageDigest.isEqual(releaseHash(j,complete,encoded,at,crypto,actor).getBytes(java.nio.charset.StandardCharsets.US_ASCII),ack.get("provenance_hash",String.class).getBytes(java.nio.charset.StandardCharsets.US_ASCII)))throw new Failure(Error.UNAVAILABLE);
+        return true;
+    }
+    /** Fair keyset scan, one original completion per tick. Restart simply rescans pending durable work. */
+    void recoverNextUserRelease(){
+        check();new PostgresLoginRequestScope(database).inRequest(actor,owned->{
+            UUID cursor; synchronized(this){cursor=releaseCursor;}
+            Map<String,Object> selected=owned.transaction(sql->{
+                String base="select c.migration_id,c.decision_id from legacy_migration_final_completions c join legacy_migration_publication_decisions j using(decision_id) left join legacy_migration_user_release_acks r using(decision_id) where r.decision_id is null and j.writer_id=?";
+                Record next=cursor==null?sql.fetchOne(base+" order by c.decision_id limit 1",actor):sql.fetchOne(base+" and c.decision_id>? order by c.decision_id limit 1",actor,cursor);
+                if(next==null&&cursor!=null)next=sql.fetchOne(base+" order by c.decision_id limit 1",actor);
+                if(next==null)return null;
+                synchronized(this){releaseCursor=next.get("decision_id",UUID.class);}
+                return PostgresLegacyMigrationFinalizationStore.requireHistoricalJournal(sql,next.get("migration_id",UUID.class),crypto);
+            });
+            if(selected!=null)resolveUser(owned,selected);return null;
+        });
+    }
     private static Map<String,Object> stage(DSLContext sql,UUID migration){
         Record row=sql.fetchOne("select ack_json,stage_ack_hash from legacy_migration_otp_stage_acks where migration_id=?",migration);if(row==null)throw new Failure(Error.UNAVAILABLE);
         Map<String,Object> ack=LegacyMigrationFinalizationRoutes.parse(row.get("ack_json",String.class).getBytes(java.nio.charset.StandardCharsets.UTF_8));LegacyMigrationFinalization.exact(ack,LegacyMigrationOtp.ACK);

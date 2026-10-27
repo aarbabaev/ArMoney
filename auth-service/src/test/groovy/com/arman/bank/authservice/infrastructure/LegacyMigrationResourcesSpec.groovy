@@ -3,6 +3,17 @@ package com.arman.bank.authservice.infrastructure
 import spock.lang.Specification
 
 class LegacyMigrationResourcesSpec extends Specification {
+    def 'release owner is idle until explicit start and resources close it before borrowed dependencies'(){
+        given:
+        def calls=[]
+        def release=new MigrationUserReleaseWorker({calls << 'recover'} as Runnable)
+        AutoCloseable dependency={calls << 'dependency'}
+        def constructor=LegacyMigrationResources.declaredConstructors.find{it.parameterCount==6};constructor.accessible=true
+        def resources=constructor.newInstance([dependency,release],null,null,null,null,release)
+        expect:calls.empty
+        when:resources.close();release.tick();resources.close()
+        then:noExceptionThrown();calls==['dependency']
+    }
     def 'off returns before examining database service or observer factory'() {
         expect:
         LegacyMigrationResources.open(null,null,LegacyMigrationConfiguration.from([:],[:]),null).empty
