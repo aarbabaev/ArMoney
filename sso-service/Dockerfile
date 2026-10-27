@@ -12,18 +12,22 @@ COPY sso-service/themes/armoney/login/ ./sso-service/themes/armoney/login/
 RUN bash sso-service/provider/package-provider.sh /provider-package
 
 FROM quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c AS keycloak-build
+ARG ARMONEY_EMAIL_SENDER_PROVIDER=default
 ENV KC_HTTP_RELATIVE_PATH=/sso
 COPY --from=provider-build --chown=keycloak:keycloak /provider-package/providers/ /opt/keycloak/providers/
 COPY --from=provider-build --chown=keycloak:keycloak /provider-package/themes/ /opt/keycloak/themes/
 # Keycloak augmentation discovers existing SPI implementations; no server/database or realm import runs.
 RUN touch -m --date=@1743465600 /opt/keycloak/providers/armoney-keycloak-provider.jar \
-    && /opt/keycloak/bin/kc.sh build --db=postgres
+    && case "$ARMONEY_EMAIL_SENDER_PROVIDER" in default|armoney-strict-mailtrap) ;; *) exit 1 ;; esac \
+    && /opt/keycloak/bin/kc.sh build --db=postgres --spi-email-sender--provider-default="$ARMONEY_EMAIL_SENDER_PROVIDER"
 
 FROM quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c
+ARG ARMONEY_EMAIL_SENDER_PROVIDER=default
 ENV KC_HTTP_RELATIVE_PATH=/sso
 COPY --from=keycloak-build --chown=keycloak:keycloak /opt/keycloak/ /opt/keycloak/
 COPY --from=provider-build --chown=keycloak:keycloak /provider-package/provenance/ /opt/keycloak/conf/armoney-provider-package/
-LABEL org.opencontainers.image.title="ArMoney disabled Keycloak provider" \
+LABEL org.opencontainers.image.title="ArMoney Keycloak provider" \
+      io.armoney.email-sender="$ARMONEY_EMAIL_SENDER_PROVIDER" \
       org.opencontainers.image.base.name="quay.io/keycloak/keycloak:26.7.4" \
       org.opencontainers.image.base.digest="sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c"
 ENTRYPOINT ["/opt/keycloak/bin/kc.sh"]

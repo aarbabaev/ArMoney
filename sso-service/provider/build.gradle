@@ -8,7 +8,9 @@ dependencies {
     compileOnly "org.keycloak:keycloak-server-spi:${keycloakVersion}"
     compileOnly "org.keycloak:keycloak-server-spi-private:${keycloakVersion}"
     compileOnly "org.keycloak:keycloak-services:${keycloakVersion}"
+    compileOnly 'org.eclipse.angus:angus-mail:2.0.5'
     testImplementation "org.keycloak:keycloak-services:${keycloakVersion}"
+    testImplementation 'org.eclipse.angus:angus-mail:2.0.5'
     testImplementation 'org.junit.jupiter:junit-jupiter:5.12.2'
     testRuntimeOnly 'org.jboss.resteasy:resteasy-core:6.2.18.Final'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

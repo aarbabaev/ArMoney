@@ -55,8 +55,9 @@ test -s "$artifact"
 
 # Exact production SPI allowlist: no historical proof factories, fixture providers or token mappers.
 services="$module_dir/src/main/resources/META-INF/services"
-test "$(find "$services" -type f | wc -l | tr -d ' ')" = 7
-printf '%s\n' com.arman.bank.sso.EmailVerificationFactory com.arman.bank.sso.PhoneVerificationFactory | cmp - "$services/org.keycloak.authentication.RequiredActionFactory"
+test "$(find "$services" -type f | wc -l | tr -d ' ')" = 8
+printf '%s\n' com.arman.bank.sso.EmailVerificationFactory com.arman.bank.sso.PhoneVerificationFactory com.arman.bank.sso.MigrationEmailVerificationFactory | cmp - "$services/org.keycloak.authentication.RequiredActionFactory"
+printf '%s\n' com.arman.bank.sso.StrictMailtrapEmailSenderFactory | cmp - "$services/org.keycloak.email.EmailSenderProviderFactory"
 printf '%s\n' com.arman.bank.sso.PasswordProofFactory | cmp - "$services/org.keycloak.authentication.AuthenticatorFactory"
 printf '%s\n' com.arman.bank.sso.StatusResourceFactory | cmp - "$services/org.keycloak.services.resource.RealmResourceProviderFactory"
 printf '%s\n' com.arman.bank.sso.CodeIntentLoginProtocolFactory | cmp - "$services/org.keycloak.protocol.LoginProtocolFactory"
@@ -66,14 +67,16 @@ printf '%s\n' com.arman.bank.sso.CodeIntentRegistrationFactory | cmp - "$service
 
 audit_dir="$(mktemp -d "$module_dir/build/package-audit.XXXXXX")"
 (cd -- "$audit_dir" && jar --extract --file "$artifact" META-INF/services)
-test "$(find "$audit_dir/META-INF/services" -type f | wc -l | tr -d ' ')" = 7
+test "$(find "$audit_dir/META-INF/services" -type f | wc -l | tr -d ' ')" = 8
 for descriptor in "$services"/*; do
   cmp "$descriptor" "$audit_dir/META-INF/services/${descriptor##*/}"
 done
 jar --list --file "$artifact" > "$audit_dir/classes.txt"
 for name in CodeIntentLoginProtocol CodeIntentLoginProtocolFactory CodeIntentTokenPolicy CodeIntentTokenPolicyFactory \
   CodeIntentIntrospection CodeIntentIntrospectionFactory CodeIntentRegistrationAction CodeIntentRegistrationFactory \
-  CodeIntentRegistrationGuard CodeIntentRegistrationContinuation CodeIntentProviderConfiguration; do
+  CodeIntentRegistrationGuard CodeIntentRegistrationContinuation CodeIntentProviderConfiguration \
+  MigrationEmailVerificationFactory MigrationReadinessObservation StrictMailtrapEmailSenderFactory \
+  StrictMailtrapEmailSender StrictMailtrapSmtpTransport; do
   grep -Fqx "com/arman/bank/sso/$name.class" "$audit_dir/classes.txt"
 done
 if grep -Eq '^com/arman/bank/sso/[^/]*(Fixture|Observer|Visibility)[^/]*\.class$|^com/arman/bank/sso/Proof[^/]*Factory\.class$' "$audit_dir/classes.txt"; then

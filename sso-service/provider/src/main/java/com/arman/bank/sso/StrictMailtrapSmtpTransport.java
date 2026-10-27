@@ -1,0 +1,100 @@
+package com.arman.bank.sso;
+
+import jakarta.mail.*;
+import jakarta.mail.internet.*;
+import org.eclipse.angus.mail.smtp.SMTPTransport;
+import javax.net.SocketFactory;
+import javax.net.ssl.SSLSocketFactory;
+import java.io.IOException;
+import java.net.*;
+import java.util.Properties;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
+import java.util.logging.*;
+
+/** Bounded SMTP adapter, with a tracked plain socket and normal production JSSE trust. */
+final class StrictMailtrapSmtpTransport implements AutoCloseable {
+    private static final Semaphore INFLIGHT=new Semaphore(1);
+    private static final ThreadPoolExecutor WORKER=new ThreadPoolExecutor(0,1,1,TimeUnit.SECONDS,new ArrayBlockingQueue<>(1),
+            Thread.ofPlatform().name("armoney-strict-smtp").daemon(true).factory(),new ThreadPoolExecutor.AbortPolicy());
+    // Angus chooses the concrete transport class's JUL namespace independently of Session.debug.
+    // Retain and suppress only our subclass loggers; unrelated stock SMTP keeps its configuration.
+    private static final Logger[] QUIET={Logger.getLogger(QuietTransport.class.getName()),Logger.getLogger(QuietTransport.class.getName()+".protocol")};
+    static{for(Logger logger:QUIET)logger.setLevel(Level.OFF);}
+    private final String host;private final int port;private final SSLSocketFactory testTls;
+    private final long workMillis,cleanupMillis;
+    private final AtomicReference<Attempt> current=new AtomicReference<>();private volatile boolean closed;
+    StrictMailtrapSmtpTransport(){this("sandbox.smtp.mailtrap.io",2525,null,14000,1000);}
+    /** Loopback TLS fixtures only; never reachable from production config or environment. */
+    StrictMailtrapSmtpTransport(String host,int port,SSLSocketFactory tls,long workMillis,long cleanupMillis){
+        this.host=host;this.port=port;this.testTls=tls;this.workMillis=workMillis;this.cleanupMillis=cleanupMillis;
+        if(workMillis<1||workMillis>14000||cleanupMillis<0||cleanupMillis>1000)throw new IllegalArgumentException();
+    }
+    static Properties properties(){
+        var p=new Properties();p.setProperty("mail.smtp.auth","true");p.setProperty("mail.smtp.auth.mechanisms","PLAIN LOGIN");
+        p.setProperty("mail.smtp.starttls.enable","true");p.setProperty("mail.smtp.starttls.required","true");p.setProperty("mail.smtp.ssl.checkserveridentity","true");
+        p.setProperty("mail.smtp.ssl.protocols","TLSv1.3 TLSv1.2");p.setProperty("mail.smtp.connectiontimeout","5000");p.setProperty("mail.smtp.timeout","5000");
+        p.setProperty("mail.smtp.writetimeout","5000");p.setProperty("mail.smtp.socketFactory.fallback","false");p.setProperty("mail.smtp.quitwait","false");
+        p.setProperty("mail.smtp.localhost","armoney.invalid");p.setProperty("mail.debug","false");p.setProperty("mail.debug.auth","false");return p;
+    }
+    boolean send(StrictMailtrapEmailSender.Settings settings,String recipient,String subject,String text,String html)throws InterruptedException{
+        if(closed||!INFLIGHT.tryAcquire())return false;
+        var attempt=new Attempt();
+        if(!current.compareAndSet(null,attempt)){attempt.abort();attempt.writes.shutdownNow();INFLIGHT.release();return false;}
+        var task=new FutureTask<Boolean>(()->{
+            try{return !closed&&exchange(attempt,settings,recipient,subject,text,html);}
+            finally{attempt.abort();attempt.writes.shutdownNow();current.compareAndSet(attempt,null);attempt.exited.countDown();INFLIGHT.release();}
+        });
+        try{
+            try{WORKER.execute(task);}catch(RejectedExecutionException rejected){attempt.abort();attempt.writes.shutdownNow();current.compareAndSet(attempt,null);INFLIGHT.release();return false;}
+            try{return task.get(workMillis,TimeUnit.MILLISECONDS);}
+            catch(ExecutionException|TimeoutException unavailable){return false;}
+            finally{
+                // Socket.close does not require SMTPTransport's protocol monitor. DNS resolution
+                // may remain blocked; the single process permit is held until actual worker exit.
+                attempt.abort();attempt.writes.shutdownNow();attempt.exited.await(cleanupMillis,TimeUnit.MILLISECONDS);
+            }
+        }finally{attempt.abort();}
+    }
+    private boolean exchange(Attempt attempt,StrictMailtrapEmailSender.Settings settings,String recipient,String subject,String text,String html){
+        Properties p=properties();p.put("mail.smtp.socketFactory",new TrackingSocketFactory(attempt));p.put("mail.smtp.executor.writetimeout",attempt.writes);
+        if(testTls!=null)p.put("mail.smtp.ssl.socketFactory",testTls);
+        Session session=Session.getInstance(p);session.setDebug(false);
+        QuietTransport transport=new QuietTransport(session);
+        try{
+            MimeMessage message=new MimeMessage(session);InternetAddress from=new InternetAddress(settings.from(),true);
+            from.setPersonal(settings.display(),"UTF-8");message.setFrom(from);message.setRecipient(Message.RecipientType.TO,new InternetAddress(recipient,true));message.setSubject(subject,"UTF-8");
+            MimeMultipart body=new MimeMultipart("alternative");
+            if(text!=null){var part=new MimeBodyPart();part.setText(text,"UTF-8");body.addBodyPart(part);}
+            if(html!=null){var part=new MimeBodyPart();part.setText(html,"UTF-8","html");body.addBodyPart(part);}
+            message.setContent(body);message.saveChanges();
+            if(closed||attempt.aborted.get())return false;
+            transport.connect(host,port,settings.user(),settings.password());
+            if(closed||attempt.aborted.get()||!transport.isSSL())return false;
+            transport.sendMessage(message,message.getAllRecipients());return !closed&&!attempt.aborted.get();
+        }catch(Exception unavailable){return false;}
+        finally{attempt.abort();try{transport.close();}catch(MessagingException ignored){}}
+    }
+    @Override public void close(){closed=true;var attempt=current.get();if(attempt!=null){attempt.abort();attempt.writes.shutdownNow();}}
+    private static final class QuietTransport extends SMTPTransport {QuietTransport(Session session){super(session,null);}}
+    private static final class Attempt {
+        final Socket socket=new Socket();final AtomicBoolean aborted=new AtomicBoolean();final AtomicBoolean supplied=new AtomicBoolean();
+        final CountDownLatch exited=new CountDownLatch(1);
+        final ScheduledThreadPoolExecutor writes=new ScheduledThreadPoolExecutor(1,Thread.ofPlatform().name("armoney-strict-smtp-write").daemon(true).factory());
+        Attempt(){writes.setRemoveOnCancelPolicy(true);}
+        void abort(){aborted.set(true);try{socket.close();}catch(IOException ignored){}}
+    }
+    private static final class TrackingSocketFactory extends SocketFactory {
+        private final Attempt attempt;TrackingSocketFactory(Attempt attempt){this.attempt=attempt;}
+        @Override public Socket createSocket()throws IOException{
+            if(attempt.aborted.get()||!attempt.supplied.compareAndSet(false,true))throw new IOException("SMTP_SOCKET_UNAVAILABLE");return attempt.socket;
+        }
+        private Socket connect(InetSocketAddress remote,InetAddress local,int localPort)throws IOException{
+            Socket socket=createSocket();if(local!=null)socket.bind(new InetSocketAddress(local,localPort));socket.connect(remote,5000);socket.setSoTimeout(5000);return socket;
+        }
+        @Override public Socket createSocket(String host,int port)throws IOException{return connect(new InetSocketAddress(host,port),null,0);}
+        @Override public Socket createSocket(String host,int port,InetAddress local,int localPort)throws IOException{return connect(new InetSocketAddress(host,port),local,localPort);}
+        @Override public Socket createSocket(InetAddress host,int port)throws IOException{return connect(new InetSocketAddress(host,port),null,0);}
+        @Override public Socket createSocket(InetAddress host,int port,InetAddress local,int localPort)throws IOException{return connect(new InetSocketAddress(host,port),local,localPort);}
+    }
+}

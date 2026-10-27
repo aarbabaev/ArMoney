@@ -47,6 +47,25 @@ client_session_active, observed_at and valid_until. Facts and the raw verificati
 boolean come from one resolved user/session observation. V1 remains unchanged.
 Responses are not cacheable.
 
+Stock Keycloak SMTP STARTTLS enablement alone does not establish mandatory TLS.
+The opt-in provider image therefore explicitly selects `armoney-strict-mailtrap`
+at Keycloak augmentation. The default Docker build selects stock `default`.
+The strict sender retains stock templates and signed verification-token ownership;
+it changes transport only. For ArMoney it accepts the fixed Mailtrap sandbox
+destination, requires STARTTLS and normal trusted JSSE hostname/certificate
+validation before authentication, bounds headers/body, sanitizes errors and
+does not retry uncertain SMTP acceptance. Unrelated realms explicitly delegate
+to the stock provider. No ArMoney fallback or arbitrary SMTP properties are allowed.
+
+The transport owns a plain socket before connecting, and deadline cancellation
+closes that socket independently of the SMTP protocol monitor. Phase timeouts are
+five seconds; SMTP work is bounded to fourteen seconds plus at most one second
+for cleanup. The single process-wide permit remains held until the worker really
+exits. Physical DNS cancellation is not established; a stuck worker prevents
+further sends. Vault secret resolution precedes this SMTP-attempt budget. Actual
+hostile-server log capture, blocked-write saturation and pinned runtime dependency
+compatibility remain acceptance gates, not established properties of source review.
+
 Auth checks the exact schema, types, purpose, redirect and all identity/session
 bindings. Only a literal boolean true supplies readiness; false, missing,
 malformed, stale or unavailable observations cannot advance migration. Auth

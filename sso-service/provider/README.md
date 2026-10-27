@@ -354,6 +354,19 @@ versioned contract is in ADR 0059. Deploy the provider capability before enablin
 the consuming Auth migration configuration. V1 remains unchanged. Current-contact
 replacement races and complete delivered-link acceptance remain open gates.
 
+The default Docker build selects the stock email sender. The separate opt-in
+build argument `ARMONEY_EMAIL_SENDER_PROVIDER=armoney-strict-mailtrap` selects the
+strict sender during optimized Keycloak augmentation; a runtime environment
+variable is not a substitute for that build. The image records the selection in
+`io.armoney.email-sender`. The only other accepted build value is `default`.
+The strict sender preserves stock email templates and action tokens, restricts
+ArMoney SMTP to `sandbox.smtp.mailtrap.io:2525`, and requires verified STARTTLS
+before authentication. It delegates unrelated realms explicitly to stock.
+SMTP work has five-second phase limits and a fourteen-second attempt plus at most
+one second for cleanup; vault resolution and physical DNS cancellation are outside
+that guarantee. No automatic retry occurs after uncertain delivery. Real hostile
+TLS/logging/write-stall and runtime dependency acceptance remain required.
+
 `ARMONEY_VERIFICATION_ENABLED` defaults false. Enabled startup requires
 `ARMONEY_AUTH_BRIDGE_URL`, `SSO_VERIFICATION_BRIDGE_KEY` and separate
 `ARMONEY_PROVIDER_BINDING_KEY` (minimum 32 characters). The private observation
