@@ -42,14 +42,21 @@ final class CodeSessionObservation {
         if(CodeIntentConfiguration.MIGRATION_ACCOUNT_CLIENT.equals(binding.clientId())){
             try{accountConfiguration=CodeIntentLoginProtocolFactory.owner(session).configuration();}catch(RuntimeException unavailable){throw rejected(Rejection.CONFIGURATION);}
         }
-        return observeCaptured(session,binding,captured,accountConfiguration);
+        return observeCaptured(session,binding,captured,accountConfiguration).facts();
     }
     /** Validated immutable configuration seam; never changes the original three-client observations. */
     static ObjectNode observe(KeycloakSession session,Binding binding,Clock clock,CodeIntentProviderConfiguration accountConfiguration) {
         Instant captured=clock.instant(); // Capture before any session validity/model checks.
-        return observeCaptured(session,binding,captured,accountConfiguration);
+        return observeCaptured(session,binding,captured,accountConfiguration).facts();
     }
-    private static ObjectNode observeCaptured(KeycloakSession session,Binding binding,Instant captured,CodeIntentProviderConfiguration accountConfiguration){
+    /** Request-local model handles only. V1 never reads or serializes verification state. */
+    record Snapshot(ObjectNode facts,UserModel user,ClientModel client,AuthenticatedClientSessionModel clientSession) {
+        @Override public String toString(){return "CodeSessionSnapshot[redacted]";}
+    }
+    static Snapshot snapshot(KeycloakSession session,Binding binding,Clock clock,CodeIntentProviderConfiguration configuration){
+        return observeCaptured(session,binding,clock.instant(),configuration);
+    }
+    private static Snapshot observeCaptured(KeycloakSession session,Binding binding,Instant captured,CodeIntentProviderConfiguration accountConfiguration){
         RealmModel realm=session.getContext().getRealm();
         String issuer=Urls.realmIssuer(session.getContext().getUri().getBaseUri(),realm.getName());
         boolean account=CodeIntentConfiguration.MIGRATION_ACCOUNT_CLIENT.equals(binding.clientId());
@@ -89,7 +96,7 @@ final class CodeSessionObservation {
         if(username.matches("\\+9715[024568][0-9]{7}")) out.put("phone_number",username); else out.putNull("phone_number");
         out.put("enabled",user.isEnabled()); out.put("user_session_active",true); out.put("client_session_active",true);
         out.put("observed_at",Instant.ofEpochSecond(captured.getEpochSecond()).toString()); out.put("valid_until",until.toString());
-        return out;
+        return new Snapshot(out,user,client,cs);
     }
     private static void requireAccountClient(ClientModel client,AuthenticatedClientSessionModel session,String issuer,CodeIntentProviderConfiguration configuration){
         try{

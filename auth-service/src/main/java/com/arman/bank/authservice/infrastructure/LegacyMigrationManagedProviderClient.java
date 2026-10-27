@@ -1,6 +1,7 @@
 package com.arman.bank.authservice.infrastructure;
 
 import com.arman.bank.authservice.application.MigrationManagedProofPort;
+import com.arman.bank.authservice.application.MigrationProviderReadinessPort;
 import com.arman.bank.authservice.domain.CodeConfirmation;
 import com.arman.bank.authservice.domain.LoginProof;
 import java.net.*;
@@ -32,27 +33,35 @@ public final class LegacyMigrationManagedProviderClient implements MigrationMana
     private final Clock clock;
     private final HttpClient tokenClient;
     private final LegacyMigrationOidcClient verifier;
-    private final MigrationManagedProofPort.Observations observations;
+    private final MigrationProviderReadinessPort readiness;
     private final Semaphore slots=new Semaphore(4);
     private final Set<LegacyMigrationOidcExchange> pending=ConcurrentHashMap.newKeySet();
     private volatile boolean closed;
+    /** Compatibility overloads cannot infer readiness from V1 facts. */
     public LegacyMigrationManagedProviderClient(Settings settings,Clock clock,MigrationManagedProofPort.Observations observations){
-        this(settings,clock,observations,owned(settings,clock,observations));
+        this(settings,clock,unavailableReadiness(observations));
     }
+    LegacyMigrationManagedProviderClient(Settings settings,Clock clock,MigrationManagedProofPort.Observations observations,HttpClient tokenClient,LegacyMigrationOidcClient verifier){
+        this(settings,clock,unavailableReadiness(observations),tokenClient,verifier);
+    }
+    public LegacyMigrationManagedProviderClient(Settings settings,Clock clock,MigrationProviderReadinessPort readiness){
+        this(settings,clock,readiness,owned(settings,clock,readiness));
+    }
+    private static MigrationProviderReadinessPort unavailableReadiness(MigrationManagedProofPort.Observations observations){Objects.requireNonNull(observations);return MigrationProviderReadinessPort.unavailable();}
     private record Owned(HttpClient token,LegacyMigrationOidcClient verifier){}
-    private LegacyMigrationManagedProviderClient(Settings settings,Clock clock,MigrationManagedProofPort.Observations observations,Owned owned){
-        this(settings,clock,observations,owned.token(),owned.verifier());
+    private LegacyMigrationManagedProviderClient(Settings settings,Clock clock,MigrationProviderReadinessPort readiness,Owned owned){
+        this(settings,clock,readiness,owned.token(),owned.verifier());
     }
-    private static Owned owned(Settings settings,Clock clock,MigrationManagedProofPort.Observations observations){
-        Objects.requireNonNull(settings);Objects.requireNonNull(clock);Objects.requireNonNull(observations);
+    private static Owned owned(Settings settings,Clock clock,MigrationProviderReadinessPort readiness){
+        Objects.requireNonNull(settings);Objects.requireNonNull(clock);Objects.requireNonNull(readiness);
         HttpClient token=http();
         try{return new Owned(token,new LegacyMigrationOidcClient(new LegacyMigrationOidcClient.Settings(settings.issuer(),settings.jwks(),settings.clientId()),clock));}
         catch(RuntimeException|Error failure){token.shutdownNow();throw failure;}
     }
     /** Controlled synthetic transport seam; all externally constructed settings still require HTTPS. */
-    LegacyMigrationManagedProviderClient(Settings settings,Clock clock,MigrationManagedProofPort.Observations observations,
+    LegacyMigrationManagedProviderClient(Settings settings,Clock clock,MigrationProviderReadinessPort readiness,
                                         HttpClient tokenClient,LegacyMigrationOidcClient verifier){
-        this.settings=Objects.requireNonNull(settings);this.clock=Objects.requireNonNull(clock);this.observations=Objects.requireNonNull(observations);
+        this.settings=Objects.requireNonNull(settings);this.clock=Objects.requireNonNull(clock);this.readiness=Objects.requireNonNull(readiness);
         this.tokenClient=Objects.requireNonNull(tokenClient);this.verifier=Objects.requireNonNull(verifier);
         if(tokenClient.followRedirects()!=HttpClient.Redirect.NEVER||!tokenClient.connectTimeout().orElse(Duration.ZERO).equals(Duration.ofSeconds(2)))
             throw new IllegalArgumentException("Invalid managed migration provider transport");
@@ -84,9 +93,11 @@ public final class LegacyMigrationManagedProviderClient implements MigrationMana
             remaining(started,attempt);attempt.requireLive();long left=remaining(started,attempt);
             var binding=new LoginProof.Binding(verified.issuer(),verified.subject(),verified.clientId(),verified.sessionId());
             phase=FailurePhase.OBSERVATION;
-            var facts=observations.observe(binding,attempt.originalDatabaseStart(),Duration.ofNanos(left));
+            var query=new MigrationProviderReadinessPort.Request(MigrationProviderReadinessPort.Purpose.MIGRATION_MANAGED,attempt.redirectUri(),binding);
+            var observed=readiness.observe(query,attempt.originalDatabaseStart(),Duration.ofNanos(left));
             phase=FailurePhase.FACTS_VALIDATE;
             Instant received=clock.instant();
+            var facts=observed.requireReady(query);
             Instant evidence=CodeConfirmation.deadline(binding,facts,attempt.originalDatabaseStart(),received);
             if(!facts.enabled()||!facts.userSessionActive()||!facts.clientSessionActive()||facts.email()==null||facts.phone()==null)throw unavailable();
             attempt.requireLive();remaining(started,attempt);Instant finalNow=clock.instant();

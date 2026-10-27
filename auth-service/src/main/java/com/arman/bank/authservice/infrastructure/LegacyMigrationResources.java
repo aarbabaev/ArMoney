@@ -36,8 +36,9 @@ public final class LegacyMigrationResources implements AutoCloseable {
             var proof=new LegacyMigrationManagedProofCrypto(c.proofId,c.proof());
             var crypto=new LegacyMigrationOtpCrypto(c.otpId,c.otpHmac(),c.otpEncryption());
             var observer=Objects.requireNonNull(factory.open(c.observation));owned.add(observer);
+            var readiness=HttpMigrationProviderReadiness.openMigration(c.observation);owned.add(readiness);
             var accountProvider=new LegacyMigrationLegacyAccountProviderClient(c.account,Clock.systemUTC(),observer);owned.add(accountProvider);
-            var managedProvider=new LegacyMigrationManagedProviderClient(c.managed,Clock.systemUTC(),observer);owned.add(managedProvider);
+            var managedProvider=new LegacyMigrationManagedProviderClient(c.managed,Clock.systemUTC(),readiness);owned.add(managedProvider);
             var user=new HttpLegacyMigrationStage(c.userOrigin,c.readKey,c.stageKey);owned.add(user);
             var transport=new VerificationDeliveryTransport(c.email,c.smsOrigin,c.smsKey);owned.add(transport::close);
             var local=new PostgresLegacyMigrationStore(database,custody,true);

@@ -1,6 +1,7 @@
 package com.arman.bank.authservice.infrastructure
 
 import com.arman.bank.authservice.application.MigrationManagedProofPort as P
+import com.arman.bank.authservice.application.MigrationProviderReadinessPort as R
 import com.arman.bank.authservice.domain.LegacyMigration
 import com.arman.bank.authservice.domain.CodeConfirmation
 import com.arman.bank.authservice.domain.LoginProof
@@ -33,6 +34,7 @@ class LegacyMigrationManagedProviderClientSpec extends Specification {
     int tokenStatus=200
     String tokenType='application/json'
     String responseOverride
+    boolean providerEmailVerified=true
     boolean negative
     boolean wrongObservation
     boolean closeDuringObservation
@@ -71,13 +73,17 @@ class LegacyMigrationManagedProviderClientSpec extends Specification {
             CompletableFuture.completedFuture(response)
         }
         def verifier=new LegacyMigrationOidcClient(new LegacyMigrationOidcClient.Settings(URI.create(ISSUER),JWKS,CLIENT),Clock.fixed(NOW,ZoneOffset.UTC),http)
-        P.Observations observer={ binding,start,budget ->
+        R observer={ query,start,budget ->
+            def binding=query.binding()
+            assert query.purpose()==R.Purpose.MIGRATION_MANAGED
+            assert query.originalRedirectUri()==REDIRECT.toString()
             observations.add([binding,start,budget])
             if(observerFailure!=null)throw observerFailure
             if(closeDuringObservation)adapter.close()
-            new CodeConfirmation.Facts(wrongObservation?new LoginProof.Binding(ISSUER,'foreign',CLIENT,'signed-session'):binding,
+            def facts=new CodeConfirmation.Facts(wrongObservation?new LoginProof.Binding(ISSUER,'foreign',CLIENT,'signed-session'):binding,
                 '+971501234567','fixture@example.test','+971501234567',!negative,true,true,NOW,NOW.plusSeconds(5))
-        } as P.Observations
+            new R.Observation(query,facts,providerEmailVerified)
+        } as R
         adapter=new LegacyMigrationManagedProviderClient(new LegacyMigrationManagedProviderClient.Settings(URI.create(ISSUER),TOKEN,JWKS,CLIENT,REDIRECT),
             Clock.fixed(NOW,ZoneOffset.UTC),observer,http,verifier)
     }
@@ -101,6 +107,25 @@ class LegacyMigrationManagedProviderClientSpec extends Specification {
         failureRecords.every{it.thrown==null&&it.parameters==null&&!it.message.contains(sentinel)}
         where:
         stage<<['VALIDATE_ATTEMPT','TOKEN_REQUEST','JWT_VERIFY','OBSERVATION','FACTS_VALIDATE','SINK_VALIDATE','POST_SINK']
+    }
+    def 'legacy V1 constructor cannot infer verified readiness or invoke receipt sink'(){
+        given:
+        adapter.close()
+        def verifier=new LegacyMigrationOidcClient(new LegacyMigrationOidcClient.Settings(URI.create(ISSUER),JWKS,CLIENT),Clock.fixed(NOW,ZoneOffset.UTC),http)
+        P.Observations v1={binding,start,budget->throw new AssertionError('V1 must not substitute for readiness')} as P.Observations
+        adapter=new LegacyMigrationManagedProviderClient(new LegacyMigrationManagedProviderClient.Settings(URI.create(ISSUER),TOKEN,JWKS,CLIENT,REDIRECT),Clock.fixed(NOW,ZoneOffset.UTC),v1,http,verifier)
+        when:adapter.exchange(attempt,CALLBACK,{claims,facts->outputs.add(facts)} as P.VerifiedSink)
+        then:thrown(LegacyMigrationOidcClient.Unavailable)
+        outputs.empty
+        observations.empty
+    }
+    def 'false provider verification never reaches the private managed receipt sink'(){
+        given:providerEmailVerified=false
+        when:adapter.exchange(attempt,CALLBACK,{claims,facts->outputs.add(facts)} as P.VerifiedSink)
+        then:thrown(LegacyMigrationOidcClient.Unavailable)
+        outputs.empty
+        observations.size()==1
+        failureRecords*.message==['ARMONEY_MANAGED_PROVIDER_FAILURE_FACTS_VALIDATE']
     }
     def 'successful provider exchange emits no failure marker'(){
         when:positiveExchange()

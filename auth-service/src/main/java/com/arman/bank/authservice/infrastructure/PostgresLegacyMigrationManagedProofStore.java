@@ -27,12 +27,16 @@ public final class PostgresLegacyMigrationManagedProofStore implements Migration
     private final LegacyMigrationCrypto custody;
     private final LegacyMigrationManagedProofCrypto crypto;
     private final MigrationManagedProofPort provider;
-    private final MigrationManagedProofPort.Observations observations;
+    private final MigrationProviderReadinessPort readiness;
     private final Settings settings;
     private final boolean enabled;
     PostgresLegacyMigrationManagedProofStore.Settings settings(){return settings;}
+    /** V1 observations cannot establish provider readiness. */
     public PostgresLegacyMigrationManagedProofStore(Database database,LegacyMigrationCrypto custody,LegacyMigrationManagedProofCrypto crypto,MigrationManagedProofPort provider,MigrationManagedProofPort.Observations observations,Settings settings,boolean enabled){
-        this.database=Objects.requireNonNull(database);this.custody=Objects.requireNonNull(custody);this.crypto=Objects.requireNonNull(crypto);this.provider=Objects.requireNonNull(provider);this.observations=Objects.requireNonNull(observations);this.settings=Objects.requireNonNull(settings);this.enabled=enabled;
+        this(database,custody,crypto,provider,MigrationProviderReadinessPort.unavailable(),settings,enabled);Objects.requireNonNull(observations);
+    }
+    public PostgresLegacyMigrationManagedProofStore(Database database,LegacyMigrationCrypto custody,LegacyMigrationManagedProofCrypto crypto,MigrationManagedProofPort provider,MigrationProviderReadinessPort readiness,Settings settings,boolean enabled){
+        this.database=Objects.requireNonNull(database);this.custody=Objects.requireNonNull(custody);this.crypto=Objects.requireNonNull(crypto);this.provider=Objects.requireNonNull(provider);this.readiness=Objects.requireNonNull(readiness);this.settings=Objects.requireNonNull(settings);this.enabled=enabled;
     }
     @Override public Redirect start(UUID migration,String capability,UUID command){
         requireEnabled();if(migration==null||command==null||capability==null||!capability.matches("[A-Za-z0-9_-]{43}"))throw denied();
@@ -198,7 +202,9 @@ public final class PostgresLegacyMigrationManagedProofStore implements Migration
         });request.verify();
         Duration remaining=Duration.ofNanos(4_000_000_000L-(System.nanoTime()-began));if(remaining.isNegative()||remaining.isZero())throw unavailable();
         Record r=admission.receipt();var binding=new LoginProof.Binding(r.get("issuer",String.class),r.get("subject",String.class),r.get("client_id",String.class),r.get("user_session_id",String.class));
-        CodeConfirmation.Facts facts=observations.observe(binding,admission.start(),remaining);request.verify();
+        var query=new MigrationProviderReadinessPort.Request(MigrationProviderReadinessPort.Purpose.MIGRATION_MANAGED,settings.redirectUri(),binding);
+        var observation=readiness.observe(query,admission.start(),remaining);request.verify();
+        CodeConfirmation.Facts facts=observation.requireReady(query);
         Instant received=request.transaction(PostgresLegacyMigrationManagedProofStore::now);
         Instant deadline=min(CodeConfirmation.deadline(binding,facts,admission.start(),received),receiptDeadline(r));
         if(!facts.enabled()||!facts.userSessionActive()||!facts.clientSessionActive()||facts.email()==null||facts.phone()==null)throw denied();

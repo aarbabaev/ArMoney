@@ -68,6 +68,38 @@ class LegacyMigrationFinalizationIntegrationSpec extends Specification {
         assert receipt.state()=='CONSUMED';receipt
     }
     def query(UUID migration){fixture.database.transaction{sql->def row=sql.fetchOne('select stage_operation_id,decision_command_id,payload_hash from legacy_migration_otp_stages s join legacy_migration_otp_stage_acks a using(migration_id) where migration_id=?',migration);new F.DecisionQuery(migration,row.get('stage_operation_id',UUID),row.get('decision_command_id',UUID),row.get('payload_hash',String))}}
+    def 'fresh provider false before FINAL preserves original session and cannot create terminal authority in either mode'(){
+        given:
+        def original=ready(sso)
+        authorize(original)
+        def managed=fixture
+        def settings=user.syntheticPublicationSettings()
+        int port=unavailableAuth.address.port
+        unavailableAuth.stop(0);unavailableAuth=null
+        def routes=new LegacyMigrationFinalizationRoutes(journal,settings.decisionKey(),true)
+        def authRead=io.javalin.Javalin.create{config->routes.configure(config)}.start(port)
+        def consumer=new PostgresMigrationBankingEligibilityStore(managed.crypto)
+        def producer=PostgresMigrationFinalAckStore.synthetic(managed.database,managed.custody,managed.crypto,journal,otp,managed.managed,consumer,managed.ACTOR,settings.publicationKey(),settings.origin())
+        producer.publish(original.admission.migrationId(),original.admission.ownerCapability())
+        def command=new PostgresLoginRequestScope(managed.database).inRequest(managed.ACTOR){owned->producer.reserveFinalCommand(owned,original.admission.migrationId(),original.admission.ownerCapability())}
+        managed.providerEmailVerified=failureMode!='FALSE'
+        managed.readinessFault=failureMode
+        boolean finalWorkReached=false
+        when:
+        new PostgresLoginRequestScope(managed.database).inRequest(managed.ACTOR){owned->
+            producer.withFinalDecision(owned,original.admission.migrationId(),original.admission.ownerCapability(),command,
+                {sql,decision,ack,evidence->finalWorkReached=true;consumer.promote(sql,decision,ack,evidence)} as PostgresMigrationFinalAckStore.FinalWork)
+        }
+        then:thrown(com.arman.bank.authservice.domain.LoginProof.Failure)
+        !finalWorkReached
+        managed.count('legacy_migration_final_completions')==0
+        managed.count('migration_banking_authorities')==0
+        managed.count('migration_banking_grants')==0
+        managed.auth.me('Bearer '+original.token).id()==original.identityId
+        cleanup:producer?.close();authRead?.stop()
+        where:
+        [sso,failureMode]<<[[false,true],['FALSE','MALFORMED','UNAVAILABLE']].combinations()
+    }
     def 'actual dual consumed producer receipts authorize immutable publication without final authority for both account modes'(){
         given:
         def original=admitted(sso)

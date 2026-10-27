@@ -40,6 +40,22 @@ class LegacyMigrationResourcesSpec extends Specification {
         !e.containsKey('AUTH_SSO_CODE_INTENT_CONFIRMATION_ENABLED')
         c.toString()=='LegacyMigrationConfiguration[redacted]'
     }
+    def 'migration readiness has a fixed V2 endpoint with the same private configured scope and key'(){
+        given:def c=LegacyMigrationConfiguration.from(LegacyMigrationConfigurationSpec.environment(),[:])
+        expect:
+        c.observation.readinessEndpoint()==c.observation.endpoint().resolve('/sso/realms/armoney/armoney-status/code-session/v2')
+        c.observation.readinessEndpoint()!=c.observation.endpoint()
+        c.observation.toString()=='MigrationObservationSettings[redacted]'
+    }
+    def 'partial graph construction closes acquired readiness before its borrowed V1 observer'(){
+        given:def calls=[]
+        AutoCloseable v1={calls << 'v1'}
+        AutoCloseable readiness={calls << 'readiness'}
+        def failure=new IllegalArgumentException('synthetic construction')
+        when:LegacyMigrationResources.constructionFailed([v1,readiness],failure)
+        then:calls==['readiness','v1']
+        failure.suppressed.length==0
+    }
     def 'resource owner closes reverse order once and preserves all cleanup failures'() {
         given:
         def calls=[]

@@ -89,6 +89,7 @@ public final class LegacyMigrationConfiguration {
             this.endpoint=endpoint;this.key=key;this.scopes=scopes;
         }
         HttpCodeSessionObservations.ValidatedMigrationObservation validated(){return new HttpCodeSessionObservations.ValidatedMigrationObservation(endpoint,key,scopes);}
+        URI readinessEndpoint(){return endpoint.resolve("/sso/realms/armoney/armoney-status/code-session/v2");}
         URI endpoint(){return endpoint;}String key(){return key;}CodeIntentPairScopes scopes(){return scopes;}
         /** Explicit transport purpose union; does not change legacy/managed classification. */
         Set<CodeIntentPairScopes.Pair> allowedPairs(){var pairs=new HashSet<>(scopes.managed());pairs.addAll(scopes.legacy());return Set.copyOf(pairs);}

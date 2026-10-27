@@ -36,6 +36,8 @@ class LegacyMigrationContactReceiptIntegrationSpec extends Specification {
     LegacyMigrationManagedProviderClient managedAdapter
     LegacyMigrationLegacyAccountProviderClient accountAdapter
     HttpCodeSessionObservations observer
+    HttpMigrationProviderReadiness readinessObserver
+    boolean providerEmailVerified
     HttpServer server
     ExecutorService serverThreads
     def key
@@ -59,6 +61,7 @@ class LegacyMigrationContactReceiptIntegrationSpec extends Specification {
     def fixture=this
     PostgresLegacyMigrationBrowserService browser
     def setup(){
+        providerEmailVerified=true
         postgres=new PostgreSQLContainer('postgres:17.6-alpine');postgres.start()
         database=new Database(postgres.jdbcUrl,postgres.username,postgres.password)
         identities=new PostgresAuthStore(database)
@@ -74,7 +77,9 @@ class LegacyMigrationContactReceiptIntegrationSpec extends Specification {
                 assert exchange.requestMethod=='POST'
                 assert exchange.requestHeaders.getFirst('X-ArMoney-Auth-Status-Key')=='s'*32
                 def request=new JsonSlurper().parse(exchange.requestBody)
-                assert request.keySet()==['issuer','subject','client_id','user_session_id'] as Set
+                boolean v2=exchange.requestURI.path.endsWith('/v2')
+                assert request.keySet()==(v2?['protocol_version','purpose','original_redirect_uri','issuer','subject','client_id','user_session_id']:['issuer','subject','client_id','user_session_id']) as Set
+                if(v2){assert request.protocol_version==2;assert request.purpose=='MIGRATION_MANAGED';assert request.original_redirect_uri=='https://migration.example/migration/managed/callback'}
                 observerCalls++
                 observedSubjects.add(request.subject as String)
                 def contact=contacts.get(request.subject as String)
@@ -82,6 +87,7 @@ class LegacyMigrationContactReceiptIntegrationSpec extends Specification {
                 long observed=Instant.now().epochSecond
                 def response=[issuer:request.issuer,subject:request.subject,client_id:request.client_id,user_session_id:request.user_session_id,
                     username:contact.phone,email:contact.email,phone_number:contact.phone,enabled:!negative,user_session_active:true,client_session_active:true,observed_at:Instant.ofEpochSecond(observed).toString(),valid_until:Instant.ofEpochSecond(observed+5).toString()]
+                if(v2)response=[protocol_version:2,purpose:request.purpose,original_redirect_uri:request.original_redirect_uri,facts:response,provider_email_verified:providerEmailVerified]
                 byte[] body=JsonOutput.toJson(response).getBytes('UTF-8')
                 exchange.responseHeaders.set('Content-Type','application/json');exchange.sendResponseHeaders(200,body.length);exchange.responseBody.write(body)
             }finally{exchange.close()}
@@ -90,6 +96,7 @@ class LegacyMigrationContactReceiptIntegrationSpec extends Specification {
         contacts.put('signed-existing',[email:EMAIL,phone:PHONE])
         def scopes=new CodeIntentPairScopes(JsonOutput.toJson([[issuer:ISSUER,client_id:'legacy-client'],[issuer:ISSUER,client_id:'managed-client']]),'[]')
         observer=new HttpCodeSessionObservations(URI.create('http://127.0.0.1:'+server.address.port),'s'*32,scopes,HttpCodeSessionObservations.privateClient())
+        readinessObserver=new HttpMigrationProviderReadiness(URI.create('http://127.0.0.1:'+server.address.port),'s'*32,scopes,HttpMigrationProviderReadiness.privateClient())
         def http=new FixtureHttp()
         http.responder={HttpRequest request,handler->
             boolean token=request.uri().path.endsWith('/token')
@@ -116,9 +123,15 @@ class LegacyMigrationContactReceiptIntegrationSpec extends Specification {
             phase('OBSERVATION')
             facts
         } as MigrationManagedProofPort.Observations
+        MigrationProviderReadinessPort readiness={query,start,budget->
+            phase('JWT_VERIFIED')
+            def observed=readinessObserver.observe(query,start,budget)
+            phase('OBSERVATION')
+            observed
+        } as MigrationProviderReadinessPort
         def managedSettings=new LegacyMigrationManagedProviderClient.Settings(URI.create(ISSUER),URI.create(ISSUER+'/protocol/openid-connect/token'),URI.create(ISSUER+'/protocol/openid-connect/certs'),'managed-client',URI.create('https://migration.example/migration/managed/callback'))
         def legacySettings=new LegacyMigrationLegacyAccountProviderClient.Settings(URI.create(ISSUER),URI.create(ISSUER+'/protocol/openid-connect/token'),URI.create(ISSUER+'/protocol/openid-connect/certs'),'legacy-client',URI.create('https://migration.example/migration/legacy/account-oidc/callback'))
-        managedAdapter=new LegacyMigrationManagedProviderClient(managedSettings,Clock.systemUTC(),observations,http,new LegacyMigrationOidcClient(new LegacyMigrationOidcClient.Settings(URI.create(ISSUER),URI.create(ISSUER+'/protocol/openid-connect/certs'),'managed-client'),Clock.systemUTC(),http))
+        managedAdapter=new LegacyMigrationManagedProviderClient(managedSettings,Clock.systemUTC(),readiness,http,new LegacyMigrationOidcClient(new LegacyMigrationOidcClient.Settings(URI.create(ISSUER),URI.create(ISSUER+'/protocol/openid-connect/certs'),'managed-client'),Clock.systemUTC(),http))
         accountAdapter=new LegacyMigrationLegacyAccountProviderClient(legacySettings,Clock.systemUTC(),observations,http,new LegacyMigrationOidcClient(new LegacyMigrationOidcClient.Settings(URI.create(ISSUER),URI.create(ISSUER+'/protocol/openid-connect/certs'),'legacy-client'),Clock.systemUTC(),http))
         MigrationManagedProofPort measuredManaged={attempt,input,sink->
             managedAdapter.exchange(attempt,input,{claims,facts->sink.accept(claims,facts);phase('SINK_ACCEPTED')} as MigrationManagedProofPort.VerifiedSink)
@@ -126,11 +139,11 @@ class LegacyMigrationContactReceiptIntegrationSpec extends Specification {
         MigrationLegacyAccountProofPort measuredAccount={attempt,input,sink->
             accountAdapter.exchange(attempt,input,{claims,facts->sink.accept(claims,facts);phase('SINK_ACCEPTED')} as MigrationLegacyAccountProofPort.VerifiedSink)
         } as MigrationLegacyAccountProofPort
-        managed=new PostgresLegacyMigrationManagedProofStore(database,custody,crypto,measuredManaged,observations,new PostgresLegacyMigrationManagedProofStore.Settings(ACTOR,ISSUER,'managed-client','https://migration.example/migration/managed/callback'),true)
+        managed=new PostgresLegacyMigrationManagedProofStore(database,custody,crypto,measuredManaged,readiness,new PostgresLegacyMigrationManagedProofStore.Settings(ACTOR,ISSUER,'managed-client','https://migration.example/migration/managed/callback'),true)
         account=new PostgresLegacyMigrationAccountProofStore(database,custody,crypto,measuredAccount,new PostgresLegacyMigrationManagedProofStore.Settings(ACTOR,ISSUER,'legacy-client','https://migration.example/migration/legacy/account-oidc/callback'),true)
         browser=new PostgresLegacyMigrationBrowserService(database,auth,local,account,managed,crypto,URI.create(ISSUER+'/protocol/openid-connect/auth'),URI.create(ISSUER+'/protocol/openid-connect/auth'),true)
     }
-    def cleanup(){managedAdapter?.close();accountAdapter?.close();observer?.close();server?.stop(0);serverThreads?.shutdownNow();serverThreads?.awaitTermination(3,TimeUnit.SECONDS);database?.close();postgres?.stop()}
+    def cleanup(){managedAdapter?.close();accountAdapter?.close();readinessObserver?.close();observer?.close();server?.stop(0);serverThreads?.shutdownNow();serverThreads?.awaitTermination(3,TimeUnit.SECONDS);database?.close();postgres?.stop()}
     long count(String table){database.transaction{sql->sql.fetchOne('select count(*) from '+table).get(0,Long)}}
     def localOwner(){auth.register(EMAIL,PASSWORD,PHONE);def token=auth.login(EMAIL,PASSWORD).accessToken();def original=auth.me('Bearer '+token).id();[identityId:original,token:token,admission:auth.beginLegacyMigration(EMAIL,PASSWORD,UUID.randomUUID(),local)]}
     void interactive(MigrationManagedProofStore.Redirect redirect,String table){

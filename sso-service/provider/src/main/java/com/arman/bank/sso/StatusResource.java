@@ -20,6 +20,7 @@ public final class StatusResource {
     private final java.util.function.Supplier<String> bindingKey;
     private final java.util.function.BooleanSupplier enrollmentEnabled;
     private final java.util.function.BooleanSupplier codeSessionEnabled;
+    private final java.util.function.Supplier<CodeIntentProviderConfiguration> migrationConfiguration;
     StatusResource(KeycloakSession session) { this(session, () -> System.getenv("AUTH_TO_SSO_STATUS_KEY")); }
     StatusResource(KeycloakSession session, java.util.function.Supplier<String> statusKey) {
         this(session, statusKey, () -> Bridge.required("ARMONEY_PROVIDER_BINDING_KEY"), Bridge::enabled);
@@ -31,9 +32,30 @@ public final class StatusResource {
     StatusResource(KeycloakSession session, java.util.function.Supplier<String> statusKey,
                    java.util.function.Supplier<String> bindingKey, java.util.function.BooleanSupplier enrollmentEnabled,
                    java.util.function.BooleanSupplier codeSessionEnabled) {
+        this(session,statusKey,bindingKey,enrollmentEnabled,codeSessionEnabled,()->CodeIntentLoginProtocolFactory.owner(session).configuration());
+    }
+    StatusResource(KeycloakSession session,java.util.function.Supplier<String> statusKey,
+                   java.util.function.Supplier<String> bindingKey,java.util.function.BooleanSupplier enrollmentEnabled,
+                   java.util.function.BooleanSupplier codeSessionEnabled,java.util.function.Supplier<CodeIntentProviderConfiguration> migrationConfiguration) {
         this.session = session; this.statusKey = statusKey; this.bindingKey = bindingKey;
         this.enrollmentEnabled = enrollmentEnabled;
         this.codeSessionEnabled=codeSessionEnabled;
+        this.migrationConfiguration=migrationConfiguration;
+    }
+
+    @POST @Path("code-session/v2") @Consumes(MediaType.APPLICATION_JSON) @Produces(MediaType.APPLICATION_JSON)
+    public Response migrationReadiness(@HeaderParam("X-ArMoney-Auth-Status-Key") String supplied,byte[] body){
+        String configured=statusKey.get();
+        if(configured==null||configured.length()<32||configured.length()>256||configured.chars().anyMatch(c->c<33||c>126))return empty(503);
+        if(supplied==null||supplied.length()>256||!MessageDigest.isEqual(configured.getBytes(StandardCharsets.UTF_8),supplied.getBytes(StandardCharsets.UTF_8)))return empty(401);
+        if(!codeSessionEnabled.getAsBoolean())return empty(503);
+        if(body==null||body.length>12288)return empty(400);
+        final MigrationReadinessObservation.Request request;
+        try{request=MigrationReadinessObservation.parse(Bridge.strictJson(body));}
+        catch(IllegalArgumentException|java.io.IOException invalid){return empty(400);}
+        try{return Response.ok(MigrationReadinessObservation.observe(session,request,java.time.Clock.systemUTC(),migrationConfiguration.get()))
+                .type(MediaType.APPLICATION_JSON_TYPE).header("Cache-Control","no-store").build();}
+        catch(RuntimeException unavailable){return empty(503);}
     }
 
     @POST @Path("code-session") @Consumes(MediaType.APPLICATION_JSON) @Produces(MediaType.APPLICATION_JSON)

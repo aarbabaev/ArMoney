@@ -33,6 +33,9 @@ deadline, epoch, source and authority rechecks remain mandatory.
 
 Migration still requires the provider flag to be true, before operation lookup
 or admission writes. Unknown, partial or changed source authority fails closed.
+The separate provider verification prerequisite and fresh readiness contract for
+migration are described in [ADR 0059](0059-migration-provider-email-readiness.md);
+their acceptance remains pending. Registration authority does not bypass them.
 Do not change retained fingerprint/HMAC codecs, existing sessions or legacy login.
 No provider contact, token claim, public request schema or database schema changes.
 

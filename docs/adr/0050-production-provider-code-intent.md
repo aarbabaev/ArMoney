@@ -75,6 +75,11 @@ verification into Keycloak's user flag or changing migration's provider-flag
 requirement. Known claim format, current contact authority and genuine C2 proof
 remain independently required; see [ADR 0052](0052-registration-email-admission-authority.md).
 
+The migration-only provider email prerequisite and private V2 readiness boundary
+are being integrated under [ADR 0059](0059-migration-provider-email-readiness.md).
+Their runtime acceptance remains pending; they do not change registration's
+authority, the purpose manifest or native proof requirements.
+
 The production package must exclude fixture control resources and historical
 proof factories. Disabled and unrelated realm/system-client behavior retains
 stock Keycloak semantics. Key material is supplied outside version control through

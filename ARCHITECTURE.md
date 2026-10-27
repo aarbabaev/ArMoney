@@ -1750,6 +1750,15 @@ or replace fresh User-current and source-authority checks. Status reads remain
 read-only. Full LOCAL/SSO runtime and recovery acceptance remain required; see
 [ADR 0058](docs/adr/0058-post-final-user-release.md).
 
+The provider email-readiness repair is being integrated under
+[ADR 0059](docs/adr/0059-migration-provider-email-readiness.md). Its agreed boundary
+keeps migration's provider-email admission requirement: a purpose-bound stock
+Keycloak email verification precedes the bounded Auth attempt, and a private V2
+provider observation supplies fresh current-contact readiness before receipt and
+FINAL. V1, Auth OTPs and existing source/session fences remain required. Provider
+email-replacement races and complete LOCAL/SSO acceptance are unresolved gates;
+this contract description does not establish runtime readiness or activation.
+
 Passwordless historical SSO identities cannot acquire an email in the credential
 row under the existing credentials-pair constraint. The proposed separate owner
 contact flow uses genuine existing-account proof, an explicit email candidate

@@ -72,6 +72,18 @@ A new migration-backed contact mutation without supported original command custo
 
 The browser resource graph additionally requires `AUTH_TO_USER_MIGRATION_PUBLICATION_KEY` and `USER_TO_AUTH_MIGRATION_DECISION_KEY` as separate purpose credentials. Enabling source flags does not itself establish external browser, provider, Mailtrap inbox or Android acceptance.
 
+The provider email-readiness repair is being integrated under
+[ADR 0059](adr/0059-migration-provider-email-readiness.md). Historical targets must
+complete genuine provider-owned email verification before starting Auth's bounded
+migration attempt. This prerequisite does not replace either Auth OTP. The private
+V2 observation must bind current provider contacts and the original migration
+purpose/client/session/redirect before managed receipt and before FINAL. Provider
+verification outages, false flags or changed bindings cannot advance migration.
+V1 remains unchanged, and the provider capability must precede Auth activation.
+An already completed FINAL is not replayed to verify provider email. Complete
+LOCAL/SSO delivered-link acceptance and provider contact-race testing remain
+pending; no activation is implied.
+
 Both OIDC callbacks require the original `state` and `code`. Standard optional
 `iss` must exactly match the issuer derived from the server-selected account or
 managed authorization endpoint. Optional `session_state` is bounded opaque

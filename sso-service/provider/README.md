@@ -336,6 +336,24 @@ nor accesses an auth database.
 
 ## Configuration and integration requests
 
+The migration email-readiness repair is being integrated under
+[ADR 0059](../../docs/adr/0059-migration-provider-email-readiness.md). Its trigger
+requires an enabled realm required-action model with alias/provider ID
+`armoney-migration-email-verification`, `defaultAction=false`. Stock `VERIFY_EMAIL`
+must also be enabled with `defaultAction=false`; keep realm `verifyEmail=false`.
+Do not assign the trigger itself as a user action. It selects only exact configured
+migration-purpose callbacks and enqueues the stock email action without changing
+the verified flag. Existing strict registration code actions remain separate.
+
+Stock provider verification requires genuine private realm SMTP configuration
+with authenticated, verified STARTTLS. Never persist SMTP credentials in realm
+exports or templates. Complete it before starting Auth's bounded migration
+attempt. The private `armoney-status/code-session/v2` endpoint reuses
+`AUTH_TO_SSO_STATUS_KEY` and the enabled production purpose manifest; its exact
+versioned contract is in ADR 0059. Deploy the provider capability before enabling
+the consuming Auth migration configuration. V1 remains unchanged. Current-contact
+replacement races and complete delivered-link acceptance remain open gates.
+
 `ARMONEY_VERIFICATION_ENABLED` defaults false. Enabled startup requires
 `ARMONEY_AUTH_BRIDGE_URL`, `SSO_VERIFICATION_BRIDGE_KEY` and separate
 `ARMONEY_PROVIDER_BINDING_KEY` (minimum 32 characters). The private observation
