@@ -329,7 +329,10 @@ class ManagedBankingIntegrationSpec extends Specification {
         execute("update verification_authorities set state='SUSPENDED',verification_epoch=verification_epoch+1,revision=revision+1")
         def calls=new java.util.concurrent.atomic.AtomicInteger()
         when:consumer({binding,start->calls.incrementAndGet();committedFacts(binding)}).validate('Bearer '+session.accessToken())
-        then:thrown(L.Failure);calls.get()==0;count('managed_banking_event_consumptions')==1
+        then:
+        def failure=thrown(AuthFailure)
+        failure.kind()==AuthFailure.Kind.UNAUTHORIZED
+        calls.get()==0;count('managed_banking_event_consumptions')==1
     }
     def 'same epoch without exact User ACK does not call provider or create managed session'(){
         given:def input=confirmed();execute("update auth_verification_projection_tombstones set recovery_barrier=true")
