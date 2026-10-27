@@ -226,7 +226,11 @@ class MigrationUserReleaseRecoveryIntegrationSpec extends Specification {
         responseMode='ok';replaceProducer(URI.create('http://127.0.0.1:'+proxy.address.port))
         def restarted=browser();def completed=browserStep(BrowserCheckpoint.RESTARTED_FINAL,true){restarted.finish(context.cookie,context.form.csrf(),context.form.commandId())}
         then:completed.status()==B.Status.COMPLETED;calls.get()==2;Arrays.equals(bodies[0],bodies[1])
-        when:def replay=browserStep(BrowserCheckpoint.FINAL_REPLAY,true){restarted.finish(context.cookie,context.form.csrf(),context.form.commandId())};def status=browserStep(BrowserCheckpoint.COMPLETED_STATUS,true){restarted.status(context.cookie)}
+        when:
+        def replay=browserStep(BrowserCheckpoint.FINAL_REPLAY,true){restarted.finish(context.cookie,context.form.csrf(),context.form.commandId())}
+        // Read-only DB-clock wait for real actor credits; original browser deadlines remain unchanged.
+        awaitNaturalAdmissionCredits()
+        def status=browserStep(BrowserCheckpoint.COMPLETED_STATUS,true){restarted.status(context.cookie)}
         then:replay==completed;status==completed;calls.get()==2;count('legacy_migration_final_completions')==1
     }
     def 'worker acknowledgement completes read-only browser status without a cached FINAL result or another POST'(){
@@ -253,6 +257,9 @@ class MigrationUserReleaseRecoveryIntegrationSpec extends Specification {
             sql.execute("create function qa_release_ack_failure() returns trigger language plpgsql as 'begin raise exception ''synthetic acknowledgement rollback''; end;'")
             sql.execute('create trigger qa_release_ack_failure before insert on legacy_migration_user_release_acks for each row execute function qa_release_ack_failure()')
         }
+        // Begin the four positive admission-scoped calls with naturally replenished credits.
+        // Original deadlines and the separate explicit rate-limit negative stay unchanged.
+        awaitNaturalAdmissionCredits()
         when:resolve(context)
         then:
         def failure=thrown(RuntimeException)

@@ -67,7 +67,7 @@ class VerificationProjectionUpgradeIntegrationSpec extends Specification {
             ['legacy_migration_managed_attempts','legacy_migration_managed_claims','legacy_migration_managed_receipts','legacy_migration_managed_targets','legacy_migration_managed_completions','legacy_migration_managed_observations','legacy_migration_account_attempts','legacy_migration_account_claims','legacy_migration_account_receipts','legacy_migration_account_completions','legacy_migration_browser_forms','legacy_migration_browser_accounts','legacy_migration_browser_consumptions'].each { table -> assert current.fetchOne('select count(*) from '+table).get(0,Long)==0L }
             ['legacy_migration_otp_stages','legacy_migration_otp_stage_acks','legacy_migration_otp_candidates','legacy_migration_otp_challenges','legacy_migration_otp_receipts','legacy_migration_otp_outbox','legacy_migration_otp_commands','auth_otp_issuance_reservations'].each { table -> assert current.fetchOne('select count(*) from '+table).get(0,Long)==0L }
             assert current.fetchOne('select count(*) from legacy_migration_intents').get(0,Long)==0L
-            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '22'
+            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '23'
             ['verification_authorities','verification_candidates','verification_authority_phone_claims','verification_flow_barriers','verification_flows','verification_authority_admission','verification_authority_commands'].each { table ->
                 assert current.fetchOne('select count(*) as n from ' + table).get('n', Long) == 0
             }
@@ -76,7 +76,7 @@ class VerificationProjectionUpgradeIntegrationSpec extends Specification {
                 assert current.fetchOne('select count(*) as n from ' + table + ' where candidate_id is not null').get('n', Long) == 0
             }
             assert current.fetch('select * from flyway_schema_history where cast(version as integer) <= ? order by installed_rank', 7).intoMaps() == history
-            assert current.fetch('select version from flyway_schema_history order by installed_rank').getValues('version', String) == ['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22']
+            assert current.fetch('select version from flyway_schema_history order by installed_rank').getValues('version', String) == ['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23']
             assert snapshots(current) == before
             ['auth_verification_projection_commands','auth_verification_projection_tombstones','auth_verification_projection_admission'].each { table ->
                 assert current.fetchOne('select count(*) as n from ' + table).get('n', Long) == 0

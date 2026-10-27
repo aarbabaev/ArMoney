@@ -78,7 +78,8 @@ class LegacyMigrationContactReceiptIntegrationSpec extends Specification {
                 assert exchange.requestHeaders.getFirst('X-ArMoney-Auth-Status-Key')=='s'*32
                 def request=new JsonSlurper().parse(exchange.requestBody)
                 boolean v2=exchange.requestURI.path.endsWith('/v2')
-                assert request.keySet()==(v2?['protocol_version','purpose','original_redirect_uri','issuer','subject','client_id','user_session_id']:['issuer','subject','client_id','user_session_id']) as Set
+                def expectedFields=v2 ? ['protocol_version','purpose','original_redirect_uri','issuer','subject','client_id','user_session_id'] : ['issuer','subject','client_id','user_session_id']
+                assert request.keySet()==(expectedFields as Set)
                 if(v2){assert request.protocol_version==2;assert request.purpose=='MIGRATION_MANAGED';assert request.original_redirect_uri=='https://migration.example/migration/managed/callback'}
                 observerCalls++
                 observedSubjects.add(request.subject as String)
