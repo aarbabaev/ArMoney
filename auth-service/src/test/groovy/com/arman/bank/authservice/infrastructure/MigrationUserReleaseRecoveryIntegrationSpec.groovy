@@ -95,7 +95,7 @@ class MigrationUserReleaseRecoveryIntegrationSpec extends Specification {
         boolean full=false
         while(!full&&System.nanoTime()<until){
             full=managed().database.transaction{sql->
-                def row=sql.fetchOne('select least(20,credits+greatest(0,extract(epoch from clock_timestamp()-refilled_at))*2)>=20 as full from sso_login_proof_admission where writer_hash=?',writer)
+                def row=sql.fetchOne('select least(20,credits+greatest(0,extract(epoch from clock_timestamp()-refilled_at))*2)>=20 as full from sso_login_proof_admission where writer_hash=?',new Object[]{writer})
                 row==null||Boolean.TRUE.equals(row.get('full',Boolean))
             }
             if(!full)Thread.sleep(50)
