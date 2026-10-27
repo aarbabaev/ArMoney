@@ -235,6 +235,39 @@ class ManagedBankingIntegrationSpec extends Specification {
         when:consumer({binding,start->calls.incrementAndGet();committedFacts(binding)}).exchange('wrong.sid.token',principal(input,'wrong-session'))
         then:thrown(L.Failure);calls.get()==0;count('managed_banking_operations')==0;count('managed_banking_sessions')==0
     }
+    def 'native token #contact mismatch denies before observation without consuming genuine confirmed proof'(){
+        given:
+        def input=confirmed()
+        def original=principal(input)
+        def mismatched=new SsoTokens.Principal(original.issuer(),original.subject(),tokenPhone,tokenEmail,
+            true,true,original.tokenContext())
+        def before=snapshots()
+        def calls=new java.util.concurrent.atomic.AtomicInteger()
+        def service=consumer({binding,start->calls.incrementAndGet();committedFacts(binding)})
+        assert mismatched.emailVerified()
+        assert mismatched.tokenContext()==original.tokenContext()
+        when:service.exchange('authenticated.contact.fixture',mismatched)
+        then:thrown(L.Failure)
+        calls.get()==0
+        count('managed_banking_operations')==0
+        count('managed_banking_sessions')==0
+        count('managed_banking_event_consumptions')==0
+        count('managed_banking_completions')==0
+        count('sessions')==0
+        snapshots()==before
+        when:def session=service.exchange('authenticated.contact.fixture',original)
+        then:session.accessToken().size()==43
+        calls.get()==1
+        count('managed_banking_sessions')==1
+        count('managed_banking_operations')==1
+        count('managed_banking_event_consumptions')==1
+        count('managed_banking_completions')==1
+        count('sessions')==0
+        where:
+        contact | tokenEmail | tokenPhone
+        'email' | 'different@example.test' | PHONE
+        'phone' | EMAIL | '+971521234567'
+    }
     def 'receipt change during provider observation rolls back exchange and all consumption'(){
         given:def input=confirmed()
         when:consumer({binding,start->execute("update verification_challenges set state='EXPIRED' where purpose='REGISTRATION_EMAIL'");committedFacts(binding)}).exchange('changed.receipt.token',principal(input))

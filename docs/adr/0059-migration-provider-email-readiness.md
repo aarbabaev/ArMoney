@@ -90,13 +90,22 @@ receipt and FINAL while preserving pre-FINAL sessions and financial state. True
 provider verification cannot replace Auth OTPs. Preserve the existing false-flag
 native exchange regression.
 
-Require actual pinned-provider tests for email replacement before link use,
-concurrent replacement during verification and observation, wrong or replayed
-links, expired actions, strict registration exclusion and verified repeat login.
-The reviewed stock handler compares its signed token email with the current
-authenticated email; an atomic compare-and-set guarantee has not been
-established. This race remains an acceptance blocker. Do not infer distributed
-atomicity or permanent future admission from a successful readiness observation.
+Require an actual pinned-provider test that rejects an old verification link
+after a committed email replacement and leaves the replacement unverified.
+Also require wrong/replayed-link and expiry checks, strict registration exclusion
+and verified repeat login. Real PostgreSQL Auth tests must reject contact,
+version or generation changes across remote observation and locked commit;
+native admission must reject changed token contacts and a false provider flag.
+
+The provider flag alone cannot replace current Auth dual-OTP contact authority
+and User ownership. A changed provider contact can prevent admission; no banking
+bypass has been demonstrated. The stock handler compares its signed token email
+with the authenticated email, but atomicity with a concurrent provider update
+has not been established. These checks do not claim global provider compare-and-set,
+protection for other relying parties or permanent future admission. Disposable
+acceptance keeps trusted provider administration quiescent except for the explicit
+replacement negative case. Any observed unauthorized banking admission requires
+a separate finding; it must not be accepted by weakening Auth checks or ingress.
 
 Complete fresh LOCAL and historical-SSO Mailtrap/SMS runs must retain the original
 migration timeout, identity and financial preservation checks, FINAL-once behavior,

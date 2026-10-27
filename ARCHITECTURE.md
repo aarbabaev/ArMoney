@@ -1756,13 +1756,16 @@ keeps migration's provider-email admission requirement: a purpose-bound stock
 Keycloak email verification precedes the bounded Auth attempt, and a private V2
 provider observation supplies fresh current-contact readiness before receipt and
 FINAL. V1, Auth OTPs and existing source/session fences remain required. Provider
-email-replacement races and complete LOCAL/SSO acceptance are unresolved gates;
+old-link rejection after committed email replacement, Auth current-contact
+rejection and complete LOCAL/SSO acceptance are unresolved gates;
 this contract description does not establish runtime readiness or activation.
 An explicitly built opt-in image selects the strict Mailtrap email sender for
 provider-owned verification messages. It preserves stock templates/action tokens,
 requires verified STARTTLS and retains default stock sender selection in ordinary
-builds. SMTP lifecycle, hostile TLS/logging and contact-race acceptance remain
-separate gates described in ADR 0059.
+builds. SMTP lifecycle, hostile TLS/logging and delivered-link acceptance remain
+separate gates described in ADR 0059. Atomicity with concurrent provider contact
+updates is not established; provider verification never replaces Auth contact
+authority or User ownership.
 
 Passwordless historical SSO identities cannot acquire an email in the credential
 row under the existing credentials-pair constraint. The proposed separate owner

@@ -81,8 +81,9 @@ purpose/client/session/redirect before managed receipt and before FINAL. Provide
 verification outages, false flags or changed bindings cannot advance migration.
 V1 remains unchanged, and the provider capability must precede Auth activation.
 An already completed FINAL is not replayed to verify provider email. Complete
-LOCAL/SSO delivered-link acceptance and provider contact-race testing remain
-pending; no activation is implied.
+LOCAL/SSO delivered-link acceptance, old-link rejection after committed provider
+email replacement and Auth current-contact rejection remain pending. Concurrent
+provider-update atomicity is not established (ADR 0059); no activation is implied.
 
 Both OIDC callbacks require the original `state` and `code`. Standard optional
 `iss` must exactly match the issuer derived from the server-selected account or

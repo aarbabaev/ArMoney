@@ -351,8 +351,10 @@ exports or templates. Complete it before starting Auth's bounded migration
 attempt. The private `armoney-status/code-session/v2` endpoint reuses
 `AUTH_TO_SSO_STATUS_KEY` and the enabled production purpose manifest; its exact
 versioned contract is in ADR 0059. Deploy the provider capability before enabling
-the consuming Auth migration configuration. V1 remains unchanged. Current-contact
-replacement races and complete delivered-link acceptance remain open gates.
+the consuming Auth migration configuration. V1 remains unchanged. Old-link
+rejection after committed email replacement, Auth current-contact rejection and
+complete delivered-link acceptance remain open gates. Atomicity with concurrent
+provider contact updates is not established; see ADR 0059 for the boundary.
 
 The default Docker build selects the stock email sender. The separate opt-in
 build argument `ARMONEY_EMAIL_SENDER_PROVIDER=armoney-strict-mailtrap` selects the
