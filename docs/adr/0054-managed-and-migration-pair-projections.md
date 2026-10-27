@@ -1,7 +1,9 @@
 # ADR 0054: Explicit banking and migration pair projections
 
 Status: Implemented configuration separation; focused configuration tests passed.
-Actual coenabled migration startup and browser acceptance remain pending.
+Scoped coenabled startup and synthetic LOCAL/historical-SSO browser acceptance
+passed on the source/runtime recorded in PR #96. Exact-head CI, final review and
+deployment remain separate gates.
 
 ## Context
 

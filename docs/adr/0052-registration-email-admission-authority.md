@@ -1,6 +1,6 @@
 # ADR 0052: Registration email authority at managed admission
 
-Status: Implemented in the integration source; independent acceptance pending. No activation is implied.
+Status: Implemented in the integration source; scoped registration and migration acceptance independently verified. Exact-head CI, final review and deployment remain separate gates. No activation is implied.
 
 ## Context
 
@@ -35,7 +35,9 @@ Migration still requires the provider flag to be true, before operation lookup
 or admission writes. Unknown, partial or changed source authority fails closed.
 The separate provider verification prerequisite and fresh readiness contract for
 migration are described in [ADR 0059](0059-migration-provider-email-readiness.md);
-their acceptance remains pending. Registration authority does not bypass them.
+scoped synthetic LOCAL and historical-SSO acceptance passed on the source/runtime
+recorded in PR #96. Exact-head CI, final review and deployment remain separate
+gates. Registration authority does not bypass them.
 Do not change retained fingerprint/HMAC codecs, existing sessions or legacy login.
 No provider contact, token claim, public request schema or database schema changes.
 

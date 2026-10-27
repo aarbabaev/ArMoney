@@ -76,8 +76,10 @@ requirement. Known claim format, current contact authority and genuine C2 proof
 remain independently required; see [ADR 0052](0052-registration-email-admission-authority.md).
 
 The migration-only provider email prerequisite and private V2 readiness boundary
-are being integrated under [ADR 0059](0059-migration-provider-email-readiness.md).
-Their runtime acceptance remains pending; they do not change registration's
+are implemented under [ADR 0059](0059-migration-provider-email-readiness.md).
+Scoped synthetic LOCAL and historical-SSO acceptance passed on the source/runtime
+recorded in PR #96; exact-head CI, final review and deployment remain separate
+gates. These boundaries do not change registration's
 authority, the purpose manifest or native proof requirements.
 
 The production package must exclude fixture control resources and historical

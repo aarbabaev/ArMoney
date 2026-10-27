@@ -82,6 +82,11 @@ verification PostgreSQL and SMTP suites, focused new tests, required affected-co
 disposable Compose acceptance and independent security retesting are required on
 the integrated revision. No build or live provider evidence is implied by source.
 
+The following authority and migration-lineage statements describe this historical
+clean delivery slice, not the later integrated Main composition. See the current
+[architecture map](../ARCHITECTURE.md#managed-banking-consumer-and-legacy-migration-integration)
+for default-off production wiring and scoped acceptance.
+
 The registration, session and ACTIVE-identity authority remains unchanged. No
 verification routes are registered by Main, no new provider is connected, and no
 runtime activation or deployment is included. Projection, legacy identity

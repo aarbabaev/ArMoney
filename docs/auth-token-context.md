@@ -17,8 +17,10 @@ normalization remains unchanged. Managed admission requires known format and
 applies the provider value according to Auth's database-selected authority source;
 the strict registration source still requires its current Auth-owned receipts,
 grant and C2 proof. This value is not contact-verification authority by itself.
-See [ADR 0052](adr/0052-registration-email-admission-authority.md); independent
-acceptance remains pending.
+See [ADR 0052](adr/0052-registration-email-admission-authority.md). Scoped
+registration and synthetic LOCAL/historical-SSO acceptance are independently
+verified on the source/runtime recorded in PR #96; exact-head CI, final review
+and deployment remain separate gates.
 
 Session identifiers are bounded text without whitespace, controls, formatting
 characters or lone surrogates. Valid supplementary Unicode pairs remain allowed.

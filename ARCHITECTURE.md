@@ -12,8 +12,12 @@ The staged consumer described in [ADR 0042](docs/adr/0042-staged-proof-eligibili
 rereads current eligibility evidence after persistence work. Production provider
 packaging and fresh-realm configuration have isolated evidence. Twelve scoped
 production registration, native-code, Gateway, negative-grant, concurrent
-browser callback and response-loss recovery cases passed. Complete migration and
-recovery acceptance and exact-head CI remain pending. Unsupported migration
+browser callback and response-loss recovery cases passed. Separate synthetic
+zero-balance LOCAL and historical SSO migrations passed whole-flow acceptance,
+including delivered OTPs, FINAL release acknowledgement and fresh same-owner
+banking admission. Exact-head CI and deployment remain separate gates; see the
+current delivery PR for source/runtime provenance and scoped negative results.
+Unsupported migration
 contact mutations still fail closed. Existing stored sessions retain
 their original expiry and revocation behavior until successful atomic FINAL.
 
@@ -64,7 +68,7 @@ exact-revision CI and independent review; source implementation is not deploymen
 | Payment | Durable P2P, requester idempotency, recovery, history, in-app notifications and transactional Mailtrap email outbox | Email disabled until configured; real sending requires verified contact; duplicates possible after ambiguous provider acceptance |
 | AI assistant | Implemented read-only C# service, local policy RAG, constrained bank reads and Android screen; local rollout verified on 2026-10-13 | Finite demonstration topics, English extracts, at most six wallets and first-page history of 50; physical-device/live-owner acceptance not run |
 | Gateway | Auth, profile/phone, wallets/balances, P2P and notifications | Further hardening |
-| Local SMS sandbox | Optional authenticated capture API and web inbox, bounded persistent file storage; no carrier delivery | Identity OTP and transaction producers are separate integration tasks |
+| Local SMS sandbox | Optional authenticated capture API and web inbox, bounded persistent file storage; opt-in Auth registration and migration OTP delivery; no carrier delivery | Transaction SMS producers and production carrier delivery remain unimplemented |
 | Operational metrics (#22) | Source: six-service private readiness, payment backlog counts/oldest unresolved ages, process-local worker failure counters, optional named-replica observations and local collector | Baseline and replica observations deployed with bounded independent audits on 2026-10-16; age local checks passed 272 tests; worker/age exact-head CI and rollout remain pending; counters reset and are unknown until first failure |
 | Kafka infrastructure | Optional source-defined three-controller/three-broker KRaft cluster, mutual TLS, exact service ACLs and cold snapshot helper | Real-cluster acceptance and deployment pending; service adapters and financial Saga recovery remain planned |
 
@@ -72,18 +76,18 @@ A payment email presentation candidate adds HTML/plain text and a frozen optiona
 profile display name; it is not yet validated on current CI or deployed. Auth
 remains the destination-verification authority. See [ADR 0030](docs/adr/0030-transaction-email-presentation.md).
 
-Auth also contains a default-disabled registration verification delivery worker
-and encrypted intent/challenge Store, described in
+Auth contains default-off registration verification delivery, encrypted
+intent/challenge storage and separately gated authority/proof resources. Main
+conditionally registers their routes and owns their workers only when the
+corresponding configuration is enabled; disabled routes remain absent. A delivery
+acknowledgement alone cannot establish verified ownership, a receipt, projection
+acknowledgement or banking eligibility. Current integrated behavior and scoped
+acceptance are described under
+[managed banking integration](#managed-banking-consumer-and-legacy-migration-integration).
 [ADR 0031](docs/adr/0031-registration-verification-delivery.md) and the
-[delivery contract](auth-service/VERIFICATION-DELIVERY-CONTRACT.md). This clean
-source slice has not been deployed or activated; clean-revision acceptance is
-pending. Main registers no verification/proof routes (absent routes remain 404),
-starts no login-notice worker, and preserves current registration/session/ACTIVE
-authority and working web SSO. Delivery acknowledgement can open a challenge
-through a fenced Store operation; it cannot establish verified ownership, a
-receipt, projection acknowledgement or ACTIVE identity. No new provider or
-Compose activation is included. The unpublished V6 migration's lineage and the
-limits of historical dirty-worktree evidence are recorded in the contract.
+[delivery contract](auth-service/VERIFICATION-DELIVERY-CONTRACT.md) retain the
+historical V6 lineage and earlier dirty-worktree evidence limits. No persistent
+activation is implied.
 
 Java 21, Gradle multi-project, Javalin, PostgreSQL, Flyway, jOOQ, HikariCP;
 Spock, Testcontainers, ArchUnit; REST/OpenAPI; Docker Compose, GitHub Actions.
@@ -131,13 +135,16 @@ notification failures cannot establish completion or initiate refunds.
 
 The optional [SMS sandbox](docs/sms-sandbox.md) runs from `compose.sms.yaml` on
 a dedicated Docker bridge network with loopback-only ingress. It has its own persistent
-volume and independent sender/reader credentials. It is not connected to the
-identity or payment flows yet; see [ADR 0020](docs/adr/0020-local-sms-sandbox.md).
+volume and independent sender/reader credentials. Auth registration and migration
+OTP flows use its authenticated sender API when explicitly configured; the
+standalone sandbox does not enable those flows. Payment SMS integration remains
+unimplemented; see [ADR 0020](docs/adr/0020-local-sms-sandbox.md).
 
 ```mermaid
 flowchart LR
     Operator["Local operator browser / reader credential"] --> Inbox["SMS sandbox HTTP inbox"]
     Fixture["Authorized test sender / sender credential"] --> Inbox
+    Auth["Opt-in Auth registration and migration OTP / sender credential"] --> Inbox
     Inbox --> Store["Private bounded file snapshot and replay tombstones"]
 ```
 
@@ -1120,6 +1127,11 @@ and [operations](docs/local-baseline.md).
 
 ## Disabled auth login proof storage
 
+Historical component checkpoints: the wiring and availability limits below
+describe their named earlier revisions and isolated slices. Current default-off
+Main composition, provider integration and acceptance are described under
+[managed banking integration](#managed-banking-consumer-and-legacy-migration-integration).
+
 Auth contains V7 login proof/event storage, immutable payload replay, shared
 writer admission and strict private route classes. Main now conditionally
 registers the private proof bridge only through strict default-off
@@ -1317,6 +1329,11 @@ Auth includes the independent strict AUTH_BANKING_ELIGIBILITY_ENFORCED switch, d
 
 ### Managed registration completion: source implemented, default-disabled
 
+Historical authority-slice checkpoints follow. Statements that these slices add
+no positive session authority do not describe the later dedicated managed-session
+consumer. Generic and legacy persistence continue to reject permanently managed
+principals; the dedicated consumer applies its separate current-evidence checks.
+
 The independent strict `AUTH_REGISTRATION_AUTHORITY_COMPLETION_ENABLED` defaults
 false and requires authority bridge and projection enabled. With both current
 contact receipts, completion atomically materializes the reserved UUID, exact
@@ -1430,6 +1447,10 @@ production deployment. See the provider README and scoped frozen contract in
 all activation gates remain explicit.
 
 ### Unwired code-intent configuration validation
+
+This section retains earlier parser, transport and lifecycle checkpoints.
+"Unwired" and unregistered-hook statements describe those revisions, not the
+current production composition.
 
 The provider contains a pure configuration parser for the scoped managed code-intent
 flow. It validates explicit issuer/client pairs, disabled-by-default settings and
@@ -1773,18 +1794,18 @@ updates is not established; provider verification never replaces Auth contact
 authority or User ownership.
 
 Passwordless historical SSO identities cannot acquire an email in the credential
-row under the existing credentials-pair constraint. The proposed separate owner
+row under the existing credentials-pair constraint. The implemented default-off separate owner
 contact flow uses genuine existing-account proof, an explicit email candidate
 and actual OTP consumption; a provider email claim is not contact ownership.
-This extension remains under implementation. User's staged email version/digest
+This extension is not deployed. User's staged email version/digest
 are immutable opaque Auth attestations, distinct from a verified-contact generation.
 
-Retained publication decisions and scoped uncertainty recovery have component
-acceptance evidence. Atomic classification/session revocation and source-aware
-native consumers have source implementations, with positive readiness disabled
-pending complete migration acceptance. The isolated registration OTP continuation
-and subsequent native Gateway admission have scoped production-image evidence;
-this does not establish existing-owner migration or persistent activation.
+Retained publication decisions and uncertainty recovery have scoped component
+evidence. The integrated disposable LOCAL and historical-SSO flows additionally
+passed atomic FINAL, automatic User release and fresh same-owner native Gateway
+admission. Registration continuation has separate scoped production-image evidence.
+These synthetic zero-balance results do not authorize persistent activation or
+establish nonzero-balance/device acceptance.
 The accepted live-contact design adds a fresh User observation and durable Auth
 classification before a relevant User mutation. The current integration denies
 unsupported new migration contact commands without a write; it does not add a
@@ -1893,5 +1914,7 @@ signature, issuer, audience, nonce, freshness and callback replay checks remain
 enforced; non-RSA inventories fail closed. Auth failure diagnostics contain only
 fixed phase markers and grant no authority. This changes no HTTP contract,
 database schema, service ownership or diagram boundary. Controlled RED/GREEN
-verification passed; rebuilt live migration and release acceptance remain pending.
+verification passed. Subsequent isolated LOCAL and historical SSO whole-flow
+migration and release acceptance passed on the application-equivalent source
+recorded in PR #96; exact-head CI and deployment remain separate gates.
 See [ADR 0057](docs/adr/0057-migration-jwks-signing-key-selection.md).

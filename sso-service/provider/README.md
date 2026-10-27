@@ -1,22 +1,26 @@
 # Keycloak verification provider under integration
 
-This standalone Java 21 module targets Keycloak **26.7.4**. It is implementation
-for integration and isolated acceptance, not an activated or end-to-end verified
-flow. Neither the existing realm export nor any persisted realm/user is changed.
+This standalone Java 21 module targets Keycloak **26.7.4**. Its default-off
+production composition has independently verified disposable registration and
+synthetic zero-balance LOCAL/historical-SSO acceptance. Exact-head CI, final review
+and deployment readiness remain separate gates; no persistent activation is
+claimed. Neither the existing realm export nor any persisted realm/user is changed
+by building this module.
 Its standalone settings avoid changing the root service dependency graph.
 
 ## Implemented adapters
 
-The current production source registers seven SPI descriptor types, including
+The current production source registers eight SPI descriptor types, including
 the code-intent OIDC protocol, token-response policy, introspection adapter and
 genuine registration-creation action. These replace neither the durable Auth
 authority nor its separate managed-session admission checks. Historical proof
 factories and acceptance/control resources are excluded from the production
-package inventory. The isolated 130-case provider suite and seven-descriptor
-package check passed for the frozen dedicated-account candidate. Its optimized
-image built and a fresh isolated realm was provisioned through the actual Admin
-API with banking disabled. Production-browser acceptance remains pending; these
-results do not clear later source changes or authorize persistent activation.
+package inventory. An earlier dedicated-account checkpoint passed an isolated
+130-case provider suite and its then-seven-descriptor package check. Its optimized
+image and disabled-banking realm provisioning were scoped evidence for that
+revision. Current image and functional evidence are recorded in the delivery PR;
+earlier results do not clear subsequent source changes or authorize persistent
+activation.
 
 Production configuration uses `ARMONEY_LOGIN_PROOF_ENABLED` (default false),
 `ARMONEY_CODE_INTENT_CODE_HMAC_KEYS` and
@@ -28,7 +32,8 @@ separates native banking, managed migration and legacy account migration.
 The dedicated public `armoney-migration-account` client is accepted only for the
 exact account callback's `MIGRATION_ACCOUNT` purpose and strict read-only code
 observation. It cannot enter managed banking, registration or verification
-allowlists. This additional configuration and its runtime acceptance remain pending.
+allowlists. This configuration is implemented, with scoped historical-SSO
+acceptance; it does not authorize persistent activation.
 See [ADR 0050](../../../docs/adr/0050-production-provider-code-intent.md).
 The disposable dedicated client exposes its token only to the existing
 `armoney-auth` introspection reader. Its single inspection audience mapper does

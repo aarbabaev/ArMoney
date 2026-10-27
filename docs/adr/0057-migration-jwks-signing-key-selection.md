@@ -1,6 +1,6 @@
 # ADR 0057: Migration JWKS signing-key selection
 
-Status: Implemented in the local PR #96 recovery candidate; focused verification passed, live and release acceptance pending.
+Status: Implemented in PR #96; focused verification and scoped synthetic LOCAL/historical-SSO live acceptance passed. Exact-head CI, final review and deployment remain separate gates.
 
 ## Context
 
@@ -16,4 +16,4 @@ Auth emits fixed failure-phase markers without identifiers, contacts, tokens, ex
 
 ## Verification and limits
 
-The regression uses real RSA signatures with mixed signing/encryption inventories in both orders, cross-purpose duplicate IDs, malformed signing material and unavailable signing keys. Independent RED verification reproduced exactly the two mixed-inventory positive failures in 21 tests; the other 19 passed with zero errors or skips and verified cleanup. Fixed-source GREEN passed all 67 focused unit and PostgreSQL tests with zero failures, errors or skips and verified cleanup; independent review confirmed the frozen sources and actual reports. Rebuilt live callback verification remains pending. Full migration in both legacy modes, actual delivered email and sandbox SMS codes, original-owner preservation, FINAL, negative PostgreSQL checks and exact-head CI remain release gates.
+The regression uses real RSA signatures with mixed signing/encryption inventories in both orders, cross-purpose duplicate IDs, malformed signing material and unavailable signing keys. Independent RED verification reproduced exactly the two mixed-inventory positive failures in 21 tests; the other 19 passed with zero errors or skips and verified cleanup. Fixed-source GREEN passed all 67 focused unit and PostgreSQL tests with zero failures, errors or skips and verified cleanup; independent review confirmed the frozen sources and actual reports. Subsequent isolated LOCAL and historical-SSO runs passed rebuilt live callbacks, actual delivered email and sandbox SMS codes, original-owner preservation, FINAL and the pinned negative PostgreSQL checks. These synthetic zero-balance results are bound to the source/runtime recorded in PR #96. Exact-head CI, final independent review and deployment remain separate release gates.

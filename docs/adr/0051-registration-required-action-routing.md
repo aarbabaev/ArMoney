@@ -1,6 +1,6 @@
 # ADR 0051: Registration required-action routing
 
-Status: Implemented in the integration source; independent runtime acceptance pending.
+Status: Implemented in the integration source; scoped registration runtime acceptance independently verified. Exact-head CI, final review, recovery-specific cases and deployment remain separate gates.
 
 ## Context
 
