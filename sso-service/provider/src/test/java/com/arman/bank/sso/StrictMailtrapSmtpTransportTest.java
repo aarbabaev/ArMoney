@@ -40,17 +40,15 @@ final class StrictMailtrapSmtpTransportTest {
         assertFalse(p.containsKey("mail.smtp.ssl.trust"));assertFalse(p.containsKey("mail.smtp.ssl.socketFactory"));
     }
     @Test void genuineTlsSubmissionPreservesStockTokenBodyAndHasNoProtocolOrPiiLogs()throws Exception{
-        var records=new CopyOnWriteArrayList<LogRecord>();var root=Logger.getLogger("");Level previous=root.getLevel();
-        var handler=new Handler(){@Override public void publish(LogRecord record){records.add(record);}@Override public void flush(){}@Override public void close(){}};handler.setLevel(Level.ALL);root.addHandler(handler);root.setLevel(Level.ALL);
-        try(var fixture=new SmtpFixture("positive");var sender=new StrictMailtrapSmtpTransport("localhost",fixture.port(),clientTls.getSocketFactory(),5000,1000)){
+        try(var logs=new LogCapture();var fixture=new SmtpFixture("positive");var sender=new StrictMailtrapSmtpTransport("localhost",fixture.port(),clientTls.getSocketFactory(),5000,1000)){
             assertTrue(sender.send(StrictMailtrapEmailSenderTest.settings(),"recipient@example.test","Verify current contact","token-bearing-body","<p>token-bearing-body</p>"));fixture.await();
             assertTrue(fixture.authenticated);assertTrue(fixture.tlsActive);assertEquals(1,fixture.accepts.get());
             assertTrue(fixture.commands.indexOf("STARTTLS")<fixture.commands.indexOf("AUTH [redacted]"));assertTrue(fixture.message.contains("token-bearing-body"));
             assertTrue(fixture.message.contains("multipart/alternative"));assertNull(fixture.failure);
-            for(LogRecord record:records){String rendered=record.getMessage()+Arrays.toString(record.getParameters());
-                assertFalse(rendered.contains("synthetic-password"));assertFalse(rendered.contains("recipient@example.test"));assertFalse(rendered.contains("token-bearing-body"));
-                assertFalse(rendered.contains("AUTH PLAIN"));assertFalse(record.getLoggerName().startsWith(StrictMailtrapSmtpTransport.class.getName()+"$QuietTransport"));}
-        }finally{root.setLevel(previous);root.removeHandler(handler);}
+            Logger.getLogger("com.arman.bank.sso").warning("SMTP_LOG_ISOLATION_SENTINEL");
+            assertTrue(logs.records.stream().anyMatch(record->"SMTP_LOG_ISOLATION_SENTINEL".equals(record.getMessage())),"Unrelated SSO diagnostics must remain enabled");
+            logs.assertPrivate();
+        }
     }
     @Test void missingTlsRefusalUntrustedAndWrongHostnameNeverSendAuthOrData()throws Exception{
         try(var logs=new LogCapture()){for(String fault:List.of("missing","refused","untrusted","wronghost","handshake-stall")){
@@ -149,8 +147,12 @@ final class StrictMailtrapSmtpTransportTest {
             for(LogRecord record:records){
                 StringWriter errors=new StringWriter();if(record.getThrown()!=null)record.getThrown().printStackTrace(new PrintWriter(errors));
                 String rendered=record.getMessage()+Arrays.toString(record.getParameters())+errors;
-                for(String canary:List.of("synthetic-user","synthetic-password","recipient@example.test","token-bearing-body","AUTH PLAIN"))assertFalse(rendered.contains(canary),"SMTP log leaked a synthetic canary");
-                assertFalse(String.valueOf(record.getLoggerName()).startsWith(StrictMailtrapSmtpTransport.class.getName()+"$QuietTransport"));
+                String logger=String.valueOf(record.getLoggerName());
+                String namespace=logger.startsWith("com.arman.bank.sso.smtp")?"STRICT_SMTP":logger.startsWith("org.eclipse.angus")?"ANGUS":"OTHER";
+                var canaries=List.of("synthetic-user","synthetic-password","recipient@example.test","token-bearing-body","AUTH PLAIN");
+                var categories=List.of("USER","PASSWORD","RECIPIENT","BODY","AUTH_WIRE");
+                for(int i=0;i<canaries.size();i++)assertFalse(rendered.contains(canaries.get(i)),"SMTP_PRIVACY_"+namespace+"_"+categories.get(i));
+                assertFalse(logger.equals("com.arman.bank.sso.smtp")||logger.startsWith("com.arman.bank.sso.smtp."),"SMTP_PRIVACY_STRICT_SMTP_PROTOCOL_RECORD");
             }
         }
         @Override public void close(){root.setLevel(previous);root.removeHandler(handler);}

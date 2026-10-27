@@ -76,7 +76,8 @@ for name in CodeIntentLoginProtocol CodeIntentLoginProtocolFactory CodeIntentTok
   CodeIntentIntrospection CodeIntentIntrospectionFactory CodeIntentRegistrationAction CodeIntentRegistrationFactory \
   CodeIntentRegistrationGuard CodeIntentRegistrationContinuation CodeIntentProviderConfiguration \
   MigrationEmailVerificationFactory MigrationReadinessObservation StrictMailtrapEmailSenderFactory \
-  StrictMailtrapEmailSender StrictMailtrapSmtpTransport; do
+  StrictMailtrapEmailSender StrictMailtrapSmtpTransport smtp/QuietSmtpTransport \
+  'smtp/QuietSmtpTransport$DataWriteObserver' 'smtp/QuietSmtpTransport$1'; do
   grep -Fqx "com/arman/bank/sso/$name.class" "$audit_dir/classes.txt"
 done
 if grep -Eq '^com/arman/bank/sso/[^/]*(Fixture|Observer|Visibility)[^/]*\.class$|^com/arman/bank/sso/Proof[^/]*Factory\.class$' "$audit_dir/classes.txt"; then

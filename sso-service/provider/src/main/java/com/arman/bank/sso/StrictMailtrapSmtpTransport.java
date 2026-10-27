@@ -2,27 +2,20 @@ package com.arman.bank.sso;
 
 import jakarta.mail.*;
 import jakarta.mail.internet.*;
-import org.eclipse.angus.mail.smtp.SMTPTransport;
+import com.arman.bank.sso.smtp.QuietSmtpTransport;
 import javax.net.SocketFactory;
 import javax.net.ssl.SSLSocketFactory;
 import java.io.IOException;
-import java.io.OutputStream;
-import java.io.FilterOutputStream;
 import java.net.*;
 import java.util.Properties;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
-import java.util.logging.*;
 
 /** Bounded SMTP adapter, with a tracked plain socket and normal production JSSE trust. */
 final class StrictMailtrapSmtpTransport implements AutoCloseable {
     private static final Semaphore INFLIGHT=new Semaphore(1);
     private static final ThreadPoolExecutor WORKER=new ThreadPoolExecutor(0,1,1,TimeUnit.SECONDS,new ArrayBlockingQueue<>(1),
             Thread.ofPlatform().name("armoney-strict-smtp").daemon(true).factory(),new ThreadPoolExecutor.AbortPolicy());
-    // Angus chooses the concrete transport class's JUL namespace independently of Session.debug.
-    // Retain and suppress only our subclass loggers; unrelated stock SMTP keeps its configuration.
-    private static final Logger[] QUIET={Logger.getLogger(QuietTransport.class.getName()),Logger.getLogger(QuietTransport.class.getName()+".protocol")};
-    static{for(Logger logger:QUIET)logger.setLevel(Level.OFF);}
     private final String host;private final int port;private final SSLSocketFactory testTls;
     private final long workMillis,cleanupMillis;
     private final int testSendBuffer;
@@ -70,7 +63,7 @@ final class StrictMailtrapSmtpTransport implements AutoCloseable {
         Properties p=properties();p.put("mail.smtp.socketFactory",new TrackingSocketFactory(attempt));p.put("mail.smtp.executor.writetimeout",attempt.writes);
         if(testTls!=null)p.put("mail.smtp.ssl.socketFactory",testTls);
         Session session=Session.getInstance(p);session.setDebug(false);
-        QuietTransport transport=new QuietTransport(session,testObserver);
+        QuietSmtpTransport transport=new QuietSmtpTransport(session,testObserver);
         try{
             MimeMessage message=new MimeMessage(session);InternetAddress from=new InternetAddress(settings.from(),true);
             from.setPersonal(settings.display(),"UTF-8");message.setFrom(from);message.setRecipient(Message.RecipientType.TO,new InternetAddress(recipient,true));message.setSubject(subject,"UTF-8");
@@ -87,25 +80,7 @@ final class StrictMailtrapSmtpTransport implements AutoCloseable {
     }
     @Override public void close(){closed=true;var attempt=current.get();if(attempt!=null){attempt.abort();attempt.writes.shutdownNow();}}
     /** No content, endpoint, credentials or exception material crosses this test seam. */
-    interface DataWriteObserver {
-        void entered(Thread worker);
-        void returned();
-        void socketClosed(boolean closed);
-        void workerExited();
-    }
-    private static final class QuietTransport extends SMTPTransport {
-        private final DataWriteObserver observer;
-        QuietTransport(Session session,DataWriteObserver observer){super(session,null);this.observer=observer;}
-        @Override protected OutputStream data()throws MessagingException{
-            OutputStream output=super.data();
-            if(observer==null)return output;
-            return new FilterOutputStream(output){
-                @Override public void write(int value)throws IOException{observer.entered(Thread.currentThread());try{out.write(value);}finally{observer.returned();}}
-                @Override public void write(byte[] bytes,int offset,int length)throws IOException{observer.entered(Thread.currentThread());try{out.write(bytes,offset,length);}finally{observer.returned();}}
-                @Override public void flush()throws IOException{observer.entered(Thread.currentThread());try{out.flush();}finally{observer.returned();}}
-            };
-        }
-    }
+    interface DataWriteObserver extends QuietSmtpTransport.DataWriteObserver { }
     private static final class Attempt {
         final Socket socket=new Socket();final AtomicBoolean aborted=new AtomicBoolean();final AtomicBoolean supplied=new AtomicBoolean();
         final DataWriteObserver observer;
