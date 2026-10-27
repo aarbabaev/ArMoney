@@ -16,6 +16,8 @@ import java.util.*;
 
 /** Stages only an actual generated BANK_NATIVE code, before returning its redirect. */
 final class CodeIntentLoginProtocol extends OIDCLoginProtocol {
+    private static final org.jboss.logging.Logger LOG=org.jboss.logging.Logger.getLogger(CodeIntentLoginProtocol.class);
+    private enum Phase { CODE_READ,PURPOSE,LIFETIME,WRITE_BINDING,PASSWORD_PROOF,STAGE,POST_STAGE }
     private final CodeIntentLoginProtocolFactory owner;
     private final Clock clock;
     private final java.util.function.BiFunction<String,AuthenticationSessionModel,String> binding;
@@ -36,7 +38,7 @@ final class CodeIntentLoginProtocol extends OIDCLoginProtocol {
     }
     @Override public Response buildRedirectUri(OIDCRedirectUriBuilder builder,AuthenticationSessionModel auth,UserSessionModel user,ClientSessionContext context){
         if(!selected(auth))return super.buildRedirectUri(builder,auth,user,context);
-        Response response=null;
+        Response response=null;Phase phase=Phase.CODE_READ;
         try(InvocationDeadline deadline=InvocationDeadline.start()){
             requireCode(auth.getClientNote(RESPONSE_TYPE_PARAM),auth.getClientNote(RESPONSE_MODE_PARAM));
             response=builder.build();String id=codeId(response,user.getId(),auth.getClient().getId());
@@ -45,13 +47,16 @@ final class CodeIntentLoginProtocol extends OIDCLoginProtocol {
             if(!id.equals(data.getId())||!user.getId().equals(data.getUserSessionId())||!auth.getClient().getId().equals(data.getClientUUID())
                     ||!context.getClientSession().getClient().getId().equals(data.getClientUUID()))throw unavailable();
             requirePublicCode(auth.getClient(),data.getCodeChallenge(),data.getCodeChallengeMethod());
+            phase=Phase.PURPOSE;
             var purpose=owner.configuration().purpose(issuer(),auth.getClient().getClientId(),data.getRedirectUriParam());
             // Migration proofs and explicitly legacy callbacks intentionally have no banking proof.
             if(purpose!=CodeIntentProviderConfiguration.Purpose.BANK_NATIVE){deadline.requireOpen();return response;}
+            phase=Phase.LIFETIME;
             TokenLifetime.configured(user.getRealm(),auth.getClient());
             if(user.getRealm().getAccessCodeLifespan()<1||user.getRealm().getAccessCodeLifespan()>120)throw unavailable();
             Instant now=Instant.ofEpochSecond(clock.instant().getEpochSecond()),expiry=Instant.ofEpochSecond(data.getExpiration());
             if(!now.isBefore(expiry))throw unavailable();
+            phase=Phase.WRITE_BINDING;
             var binding=new LoginProof.Binding(issuer(),user.getUser().getId(),auth.getClient().getClientId(),user.getId());
             String originalSession=this.binding.apply(realm.getId(),auth),note="armoney.code-intent."+id;
             var resources=owner.resources();String pending=auth.getAuthNote(note);LoginProof.Write write;
@@ -61,14 +66,16 @@ final class CodeIntentLoginProtocol extends OIDCLoginProtocol {
                 if(!binding.equals(write.binding())||!write.digest().equals(resources.keys().digest(key,binding,id))||!expiry.equals(write.expires())
                         ||!originalSession.equals(write.authenticationSession())||!"interactive".equals(write.kind()))throw unavailable();
             }else{
+                phase=Phase.PASSWORD_PROOF;
                 String event=auth.getAuthNote(PasswordProofFactory.NOTE),password=auth.getAuthNote(PasswordProofFactory.TIME_NOTE);
                 if(event==null||password==null)throw unavailable(); // Creation/cookie reuse is never a password event.
                 var key=resources.keys().keys().getFirst();
                 write=new LoginProof.Write(UUID.randomUUID(),resources.keys().digest(key,binding,id),key.id(),binding,originalSession,now,expiry,"interactive",LoginProof.uuid(event),LoginProof.time(password));
                 auth.setAuthNote(note,JsonSerialization.writeValueAsString(write.fields()));
             }
-            resources.client().stage(write,deadline);deadline.requireOpen();return response;
-        }catch(Exception rejected){if(response!=null)response.close();throw unavailable();}
+            phase=Phase.STAGE;
+            resources.client().stage(write,deadline);phase=Phase.POST_STAGE;deadline.requireOpen();return response;
+        }catch(Exception rejected){LOG.warnf("armoney_native_code_failure phase=%s",phase);if(response!=null)response.close();throw unavailable();}
     }
     static String codeId(Response response,String sessionId,String clientInternalId){
         if(response.getStatus()!=302||response.getLocation()==null||response.getLocation().getRawQuery()==null||response.getLocation().getRawFragment()!=null)throw unavailable();

@@ -20,6 +20,31 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Actual pinned override/context objects with synthetic transport/model data; not runtime PKCE proof. */
 class CodeIntentProviderHookTest {
+    @Test void protocolFailureDiagnosticsRevealOnlyPhaseAndSuccessIsSilent()throws Exception{
+        var records=new ArrayList<java.util.logging.LogRecord>();
+        var logger=java.util.logging.Logger.getLogger(CodeIntentLoginProtocol.class.getName());
+        var handler=new java.util.logging.Handler(){
+            public void publish(java.util.logging.LogRecord record){records.add(record);}
+            public void flush(){}public void close(){}
+        };
+        logger.addHandler(handler);
+        try {
+            try(var f=new Fixture()){
+                f.notes.clear();var failure=assertThrows(WebApplicationException.class,()->f.redirect());
+                assertEquals(503,failure.getResponse().getStatus());assertTrue(f.operations.isEmpty());
+                assertEquals(List.of("armoney_native_code_failure phase=PASSWORD_PROOF"),records.stream().map(java.util.logging.LogRecord::getMessage).toList());
+            }
+            records.clear();
+            try(var f=new Fixture()){
+                f.failStage=true;var failure=assertThrows(WebApplicationException.class,()->f.redirect());
+                assertEquals(503,failure.getResponse().getStatus());assertEquals(List.of(CodeIntentHttp.Operation.STAGE),f.operations);
+                assertEquals(List.of("armoney_native_code_failure phase=STAGE"),records.stream().map(java.util.logging.LogRecord::getMessage).toList());
+                assertNull(records.getFirst().getThrown());
+                records.clear();f.failStage=false;try(var response=f.redirect()){assertEquals(302,response.getStatus());}
+                assertTrue(records.isEmpty());assertEquals(2,f.operations.size());
+            }
+        }finally{logger.removeHandler(handler);}
+    }
     @Test void generatedNativeCodeWaitsForStageAndUncertainRetryKeepsExactOriginalCommand()throws Exception{
         try(var f=new Fixture()){
             f.failStage=true;
