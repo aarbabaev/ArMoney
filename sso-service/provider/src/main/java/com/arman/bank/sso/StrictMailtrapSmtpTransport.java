@@ -19,7 +19,7 @@ final class StrictMailtrapSmtpTransport implements AutoCloseable {
     private final String host;private final int port;private final SSLSocketFactory testTls;
     private final long workMillis,cleanupMillis;
     private final int testSendBuffer;
-    private final DataWriteObserver testObserver;
+    private final QuietSmtpTransport.DataWriteObserver testObserver;
     private final AtomicReference<Attempt> current=new AtomicReference<>();private volatile boolean closed;
     StrictMailtrapSmtpTransport(){this("sandbox.smtp.mailtrap.io",2525,null,14000,1000);}
     /** Loopback TLS fixtures only; never reachable from production config or environment. */
@@ -27,7 +27,7 @@ final class StrictMailtrapSmtpTransport implements AutoCloseable {
         this(host,port,tls,workMillis,cleanupMillis,0,null);
     }
     /** Nonblocking instrumentation and advisory plain-socket buffer for synthetic loopback tests only. */
-    StrictMailtrapSmtpTransport(String host,int port,SSLSocketFactory tls,long workMillis,long cleanupMillis,int sendBuffer,DataWriteObserver observer){
+    StrictMailtrapSmtpTransport(String host,int port,SSLSocketFactory tls,long workMillis,long cleanupMillis,int sendBuffer,QuietSmtpTransport.DataWriteObserver observer){
         this.host=host;this.port=port;this.testTls=tls;this.workMillis=workMillis;this.cleanupMillis=cleanupMillis;
         this.testSendBuffer=sendBuffer;this.testObserver=observer;
         if(workMillis<1||workMillis>14000||cleanupMillis<0||cleanupMillis>1000||sendBuffer<0)throw new IllegalArgumentException();
@@ -80,13 +80,12 @@ final class StrictMailtrapSmtpTransport implements AutoCloseable {
     }
     @Override public void close(){closed=true;var attempt=current.get();if(attempt!=null){attempt.abort();attempt.writes.shutdownNow();}}
     /** No content, endpoint, credentials or exception material crosses this test seam. */
-    interface DataWriteObserver extends QuietSmtpTransport.DataWriteObserver { }
     private static final class Attempt {
         final Socket socket=new Socket();final AtomicBoolean aborted=new AtomicBoolean();final AtomicBoolean supplied=new AtomicBoolean();
-        final DataWriteObserver observer;
+        final QuietSmtpTransport.DataWriteObserver observer;
         final CountDownLatch exited=new CountDownLatch(1);
         final ScheduledThreadPoolExecutor writes=new ScheduledThreadPoolExecutor(1,Thread.ofPlatform().name("armoney-strict-smtp-write").daemon(true).factory());
-        Attempt(int sendBuffer,DataWriteObserver observer)throws IOException{
+        Attempt(int sendBuffer,QuietSmtpTransport.DataWriteObserver observer)throws IOException{
             this.observer=observer;writes.setRemoveOnCancelPolicy(true);
             try{if(sendBuffer>0)socket.setSendBufferSize(sendBuffer);}catch(IOException failure){abort();writes.shutdownNow();throw failure;}
         }

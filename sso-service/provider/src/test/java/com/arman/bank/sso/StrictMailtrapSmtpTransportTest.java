@@ -130,7 +130,7 @@ final class StrictMailtrapSmtpTransportTest {
                     ||type.startsWith("java.net.Socket$")&&method.equals("write");
         });
     }
-    private static final class WriteProbe implements StrictMailtrapSmtpTransport.DataWriteObserver {
+    private static final class WriteProbe implements com.arman.bank.sso.smtp.QuietSmtpTransport.DataWriteObserver {
         final java.util.concurrent.atomic.AtomicLong entered=new java.util.concurrent.atomic.AtomicLong(),returned=new java.util.concurrent.atomic.AtomicLong();
         final java.util.concurrent.atomic.AtomicBoolean socketClosed=new java.util.concurrent.atomic.AtomicBoolean();final CountDownLatch exited=new CountDownLatch(1);volatile Thread worker;
         @Override public void entered(Thread worker){this.worker=worker;entered.incrementAndGet();}
