@@ -1728,15 +1728,17 @@ authority. See [ADR 0047](docs/adr/0047-legacy-user-migration-baseline.md) and t
 Auth V15–V23 source adds generation/session fences, restricted account admission,
 server-owned PKCE custody, durable provider claims and migration-specific OTP
 evidence, retained publication decisions, strict User ACK custody and typed
-migration-source metadata. These components are not a completed migration:
-isolated positive atomic cutover and rollback evidence does not establish the
-complete production browser flow or subsequent native-login acceptance.
+migration-source metadata. The integrated browser flow has passed independent
+synthetic, zero-balance LOCAL and historical-SSO acceptance through FINAL, User
+release and fresh same-owner native Gateway admission. Separate provider-link
+negatives, CI and final review remain required for coordinated rollout; these
+disposable results do not establish deployment readiness.
 Default-off browser ingress, provider adapters and resource composition are
 present in the integration source. Auth Main selects the browser and private
 decision handlers, genuine registration authority, current-User observation and
-source-aware native consumers explicitly. Integrated startup and positive
-acceptance are still pending; this does not describe an enabled deployment. The
-web edge explicitly rejects the migration namespace rather than serving the SPA.
+source-aware native consumers explicitly. This does not describe an enabled
+deployment. The web edge explicitly rejects the migration namespace rather than
+serving the SPA.
 
 Auth V23 retains immutable post-FINAL User release acknowledgements. Browser
 completion and cached completed results require a validated acknowledgement of
@@ -1750,7 +1752,7 @@ or replace fresh User-current and source-authority checks. Status reads remain
 read-only. Full LOCAL/SSO runtime and recovery acceptance remain required; see
 [ADR 0058](docs/adr/0058-post-final-user-release.md).
 
-The provider email-readiness repair is being integrated under
+The implemented provider email-readiness repair follows
 [ADR 0059](docs/adr/0059-migration-provider-email-readiness.md). Its agreed boundary
 keeps migration's provider-email admission requirement: a purpose-bound stock
 Keycloak email verification precedes the bounded Auth attempt, and a private V2
@@ -1758,9 +1760,10 @@ provider observation supplies fresh current-contact readiness before receipt and
 FINAL. V1, Auth OTPs and existing source/session fences remain required. Provider
 trigger evaluation covers authenticated `AUTHENTICATE` and `REQUIRED_ACTIONS`
 phases with the same subject and manifest guards, including the first login.
-Provider old-link rejection after committed email replacement, Auth current-contact
-rejection and complete LOCAL/SSO acceptance are unresolved gates;
-this contract description does not establish runtime readiness or activation.
+Independent disposable tests verify provider old-link rejection after committed
+email replacement, Auth current-contact rejection and synthetic LOCAL/SSO
+acceptance. Separate action-token negatives, CI and final review remain required;
+this evidence does not establish deployment readiness or activation.
 An explicitly built opt-in image selects the strict Mailtrap email sender for
 provider-owned verification messages. It preserves stock templates/action tokens,
 requires verified STARTTLS and retains default stock sender selection in ordinary

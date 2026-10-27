@@ -1,6 +1,6 @@
 # ADR 0059: Provider email readiness before migration completion
 
-Status: Agreed contract; implementation and independent acceptance pending. No activation authorization is implied.
+Status: Implemented in integration source. Synthetic LOCAL/SSO positive acceptance is independently verified; coordinated rollout still requires provider-link negatives, CI and final review. No activation authorization is implied.
 
 ## Context
 

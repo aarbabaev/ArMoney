@@ -336,7 +336,7 @@ nor accesses an auth database.
 
 ## Configuration and integration requests
 
-The migration email-readiness repair is being integrated under
+The implemented migration email-readiness repair follows
 [ADR 0059](../../docs/adr/0059-migration-provider-email-readiness.md). Its trigger
 requires an enabled realm required-action model with alias/provider ID
 `armoney-migration-email-verification`, `defaultAction=false`. Stock `VERIFY_EMAIL`
@@ -353,10 +353,12 @@ exports or templates. Complete it before starting Auth's bounded migration
 attempt. The private `armoney-status/code-session/v2` endpoint reuses
 `AUTH_TO_SSO_STATUS_KEY` and the enabled production purpose manifest; its exact
 versioned contract is in ADR 0059. Deploy the provider capability before enabling
-the consuming Auth migration configuration. V1 remains unchanged. Old-link
-rejection after committed email replacement, Auth current-contact rejection and
-complete delivered-link acceptance remain open gates. Atomicity with concurrent
-provider contact updates is not established; see ADR 0059 for the boundary.
+the consuming Auth migration configuration. V1 remains unchanged. Independent
+disposable tests verify old-link rejection after committed email replacement,
+Auth current-contact rejection and synthetic LOCAL/SSO delivered-link acceptance.
+Separate action-token negatives, CI and final review remain required. Atomicity
+with concurrent provider contact updates is not established; see ADR 0059 for
+the boundary.
 
 The default Docker build selects the stock email sender. The separate opt-in
 build argument `ARMONEY_EMAIL_SENDER_PROVIDER=armoney-strict-mailtrap` selects the
