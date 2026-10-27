@@ -17,7 +17,7 @@ final class StrictMailtrapEmailSenderFactoryTest {
     }
     @Test void packagingDoesNotReplaceStockDefaultAndFactoryHasNoStartupSideEffects(){
         var factory=new StrictMailtrapEmailSenderFactory();assertEquals("armoney-strict-mailtrap",factory.getId());assertEquals(0,factory.order());
-        factory.init(null);factory.postInit(null);try(var provider=factory.create(session("armoney",null))){assertNotNull(provider);}factory.close();
+        factory.init(null);factory.postInit(null);var provider=factory.create(session("armoney",null));try{assertNotNull(provider);}finally{provider.close();factory.close();}
     }
     @Test void selectedProviderDelegatesOnlyUnrelatedRealmsToExplicitStockId()throws Exception{
         var sends=new AtomicInteger();var validations=new AtomicInteger();
@@ -26,9 +26,11 @@ final class StrictMailtrapEmailSenderFactoryTest {
             @Override public void validate(Map<String,String> config){validations.incrementAndGet();}
             @Override public void close(){fail("Request sender does not own stock provider lifetime");}
         };
-        try(var sender=new StrictMailtrapEmailSenderFactory().create(session("master",stock))){sender.validate(Map.of());sender.send(Map.of(),"unrelated","subject","text",null);}
+        var unrelated=new StrictMailtrapEmailSenderFactory().create(session("master",stock));
+        try{unrelated.validate(Map.of());unrelated.send(Map.of(),"unrelated","subject","text",null);}finally{unrelated.close();}
         assertEquals(1,sends.get());assertEquals(1,validations.get());
-        try(var sender=new StrictMailtrapEmailSenderFactory().create(session("armoney",stock))){assertThrows(EmailException.class,()->sender.send(Map.of(),"recipient@example.test","subject","text",null));}
+        var strict=new StrictMailtrapEmailSenderFactory().create(session("armoney",stock));
+        try{assertThrows(EmailException.class,()->strict.send(Map.of(),"recipient@example.test","subject","text",null));}finally{strict.close();}
         assertEquals(1,sends.get());assertEquals(1,validations.get());
     }
     @Test void missingStockDelegateAndClosedProviderFailWithSanitizedErrors(){

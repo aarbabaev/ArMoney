@@ -53,23 +53,23 @@ final class StrictMailtrapSmtpTransportTest {
         }finally{root.setLevel(previous);root.removeHandler(handler);}
     }
     @Test void missingTlsRefusalUntrustedAndWrongHostnameNeverSendAuthOrData()throws Exception{
-        for(String fault:List.of("missing","refused","untrusted","wronghost","handshake-stall")){
+        try(var logs=new LogCapture()){for(String fault:List.of("missing","refused","untrusted","wronghost","handshake-stall")){
             try(var fixture=new SmtpFixture(fault);var sender=new StrictMailtrapSmtpTransport(fault.equals("wronghost")?"127.0.0.1":"localhost",fixture.port(),fault.equals("untrusted")?null:clientTls.getSocketFactory(),1500,1000)){
-                long started=System.nanoTime();assertFalse(sender.send(StrictMailtrapEmailSenderTest.settings(),"recipient@example.test","subject","secret-body",null),fault);
+                long started=System.nanoTime();assertFalse(sender.send(StrictMailtrapEmailSenderTest.settings(),"recipient@example.test","subject","token-bearing-body",null),fault);
                 assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started)<3000,fault);fixture.await();
                 assertFalse(fixture.commands.stream().anyMatch(line->line.startsWith("AUTH")||line.startsWith("MAIL")||line.equals("DATA")),fault);
                 assertTrue(fixture.message.isEmpty());assertEquals(1,fixture.accepts.get());
             }
-        }
+        }logs.assertPrivate();}
     }
     @Test void stalledAndDrippingPeersAreCutOffByTotalDeadlineAndDoNotRetry()throws Exception{
-        for(String fault:List.of("greeting-stall","greeting-drip","data-ack-stall")){
+        try(var logs=new LogCapture()){for(String fault:List.of("greeting-stall","greeting-drip","data-ack-stall")){
             try(var fixture=new SmtpFixture(fault);var sender=new StrictMailtrapSmtpTransport("localhost",fixture.port(),clientTls.getSocketFactory(),750,1000)){
-                long started=System.nanoTime();assertFalse(sender.send(StrictMailtrapEmailSenderTest.settings(),"recipient@example.test","subject","token-body",null));
+                long started=System.nanoTime();assertFalse(sender.send(StrictMailtrapEmailSenderTest.settings(),"recipient@example.test","subject","token-bearing-body",null));
                 assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started)<2250);fixture.await();assertEquals(1,fixture.accepts.get());
                 if(!fault.equals("data-ack-stall"))assertFalse(fixture.commands.stream().anyMatch(line->line.startsWith("AUTH")||line.equals("DATA")));
             }
-        }
+        }logs.assertPrivate();}
     }
     @Test void onlyOneProcessAttemptCanRunAndCloseAbortsOwnedSocket()throws Exception{
         try(var fixture=new SmtpFixture("greeting-stall");var first=new StrictMailtrapSmtpTransport("localhost",fixture.port(),clientTls.getSocketFactory(),5000,1000);
@@ -81,27 +81,95 @@ final class StrictMailtrapSmtpTransportTest {
         }
     }
     @Test void failuresAreSanitizedThroughSenderAndWorkerSchedulersExit()throws Exception{
-        try(var fixture=new SmtpFixture("refused");var transport=new StrictMailtrapSmtpTransport("localhost",fixture.port(),clientTls.getSocketFactory(),2000,1000);
-            var sender=new StrictMailtrapEmailSender(StrictMailtrapEmailSenderFactoryTest.session("armoney",null),transport,value->value)){
+        try(var fixture=new SmtpFixture("refused");var transport=new StrictMailtrapSmtpTransport("localhost",fixture.port(),clientTls.getSocketFactory(),2000,1000)){
+            var sender=new StrictMailtrapEmailSender(StrictMailtrapEmailSenderFactoryTest.session("armoney",null),transport,value->value);try{
             StrictMailtrapEmailSenderTest.sanitized(assertThrows(org.keycloak.email.EmailException.class,()->sender.send(StrictMailtrapEmailSenderTest.config(),"recipient@example.test","subject","token-body",null)));fixture.await();
+            }finally{sender.close();}
         }
         long until=System.nanoTime()+TimeUnit.SECONDS.toNanos(3);
         while(System.nanoTime()<until&&smtpThreads())Thread.sleep(20);
         assertFalse(smtpThreads(),"Attempt scheduler and idle bounded worker must exit");
     }
+    @Test void actualBlockedDataWriteIsCutOffAndReleasesWorkerPermitWithinLegalBodyLimit()throws Exception{
+        var probe=new WriteProbe();
+        // ASCII, bounded <=65536 UTF-8 bytes. No oversized fixture payload bypasses sender policy.
+        String body="0123456789abcdef".repeat(4096);assertEquals(65536,body.getBytes(StandardCharsets.UTF_8).length);
+        try(var logs=new LogCapture();var fixture=new SmtpFixture("blocked-write");
+            var transport=new StrictMailtrapSmtpTransport("localhost",fixture.port(),clientTls.getSocketFactory(),3000,1000,1024,probe)){
+            var sender=new StrictMailtrapEmailSender(StrictMailtrapEmailSenderFactoryTest.session("armoney",null),transport,value->value);
+            long started=System.nanoTime();
+            var result=CompletableFuture.supplyAsync(()->{
+                try{sender.send(StrictMailtrapEmailSenderTest.config(),"recipient@example.test","subject",body,null);return true;}
+                catch(org.keycloak.email.EmailException failure){StrictMailtrapEmailSenderTest.sanitized(failure);return false;}
+            });
+            try{
+                assertTrue(fixture.dataNotReading.await(2,TimeUnit.SECONDS),"Server must reach354 and stop reading DATA");
+                long until=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(1800);long active=-1,since=0;boolean witnessed=false;
+                while(System.nanoTime()<until&&!result.isDone()){
+                    long entered=probe.entered.get();Thread worker=probe.worker;
+                    if(entered>probe.returned.get()&&worker!=null&&socketWrite(worker)){
+                        if(active!=entered){active=entered;since=System.nanoTime();}
+                        else if(System.nanoTime()-since>=TimeUnit.MILLISECONDS.toNanos(150)){witnessed=true;break;}
+                    }else{active=-1;since=0;}
+                    Thread.sleep(10);
+                }
+                assertTrue(witnessed,"No sustained actual socket write observed; OS may have buffered legal DATA. An ACK read is not write evidence.");
+                assertFalse(probe.socketClosed.get());assertEquals(1L,probe.exited.getCount());assertFalse(result.isDone());
+                assertFalse(result.get(5,TimeUnit.SECONDS));assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started)<4500);
+                assertTrue(probe.socketClosed.get(),"Deadline must close the actual tracked plain socket");assertTrue(probe.exited.await(1,TimeUnit.SECONDS));
+                assertEquals(probe.entered.get(),probe.returned.get(),"Outstanding delegated write must unwind");
+                assertEquals(1,fixture.accepts.get());assertTrue(fixture.message.isEmpty());logs.assertPrivate();
+            }finally{sender.close();result.get(5,TimeUnit.SECONDS);}
+        }
+        // Actual next TLS submission, rather than an internal semaphore assertion.
+        try(var fixture=new SmtpFixture("positive");var next=new StrictMailtrapSmtpTransport("localhost",fixture.port(),clientTls.getSocketFactory(),5000,1000)){
+            assertTrue(next.send(StrictMailtrapEmailSenderTest.settings(),"recipient@example.test","subject","after blocked write",null));fixture.await();assertTrue(fixture.authenticated);
+        }
+    }
+    private static boolean socketWrite(Thread worker){
+        return Arrays.stream(worker.getStackTrace()).anyMatch(frame->{String type=frame.getClassName(),method=frame.getMethodName();
+            return type.startsWith("sun.nio.ch.")&&(method.equals("write0")||method.equals("implWrite")||method.equals("write"))
+                    ||type.startsWith("java.net.Socket$")&&method.equals("write");
+        });
+    }
+    private static final class WriteProbe implements StrictMailtrapSmtpTransport.DataWriteObserver {
+        final java.util.concurrent.atomic.AtomicLong entered=new java.util.concurrent.atomic.AtomicLong(),returned=new java.util.concurrent.atomic.AtomicLong();
+        final java.util.concurrent.atomic.AtomicBoolean socketClosed=new java.util.concurrent.atomic.AtomicBoolean();final CountDownLatch exited=new CountDownLatch(1);volatile Thread worker;
+        @Override public void entered(Thread worker){this.worker=worker;entered.incrementAndGet();}
+        @Override public void returned(){returned.incrementAndGet();}
+        @Override public void socketClosed(boolean closed){if(closed)socketClosed.set(true);}
+        @Override public void workerExited(){exited.countDown();}
+    }
     private static boolean smtpThreads(){return Thread.getAllStackTraces().keySet().stream().anyMatch(t->t.isAlive()&&t.getName().startsWith("armoney-strict-smtp"));}
+    private static final class LogCapture implements AutoCloseable {
+        final List<LogRecord> records=new CopyOnWriteArrayList<>();final Logger root=Logger.getLogger("");final Level previous=root.getLevel();
+        final Handler handler=new Handler(){@Override public void publish(LogRecord record){records.add(record);}@Override public void flush(){}@Override public void close(){}};
+        LogCapture(){handler.setLevel(Level.ALL);root.addHandler(handler);root.setLevel(Level.ALL);}
+        void assertPrivate(){
+            for(LogRecord record:records){
+                StringWriter errors=new StringWriter();if(record.getThrown()!=null)record.getThrown().printStackTrace(new PrintWriter(errors));
+                String rendered=record.getMessage()+Arrays.toString(record.getParameters())+errors;
+                for(String canary:List.of("synthetic-user","synthetic-password","recipient@example.test","token-bearing-body","AUTH PLAIN"))assertFalse(rendered.contains(canary),"SMTP log leaked a synthetic canary");
+                assertFalse(String.valueOf(record.getLoggerName()).startsWith(StrictMailtrapSmtpTransport.class.getName()+"$QuietTransport"));
+            }
+        }
+        @Override public void close(){root.setLevel(previous);root.removeHandler(handler);}
+    }
     static final class SmtpFixture implements AutoCloseable {
         final ServerSocket listener;final List<String> commands=new CopyOnWriteArrayList<>();final CountDownLatch accepted=new CountDownLatch(1);
+        final CountDownLatch dataNotReading=new CountDownLatch(1);
         final java.util.concurrent.atomic.AtomicInteger accepts=new java.util.concurrent.atomic.AtomicInteger();final CompletableFuture<Void> done=new CompletableFuture<>();
         final String mode;final Thread worker;volatile Socket socket;volatile String message="";volatile boolean authenticated,tlsActive,closing;volatile Throwable failure;
         SmtpFixture(String mode)throws IOException{
-            this.mode=mode;listener=new ServerSocket(0,1,InetAddress.getByName("127.0.0.1"));listener.setSoTimeout(5000);
+            this.mode=mode;
+            listener=new ServerSocket();if(mode.equals("blocked-write"))listener.setReceiveBufferSize(1024);
+            listener.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"),0),1);listener.setSoTimeout(5000);
             worker=Thread.ofPlatform().name("synthetic-smtp-fixture").daemon(true).start(this::serve);
         }
         int port(){return listener.getLocalPort();}
         void serve(){
             try{
-                socket=listener.accept();socket.setSoTimeout(5000);accepts.incrementAndGet();accepted.countDown();
+                socket=listener.accept();if(mode.equals("blocked-write"))socket.setReceiveBufferSize(1024);socket.setSoTimeout(5000);accepts.incrementAndGet();accepted.countDown();
                 if(mode.equals("greeting-stall")){while(socket.getInputStream().read()!=-1){}return;}
                 if(mode.equals("greeting-drip")){for(int i=0;i<100;i++){socket.getOutputStream().write('2');socket.getOutputStream().flush();Thread.sleep(100);}return;}
                 BufferedReader reader=reader();BufferedWriter writer=writer();reply(writer,"220 synthetic SMTP");
@@ -119,7 +187,9 @@ final class StrictMailtrapSmtpTransportTest {
                         authenticated=credentials.length==3&&credentials[1].equals("synthetic-user")&&credentials[2].equals("synthetic-password");reply(writer,authenticated?"235 Authenticated":"535 Rejected");
                     }else if(line.startsWith("MAIL FROM:")||line.startsWith("RCPT TO:"))reply(writer,"250 Accepted");
                     else if(line.equals("DATA")){
-                        reply(writer,"354 Send content");StringBuilder data=new StringBuilder();while((line=reader.readLine())!=null&&!line.equals(".")){if(data.length()>200000)throw new IOException("Fixture body bound");data.append(line).append('\n');}message=data.toString();
+                        reply(writer,"354 Send content");
+                        if(mode.equals("blocked-write")){dataNotReading.countDown();while(!closing)Thread.sleep(10);return;}
+                        StringBuilder data=new StringBuilder();while((line=reader.readLine())!=null&&!line.equals(".")){if(data.length()>200000)throw new IOException("Fixture body bound");data.append(line).append('\n');}message=data.toString();
                         if(mode.equals("data-ack-stall")){while(reader.read()!=-1){}return;}reply(writer,"250 Accepted");
                     }else if(line.equals("QUIT")){reply(writer,"221 Goodbye");return;}else throw new IOException("Unexpected synthetic SMTP command");
                 }

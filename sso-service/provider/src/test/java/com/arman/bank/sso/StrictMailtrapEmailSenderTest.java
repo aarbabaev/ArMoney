@@ -20,7 +20,7 @@ final class StrictMailtrapEmailSenderTest {
         assertEquals("StrictSmtpSettings[redacted]",settings().toString());
     }
     @Test void oneCanonicalMailboxAndBoundedHeadersAndBodiesAreRequiredBeforeNetwork(){
-        try(var sender=sender()){
+        var sender=sender();try{
             for(String address:List.of("one@example.test,two@example.test","group:one@example.test;","one@example.test\r\nBcc:two@example.test","Person@example.test","Name <one@example.test>"))
                 sanitized(assertThrows(EmailException.class,()->sender.send(config(),address,"subject","text",null)));
             for(String subject:List.of("header\r\nBcc:secret@example.test","s".repeat(257),"é".repeat(129)))
@@ -29,14 +29,14 @@ final class StrictMailtrapEmailSenderTest {
             sanitized(assertThrows(EmailException.class,()->sender.send(config(),"person@example.test","subject","é".repeat(32769),null)));
             sanitized(assertThrows(EmailException.class,()->sender.send(config(),"person@example.test","subject","a".repeat(32768),"a".repeat(32769))));
             sanitized(assertThrows(EmailException.class,()->sender.send(config(),"person@example.test","subject",null,null)));
-        }
+        }finally{sender.close();}
         var config=config();config.put("fromDisplayName","é".repeat(129));assertThrows(IllegalArgumentException.class,()->StrictMailtrapEmailSender.settings(config));
     }
     @Test void validationHasNoNetworkAndResolvedSecretFailuresDoNotEscape(){
         var transport=new StrictMailtrapSmtpTransport();
-        try(var sender=new StrictMailtrapEmailSender(StrictMailtrapEmailSenderFactoryTest.session("armoney",null),transport,value->{throw new IllegalStateException("synthetic-password secret@example.test");})){
+        var sender=new StrictMailtrapEmailSender(StrictMailtrapEmailSenderFactoryTest.session("armoney",null),transport,value->{throw new IllegalStateException("synthetic-password secret@example.test");});try{
             assertDoesNotThrow(()->sender.validate(config()));sanitized(assertThrows(EmailException.class,()->sender.send(config(),"person@example.test","subject","token-bearing-body",null)));
-        }
+        }finally{sender.close();}
     }
     static void sanitized(EmailException failure){assertEquals("ARMONEY_SMTP_UNAVAILABLE",failure.getMessage());assertNull(failure.getCause());assertEquals(0,failure.getSuppressed().length);}
 }
