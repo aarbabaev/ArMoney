@@ -5,6 +5,23 @@ import com.arman.bank.authservice.domain.LegacyMigrationOtp
 import spock.lang.Specification
 
 class LegacyMigrationManagedProofCryptoSpec extends Specification {
+    def 'User release has its exact retained HMAC domain and never accepts an arbitrary purpose'(){
+        given:
+        byte[] key=([31]*32) as byte[]
+        def crypto=new LegacyMigrationManagedProofCrypto('old',[old:key])
+        String domain='armoney-legacy-migration-user-release-v1'
+        def mac=javax.crypto.Mac.getInstance('HmacSHA256')
+        mac.init(new javax.crypto.spec.SecretKeySpec(key,'HmacSHA256'))
+        def expected=mac.doFinal(LegacyMigrationOtp.tuple(domain,'one','two'))
+        expect:
+        crypto.hash('old',domain,'one','two')==expected
+        crypto.hash('old',domain,'one','two')!=crypto.hash('old','armoney-legacy-migration-final-completion-v1','one','two')
+        crypto.hash('old',domain,'one','two')!=crypto.hash('old',domain,'two','one')
+        when:crypto.hash('old','armoney-legacy-migration-user-release-v2','one','two')
+        then:thrown(LegacyMigrationOtp.Failure)
+        when:crypto.hash('old','arbitrary-purpose','one','two')
+        then:thrown(LegacyMigrationOtp.Failure)
+    }
     def 'original retained HMAC key exact domain and field order are preserved across rotation'(){
         given:
         def first=new LegacyMigrationManagedProofCrypto('old',[old:([31]*32) as byte[]])

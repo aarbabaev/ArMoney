@@ -71,6 +71,7 @@ class MigrationUserReleaseRecoveryIntegrationSpec extends Specification {
             {sql,decision,ack,evidence->scenario.consumer.promote(sql,decision,ack,evidence)} as PostgresMigrationFinalAckStore.FinalWork)}
     }
     def prepareSecondOwner(){
+        awaitNaturalAdmissionCredits()
         def f=managed();String email='second-historical@example.test',phone='+971521234567'
         f.auth.register(email,f.PASSWORD,phone)
         def token=f.auth.login(email,f.PASSWORD).accessToken();def owner=f.auth.me('Bearer '+token).id()
@@ -87,6 +88,19 @@ class MigrationUserReleaseRecoveryIntegrationSpec extends Specification {
         producer().publish(admission.migrationId(),admission.ownerCapability())
         def command=owned{request->producer().reserveFinalCommand(request,admission.migrationId(),admission.ownerCapability())}
         [original:original,decision:decision,command:command]
+    }
+    void awaitNaturalAdmissionCredits(){
+        long until=System.nanoTime()+TimeUnit.SECONDS.toNanos(12)
+        byte[] writer=com.arman.bank.authservice.domain.LoginProof.writerHash(managed().ACTOR)
+        boolean full=false
+        while(!full&&System.nanoTime()<until){
+            full=managed().database.transaction{sql->
+                def row=sql.fetchOne('select least(20,credits+greatest(0,extract(epoch from clock_timestamp()-refilled_at))*2)>=20 as full from sso_login_proof_admission where writer_hash=?',writer)
+                row==null||Boolean.TRUE.equals(row.get('full',Boolean))
+            }
+            if(!full)Thread.sleep(50)
+        }
+        assert full:'Genuine fixture admission credits did not naturally replenish within 12 seconds'
     }
     def resolve(def context){owned{request->producer().resolveUser(request,context.original.admission.migrationId(),context.original.admission.ownerCapability())}}
     def count(String table){managed().count(table)}
@@ -305,6 +319,7 @@ class MigrationUserReleaseRecoveryIntegrationSpec extends Specification {
             sql.execute('update legacy_migration_publication_decisions set journal_hash=? where migration_id=?','0'*64,poisoned)
             sql.execute('alter table legacy_migration_publication_decisions enable trigger legacy_migration_publication_decision_immutable')
         }
+        awaitNaturalAdmissionCredits()
         when:producer().recoverNextUserRelease()
         then:thrown(RuntimeException);calls.get()==0;count('legacy_migration_user_release_acks')==0
         when:producer().recoverNextUserRelease();def observation=current(healthy)
