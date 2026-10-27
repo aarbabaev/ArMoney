@@ -126,3 +126,27 @@ Lookup and confirmation HTTP adapters now exist through explicit construction. T
 HttpCodeSessionObservations provides the separate fixed-path twelve-field transport. It uses explicit no-proxy routing, an owned client and one monotonic exchange budget; all non-200 and malformed evidence maps to UNAVAILABLE. At bb3797cdf03f95ab5b6ea7944856c2a11a9abb6a, independent QA and security verified 894 focused passes: 878 unit tests, including 40 observer cases, and 16 synthetic HTTP-to-PostgreSQL cases. Hostile-default proxy bypass and unavailable/stale evidence rejection passed. The existing eight-field enrollment observation adapter is unchanged. That observer-focused run did not cover actual Main; later Main evidence is recorded below. Actual provider propagation, physical DNS cancellation, clock-rate evidence and fresh combined-head required checks remain pending.
 
 CodeConfirmationResources supplies explicit default-off composition. At 36650b814c81577fd5a3ec25e79b93e61caa54f7, independent QA and security verified 926 focused passes: 919 unit tests, including 102 configuration and five resource cases, plus seven resource PostgreSQL cases. It borrows the Database, shares intent/material/store dependencies, owns one observer and cleanup worker, and registers the three handlers only when explicitly configured by a caller. The composed stage handler enforces exact managed pairs; the standalone constructor is unchanged. The caller must start cleanup after HTTP startup and close the bundle on startup failure or shutdown before closing the Database. The bundle never owns the HTTP server or borrowed Database. The resource-focused run did not cover actual Main or the real provider and does not replace full required checks. Main now contains optional default-off bundle registration, with configuration parsed before Database allocation, cleanup started after HTTP startup and owned-resource closure before runtime shutdown. At 30bd727565a13fc638f3aa36783e71cdd721116a, independent QA and security verified 924 focused passes: 919 unit and five actual-Main PostgreSQL process cases covering disabled routes, invalid configuration before DB access, directional guards and lifecycle cleanup. No deployed flag changes, provider activation or end-to-end readiness are claimed.
+
+## Disposable authority companion evidence
+
+`Dockerfile.code-intent-fixture` is isolated test-Java image assembly source. Its
+build compiles test classes and Auth/User/SMS distributions; it does not execute
+the acceptance matrix. Runtime contains the test-Java companion and Auth
+libraries, runs as a non-root user, and supplies no default flags or credentials.
+At `175c9d1`, actual image creation, non-root Java 21/keytool and artifact
+inventory checks passed. Enabled classloading and disposable topology remain
+unverified. The production Auth distribution does not acquire test classes.
+
+At separate checkpoint `7aa71f8`, 946 Auth unit tests and three authority
+PostgreSQL scenarios passed. Readiness equivalence reported 17 passes and one
+skip; that positive predicate/deadline case remains open. The local SMTP/STARTTLS
+peer, SMS sandbox and real persisted User projection ACK are scoped evidence, not
+Mailtrap Sandbox delivery or native Keycloak/password/cross-node proof. New local
+abort diagnostics exposed a test SQL parameter typing error at `3fbc50c`; the
+failed result remains retained. A test-only explicit timestamp cast at `f274266`
+then passed 972 tests across 41 suites with zero failures, errors or skips: 951
+unit cases, all 18 readiness-helper PostgreSQL cases and three authority
+PostgreSQL scenarios. Independent audit verified source/archive binding, actual
+positive readiness execution and the strict required-test selection gate.
+No production activation, token redemption or banking session follows from these
+checks. Preserve earlier initialization failure and skipped evidence.

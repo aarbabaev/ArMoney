@@ -16,6 +16,8 @@ x-provider: &provider
     KC_BOOTSTRAP_ADMIN_USERNAME: admin
     KC_BOOTSTRAP_ADMIN_PASSWORD: ${SSO_ADMIN_PASSWORD:?Supply disposable admin password}
     ARMONEY_VERIFICATION_ENABLED: "true"
+    SSO_ISSUER: http://sso-a:8080/realms/armoney
+    SSO_VERIFICATION_CLIENT_IDS: armoney-ios
     ARMONEY_AUTH_BRIDGE_URL: http://auth-service:8090
     SSO_VERIFICATION_BRIDGE_KEY: ${SSO_VERIFICATION_BRIDGE_KEY:?Supply independent synthetic bridge key}
     ARMONEY_PROVIDER_BINDING_KEY: ${ARMONEY_PROVIDER_BINDING_KEY:?Supply independent synthetic binding key}

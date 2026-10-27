@@ -5,6 +5,9 @@ import com.arman.bank.userservice.application.RegistrationConflict
 import com.arman.bank.userservice.application.VerificationProjectionStore.Rejected
 import com.arman.bank.userservice.domain.Profile
 import com.arman.bank.userservice.domain.VerificationProjection
+import com.arman.bank.userservice.domain.MigrationBaseline
+import com.arman.bank.userservice.application.MigrationDecisionPort
+import com.arman.bank.userservice.application.MigrationPublicationEvidencePort
 import com.arman.bank.userservice.infrastructure.*
 import org.testcontainers.containers.PostgreSQLContainer
 import spock.lang.Specification
@@ -35,6 +38,20 @@ class VerificationProjectionIntegrationSpec extends Specification {
         profiles = new PostgresProfiles(database)
     }
     def cleanup() { database?.close(); postgres?.stop() }
+
+    def 'legacy constructor fails closed for retained migration history without changing ordinary projection replay'() {
+        given:
+        UUID owner=UUID.randomUUID()
+        def saved=legacyProfile(owner,P,false)
+        def shards=new ProfileShards([primary:database],[:],'primary')
+        def migration=new PostgresMigrationBaselineStore(shards,
+            {ignored->throw new IllegalStateException()} as MigrationDecisionPort,
+            {s,c->throw new IllegalStateException()} as MigrationPublicationEvidencePort)
+        migration.stage('auth',MigrationBaseline.stage(MigrationBaselineSpec.stage(owner,saved.id())))
+        def before=state()
+        expect:reject{commit(command(owner,0,P,1,1))}==503
+        state()==before
+    }
 
     def 'lost response exact replay after newer revision and pool restart returns old ACK without old phone restoration'() {
         given:
@@ -424,7 +441,12 @@ class VerificationProjectionIntegrationSpec extends Specification {
     private static void awaitBlockedSave(Database shard) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
         while (System.nanoTime() < deadline) {
-            boolean waiting = shard.transaction { it.fetchOne("select count(*) as n from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query like '%insert into profiles%'").get('n', Long) > 0 }
+            // Existing initialized profiles use UPDATE so migration contact fences
+            // do not turn a name-only save's INSERT conflict path into a mutation.
+            // Still require the real physical shard statement to be waiting on a lock.
+            boolean waiting = shard.transaction { it.fetchOne("""select count(*) as n from pg_stat_activity
+                where datname=current_database() and wait_event_type='Lock'
+                  and (query like '%insert into profiles%' or query like '%update profiles set display_name%')""").get('n', Long) > 0 }
             if (waiting) return
             Thread.sleep(20)
         }

@@ -81,7 +81,7 @@ public final class KeycloakTokens implements SsoTokens, AutoCloseable {
             var email = body.path("email");
             var verified = body.path("email_verified");
             return new Principal(issuer, subject.textValue(), phone.textValue(), email.textValue(),
-                verified.isBoolean() && verified.booleanValue(),context);
+                verified.isBoolean() && verified.booleanValue(),verified.isBoolean(),context);
         } catch (AuthFailure e) { throw e; }
         catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new AuthFailure(UNAVAILABLE); }
         catch (Exception e) { throw new AuthFailure(UNAVAILABLE); }

@@ -7,7 +7,20 @@ issuer, client, active-token and expiry validation still precedes optional parsi
 Optional fields expose ABSENT, MALFORMED or PRESENT_VALID_FORMAT classification.
 Missing fields remain distinct from explicit null and invalid types. Legacy token
 constructors supply absent context. Malformed optional claims do not introduce a
-new login rejection for otherwise valid unmanaged legacy identities.
+new login rejection for otherwise valid unmanaged legacy identities in default-off
+compatibility mode. Enabled managed cutover separately denies legacy new banking
+admission; optional metadata never bypasses that policy.
+
+The current integration additionally retains an explicit format bit for the
+provider's `email_verified` value: only a JSON boolean is known format. Legacy
+normalization remains unchanged. Managed admission requires known format and
+applies the provider value according to Auth's database-selected authority source;
+the strict registration source still requires its current Auth-owned receipts,
+grant and C2 proof. This value is not contact-verification authority by itself.
+See [ADR 0052](adr/0052-registration-email-admission-authority.md). Scoped
+registration and synthetic LOCAL/historical-SSO acceptance are independently
+verified on the source/runtime recorded in PR #96; exact-head CI, final review
+and deployment remain separate gates.
 
 Session identifiers are bounded text without whitespace, controls, formatting
 characters or lone surrogates. Valid supplementary Unicode pairs remain allowed.

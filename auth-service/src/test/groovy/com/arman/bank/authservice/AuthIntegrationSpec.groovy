@@ -28,7 +28,7 @@ class AuthIntegrationSpec extends Specification {
         database = new Database(postgres.jdbcUrl, postgres.username, postgres.password)
         clock = new TestClock(Instant.parse('2026-01-01T00:00:00Z'))
         service = new AuthService(new PostgresAuthStore(database), new Argon2Passwords(), clock, profiles)
-        def routes = new AuthRoutes(service, KEY, { token -> new SsoTokens.Principal('https://issuer.example/realm', token, '+971501234567') } as SsoTokens)
+        def routes = new AuthRoutes(service, KEY, { token -> new SsoTokens.Principal('https://issuer.example/realm', token, '+971501234567', null, false, false) } as SsoTokens)
         runtime = ServiceRuntime.start('auth-service', 0, database, routes::configure)
         client = HttpClient.newHttpClient()
     }
@@ -127,7 +127,7 @@ class AuthIntegrationSpec extends Specification {
         service.register('local@example.com', PASSWORD, '+971521234567')
         def store = new PostgresAuthStore(database)
         def local = store.findByEmail('local@example.com').orElseThrow()
-        def original = new SsoTokens.Principal('https://issuer.example/realm', 'email-subject', '+971501234567', 'local@example.com', true)
+        def original = new SsoTokens.Principal('https://issuer.example/realm', 'email-subject', '+971501234567', 'local@example.com', true, true)
         def token = service.sso('synthetic-token', { ignored -> original } as SsoTokens).accessToken()
         def id = service.me('Bearer ' + token).id()
         def path = "/v1/internal/identities/${id}/email"
@@ -137,7 +137,7 @@ class AuthIntegrationSpec extends Specification {
         service.me('Bearer ' + token).email() == null
 
         when:
-        def changed = new SsoTokens.Principal(original.issuer(), original.subject(), original.phoneNumber(), email, verified)
+        def changed = new SsoTokens.Principal(original.issuer(), original.subject(), original.phoneNumber(), email, verified, true)
         def next = service.sso('synthetic-token', { ignored -> changed } as SsoTokens)
         then:
         service.me('Bearer ' + next.accessToken()).id() == id
@@ -157,12 +157,12 @@ class AuthIntegrationSpec extends Specification {
     def 'phone conflict leaves the prior contact and other identities unchanged'() {
         given:
         def store = new PostgresAuthStore(database)
-        def first = new SsoTokens.Principal('https://issuer.example/realm', 'first', '+971501234567', 'first@example.com', true)
-        def second = new SsoTokens.Principal(first.issuer(), 'second', '+971521234567', 'second@example.com', true)
+        def first = new SsoTokens.Principal('https://issuer.example/realm', 'first', '+971501234567', 'first@example.com', true, true)
+        def second = new SsoTokens.Principal(first.issuer(), 'second', '+971521234567', 'second@example.com', true, true)
         def id = store.externalIdentity(first).id()
         def other = store.externalIdentity(second).id()
         when:
-        store.externalIdentity(new SsoTokens.Principal(first.issuer(), first.subject(), second.phoneNumber(), 'changed@example.com', false))
+        store.externalIdentity(new SsoTokens.Principal(first.issuer(), first.subject(), second.phoneNumber(), 'changed@example.com', false, true))
         then:
         def failure = thrown(AuthFailure)
         failure.kind() == AuthFailure.Kind.UNAUTHORIZED
@@ -175,7 +175,7 @@ class AuthIntegrationSpec extends Specification {
         def store = new PostgresAuthStore(database)
         database.transaction { sql -> sql.execute("ALTER TABLE identities ADD CONSTRAINT synthetic_contact_failure CHECK (notification_email IS NULL)") }
         when:
-        store.externalIdentity(new SsoTokens.Principal('https://issuer.example/realm', 'rollback', '+971501234567', 'rollback@example.com', true))
+        store.externalIdentity(new SsoTokens.Principal('https://issuer.example/realm', 'rollback', '+971501234567', 'rollback@example.com', true, true))
         then:
         thrown(org.jooq.exception.DataAccessException)
         database.transaction { sql -> sql.fetchOne('select count(*) from identities').get(0, Long) } == 0
@@ -270,7 +270,7 @@ class AuthIntegrationSpec extends Specification {
         database.transaction { sql -> sql.fetchCount(org.jooq.impl.DSL.table('identities')) } == 0
         where:
         phone << [null, '', '+971511234567', '+971571234567', '+971591234567', '+97150123456', '+9715012345678',
-                  '0501234567', '+12025550123', ' +971501234567', '+971501234567\n', '+97150١٢٣٤٥٦٧']
+                  '0501234567', '+12025550123', ' +971501234567', '+971501234567\n', '+97150\u0661\u0662\u0663\u0664\u0665\u0666\u0667']
     }
 
     def 'missing phone is invalid and duplicate email cannot mutate its claim or password'() {
@@ -407,7 +407,7 @@ class AuthIntegrationSpec extends Specification {
 
     def 'new SSO mappings reject missing or foreign numbers without persisting an identity'() {
         when:
-        service.sso('synthetic-token', { ignored -> new SsoTokens.Principal('https://issuer.example/realm', 'new-subject', phone) } as SsoTokens)
+        service.sso('synthetic-token', { ignored -> new SsoTokens.Principal('https://issuer.example/realm', 'new-subject', phone, null, false, false) } as SsoTokens)
         then:
         thrown(AuthFailure)
         database.transaction { sql -> sql.fetchOne('select count(*) from identities').get(0, Long) } == 0
@@ -420,7 +420,7 @@ class AuthIntegrationSpec extends Specification {
         def store = new PostgresAuthStore(database)
         def identity = store.externalIdentity('https://issuer.example/realm', 'immutable-subject', '+971501234567')
         when:
-        service.sso('synthetic-token', { ignored -> new SsoTokens.Principal('https://issuer.example/realm', 'immutable-subject', phone) } as SsoTokens)
+        service.sso('synthetic-token', { ignored -> new SsoTokens.Principal('https://issuer.example/realm', 'immutable-subject', phone, null, false, false) } as SsoTokens)
         then:
         def error = thrown(AuthFailure)
         error.kind() == AuthFailure.Kind.UNAUTHORIZED
@@ -444,7 +444,7 @@ class AuthIntegrationSpec extends Specification {
 
         expect:
         service.me('Bearer ' + service.login('historical@example.com', PASSWORD).accessToken()).id() == legacy
-        service.me('Bearer ' + service.sso('synthetic-token', { ignored -> new SsoTokens.Principal('https://issuer.example/realm', 'old-subject', null) } as SsoTokens).accessToken()).id() == external
+        service.me('Bearer ' + service.sso('synthetic-token', { ignored -> new SsoTokens.Principal('https://issuer.example/realm', 'old-subject', null, null, false, false) } as SsoTokens).accessToken()).id() == external
         profiles.claims.isEmpty()
         database.transaction { sql -> sql.fetchOne('select count(*) from identities where registration_phone is null').get(0, Long) } == 2
     }
@@ -530,6 +530,113 @@ class AuthIntegrationSpec extends Specification {
         profiles.claims.size()==1
         cleanup:
         provider?.close();observer?.stop(0)
+    }
+
+    /** HTTP response composition only: synthetic managed store is NOT authority/receipt/provider acceptance evidence. */
+    def 'managed SSO HTTP advertises remaining lifetime and rejects already expired response without a bearer'(){
+        given:
+        runtime.close()
+        database=new Database(postgres.jdbcUrl,postgres.username,postgres.password)
+        def expiry=clock.instant().plusMillis(milliseconds)
+        def store=new SyntheticManagedResponseStore(expiry,clock.instant())
+        def managed=new ManagedBankingService(true,store,{binding,start->null} as CodeConfirmationObservations,{issuer,client->true} as ManagedBankingService.PairScope)
+        service=new AuthService(new PostgresAuthStore(database),new Argon2Passwords(),clock,profiles,managed,{issuer,client->false} as java.util.function.BiPredicate)
+        def context=new SsoTokens.TokenContext(SsoTokens.Metadata.present('armoney-web'),SsoTokens.Metadata.present('synthetic-sid'),
+            SsoTokens.Metadata.present(clock.instant().minusSeconds(1)),SsoTokens.Metadata.present(clock.instant().plusSeconds(600)),
+            SsoTokens.Metadata.present(new SsoTokens.ProofClaims('interactive',UUID.randomUUID(),false)))
+        def principal=new SsoTokens.Principal('https://issuer.example/realm','synthetic-subject','+971501234567','fixture@example.test',true, true,context)
+        def routes=new AuthRoutes(service,KEY,{token->principal} as SsoTokens)
+        runtime=ServiceRuntime.start('auth-service',0,database,routes::configure)
+        when:def response=request('POST','/v1/auth/sso',JsonOutput.toJson([access_token:'synthetic.token']))
+        then:response.statusCode()==expected
+        if(expected==200){assert parsed(response).expires_in==milliseconds.intdiv(1000);assert parsed(response).expires_at==expiry.toString()}
+        else{assert !parsed(response).containsKey('access_token');assert !parsed(response).containsKey('expires_in')}
+        profiles.claims.isEmpty()
+        where:
+        milliseconds | expected
+        120000       | 200
+        1000         | 200
+        999          | 401
+        0            | 401
+        -1000        | 401
+    }
+    def 'composed default off consumer preserves repeated legacy logout HTTP204 and legacy lifetime1800'(){
+        given:
+        runtime.close()
+        database=new Database(postgres.jdbcUrl,postgres.username,postgres.password)
+        def unused=Mock(ManagedBankingStore)
+        def observer=Mock(CodeConfirmationObservations)
+        def managed=new ManagedBankingService(false,unused,observer,{issuer,client->true} as ManagedBankingService.PairScope)
+        service=new AuthService(new PostgresAuthStore(database),new Argon2Passwords(),clock,profiles,managed,{issuer,client->true} as java.util.function.BiPredicate)
+        def routes=new AuthRoutes(service,KEY)
+        runtime=ServiceRuntime.start('auth-service',0,database,routes::configure)
+        service.register('legacy.logout@example.test',PASSWORD,'+971501234567')
+        when:def login=request('POST','/v1/auth/login',body('legacy.logout@example.test'))
+        def token=parsed(login).access_token as String
+        then:login.statusCode()==200;parsed(login).expires_in==1800
+        when:def first=request('POST','/v1/auth/logout',null,token)
+        def again=request('POST','/v1/auth/logout',null,token)
+        then:first.statusCode()==204;again.statusCode()==204;0 * unused._;0 * observer._
+        database.transaction{sql->sql.fetchOne('select count(*) from sessions').get(0,Long)}==0L
+    }
+    def 'enabled managed validation denies unknown revoked and expired legacy bearers over HTTP'(){
+        given:
+        service.register('session.denial@example.test',PASSWORD,'+971501234567')
+        def token=service.login('session.denial@example.test',PASSWORD).accessToken()
+        assert request('GET','/v1/auth/me',null,token).statusCode()==200
+        runtime.close()
+        database=new Database(postgres.jdbcUrl,postgres.username,postgres.password)
+        def observer=Mock(CodeConfirmationObservations)
+        def pairs={issuer,client->true} as ManagedBankingService.PairScope
+        def keys=new ManagedBankingKeys('test',[test:Base64.encoder.encodeToString(([61]*32) as byte[])])
+        def managed=new ManagedBankingService(true,new PostgresManagedBankingStore(database,keys,pairs,'fixture-auth'),observer,pairs)
+        service=new AuthService(new PostgresAuthStore(database),new Argon2Passwords(),clock,profiles,managed,{issuer,client->true} as java.util.function.BiPredicate)
+        def routes=new AuthRoutes(service,KEY)
+        runtime=ServiceRuntime.start('auth-service',0,database,routes::configure)
+        assert request('GET','/v1/auth/me',null,token).statusCode()==200
+        if(state=='revoked')new PostgresAuthStore(database).revokeOwnerSessions(service.me('Bearer '+token).id())
+        if(state=='expired')clock.current=clock.current.plusSeconds(1860)
+        if(state=='unknown')token='a'*43
+
+        when:def response=request('GET','/v1/auth/me',null,token)
+        then:
+        response.statusCode()==401
+        parsed(response)==[error:'invalid_credentials']
+        0 * observer._
+        database.transaction{it.fetchOne('select count(*) from managed_banking_sessions').get(0,Long)}==0L
+        database.transaction{it.fetchOne('select count(*) from managed_banking_operations').get(0,Long)}==0L
+        where:state << ['unknown','revoked','expired']
+    }
+
+    def 'session HTTP validation keeps actual database unavailability distinct from credential denial'(){
+        given:
+        database.close()
+        when:def response=request('GET','/v1/auth/me',null,'a'*43)
+        then:
+        response.statusCode()==503
+        parsed(response)==[error:'service_unavailable']
+    }
+
+    static class SyntheticManagedResponseStore implements ManagedBankingStore {
+        final Instant expiry
+        final Instant started
+        SyntheticManagedResponseStore(Instant expiry,Instant started){this.expiry=expiry;this.started=started}
+        @Override <T>T inRequest(java.util.function.Function<ManagedBankingStore.Request,T> operation){
+            operation.apply(new ManagedBankingStore.Request(){
+                ManagedBankingStore.Admission admitExchange(com.arman.bank.authservice.domain.ManagedBankingAccess.Token token){
+                    new ManagedBankingStore.Admission(){
+                        com.arman.bank.authservice.domain.LoginProof.Binding binding(){token.binding()}
+                        Instant startedAt(){started}
+                    }
+                }
+                ManagedBankingStore.Admission admitValidation(String digest){throw new UnsupportedOperationException()}
+                com.arman.bank.authservice.domain.ManagedBankingAccess.Decision exchange(ManagedBankingStore.Admission admission,com.arman.bank.authservice.domain.CodeConfirmation.Facts facts,String digest){
+                    new com.arman.bank.authservice.domain.ManagedBankingAccess.Decision(UUID.randomUUID(),expiry,false)
+                }
+                com.arman.bank.authservice.domain.ManagedBankingAccess.Decision validate(ManagedBankingStore.Admission admission,com.arman.bank.authservice.domain.CodeConfirmation.Facts facts){throw new UnsupportedOperationException()}
+            })
+        }
+        void revoke(String digest){throw new UnsupportedOperationException()}
     }
 
     static class TestProfiles implements RegistrationProfiles {

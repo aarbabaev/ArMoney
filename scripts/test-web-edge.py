@@ -94,6 +94,7 @@ def main():
                 if request(container, path) != expected:
                     raise AssertionError("Incorrect upstream for " + path)
             denied = (
+                "/migration", "/migration/", "/migration/legacy",
                 "/sso", "/sso/", "/sso/admin/",
                 "/sso/realms/master/.well-known/openid-configuration",
                 "/sso/realms/armoney/account/", "/sso/unknown",

@@ -23,6 +23,10 @@ https://{$ARMONEY_HOST}:443 {
     handle @internal {
         respond 404
     }
+    @migration path /migration /migration/*
+    handle @migration {
+        respond 404
+    }
     @api path /v1/* /health/live /health/ready /openapi.yaml
     handle @api {
         reverse_proxy app-gateway:8080

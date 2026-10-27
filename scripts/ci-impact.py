@@ -87,6 +87,10 @@ def classify(paths, full=False):
             modules.add(module); select('build')
             if parts[1:3] == ['src', 'test'] and len(parts) > 3:
                 continue
+            # Auth process acceptance consumes actual User and SMS installDist artifacts.
+            # This test-consumer edge adds checks, not Auth's production/client links.
+            if module in ('user-service', 'sms-sandbox'):
+                modules.add('auth-service')
             if module == 'platform-runtime':
                 modules.update(MODULES)
             select(*LINKS[module])

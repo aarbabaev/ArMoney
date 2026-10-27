@@ -19,8 +19,26 @@ class CodeIntentRoutesSpec extends Specification {
     def policy=Policy.defaults([ISSUER] as Set,['armoney-web'] as Set,['code1'] as Set,['provider'] as Set)
     Javalin app
     HttpClient client=HttpClient.newHttpClient()
-    def setup(){app=Javalin.create{new CodeIntentRoutes(store,policy,'provider',KEY).configure(it)}.start('127.0.0.1',0)}
-    def cleanup(){app?.stop();client?.close()}
+    def records=new java.util.concurrent.CopyOnWriteArrayList<java.util.logging.LogRecord>()
+    def logger=java.util.logging.Logger.getLogger(CodeIntentRoutes.name)
+    def handler=new java.util.logging.Handler(){void publish(java.util.logging.LogRecord record){records.add(record)};void flush(){};void close(){}}
+    def setup(){logger.addHandler(handler);app=Javalin.create{new CodeIntentRoutes(store,policy,'provider',KEY).configure(it)}.start('127.0.0.1',0)}
+    def cleanup(){logger.removeHandler(handler);app?.stop();client?.close()}
+    def 'failure diagnostics contain only closed categories without changing response or admission count'(){
+        when:def response=post(JsonOutput.toJson(command()))
+        then:
+        1 * store.inRequest('provider',_) >> {throw failure}
+        0 * scoped.stage(_)
+        response.statusCode()==status
+        response.body()=='{"error":"code_intent_request_rejected"}'
+        records*.message==['armoney_auth_stage_failure category='+category]
+        records.every{it.thrown==null && !it.parameters}
+        where:
+        failure | status | category
+        new Failure(Error.UNAVAILABLE) | 503 | 'DOMAIN_UNAVAILABLE'
+        new Failure(Error.CONFLICT) | 409 | 'DOMAIN_CONFLICT'
+        new IllegalStateException('private credential must not be logged') | 503 | 'INTERNAL'
+    }
     static Map command(){[command_id:UUID.randomUUID().toString(),code_digest:'a'*64,code_key_id:'code1',issuer:ISSUER,subject:'managed-subject',
         client_id:'armoney-web',user_session_id:'session',authentication_session_id:'authentication',issued_at:'2026-10-17T00:00:00Z',
         expires_at:'2026-10-17T00:02:00Z',kind:'interactive',event_id:UUID.randomUUID().toString(),password_authenticated_at:'2026-10-17T00:00:00Z']}
@@ -57,6 +75,7 @@ class CodeIntentRoutesSpec extends Specification {
         new JsonSlurper().parseText(first.body()).keySet()==['intent_id','code_key_id','state','issued_at','expires_at'] as Set
         new JsonSlurper().parseText(first.body()).state=='STAGED'
         !first.body().contains('proof_id');!first.body().contains('eligible');!first.body().contains('managed-subject')
+        records.empty
     }
     def 'duplicate directional headers deny before parsing or admission'(){
         when:

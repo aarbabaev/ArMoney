@@ -16,6 +16,143 @@ PRIVATE = "SYNTHETIC_SECRET_contact@example.invalid_provider_exception_identifie
 
 
 class DiagnosticsTest(unittest.TestCase):
+    def test_real_callback_listener_records_only_strict_bound_denial_and_no_inputs(self):
+        labels, expected = [], {"state": "original-state"}
+        listener = HARNESS.ObserverCallbackListener(labels, expected, "http://sso-a:8080/realms/armoney")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual("BOUND_DENIAL", listener.record("/observer-callback?error=access_denied&state=original-state"))
+            for path in ("/observer-callback?code=" + PRIVATE + "&state=original-state", "/other?error=access_denied&state=original-state",
+                         "/observer-callback?error=access_denied&state=other", "/observer-callback?error=access_denied&state=original-state&access_token=" + PRIVATE):
+                self.assertEqual("INVALID", listener.record(path))
+            expected["state"] = None
+            self.assertEqual("INVALID", listener.record("/observer-callback?error=access_denied&state=original-state"))
+        self.assertEqual(["BOUND_DENIAL"] + ["INVALID"]*5, labels)
+        self.assertNotIn(PRIVATE, output.getvalue())
+        self.assertNotIn("original-state", output.getvalue())
+
+    def test_callback_listener_binds_only_container_loopback_and_reaps_server_thread(self):
+        instances = []
+        class Server:
+            def __init__(self, address, handler):
+                self.address, self.handler, self.stop, self.closed = address, handler, threading.Event(), False
+                instances.append(self)
+            def serve_forever(self, poll_interval):
+                self.poll_interval = poll_interval
+                self.stop.wait(2)
+            def shutdown(self): self.stop.set()
+            def server_close(self): self.closed = True
+        listener = HARNESS.ObserverCallbackListener([], {"state": None}, "http://sso-a:8080/realms/armoney")
+        with patch.object(HARNESS.http.server, "HTTPServer", Server):
+            listener.start()
+            thread = listener.thread
+            listener.close()
+        self.assertEqual(("127.0.0.1", 18766), instances[0].address)
+        self.assertTrue(instances[0].closed)
+        self.assertFalse(thread.is_alive())
+        self.assertIsNone(listener.server)
+
+    def test_unmarked_existing_user_has_complete_stock_profile_but_no_verification_authority(self):
+        user = HARNESS.unmarked_user("+971501234567", "synthetic@example.invalid", "private-synthetic-password")
+        self.assertEqual("Synthetic", user["firstName"])
+        self.assertEqual("Observer", user["lastName"])
+        self.assertIs(user["emailVerified"], False)
+        self.assertEqual(["armoney-verify-email-code"], user["requiredActions"])
+        self.assertEqual({"username", "email", "firstName", "lastName", "enabled", "emailVerified", "requiredActions", "credentials"}, set(user))
+        self.assertEqual([{"type": "password", "value": "private-synthetic-password", "temporary": False}], user["credentials"])
+
+    def test_negative_dom_observation_emits_only_closed_categories_and_bounded_counts(self):
+        class Page:
+            url = "http://sso-a:8080/realms/armoney/login-actions/authenticate?secret=" + PRIVATE
+            def locator(self, selector):
+                return SimpleNamespace(count=lambda: 99 if selector == "#input-error" else 0)
+        facts = HARNESS.negative_dom_diagnostic(Page())
+        self.assertEqual("NODE_A", facts["origin"])
+        self.assertEqual("AUTHENTICATE", facts["path"])
+        self.assertEqual(16, facts["input_error"])
+        self.assertFalse(facts["inspection_failed"])
+        self.assertNotIn(PRIVATE, HARNESS.json.dumps(facts))
+        self.assertNotIn("secret", HARNESS.json.dumps(facts))
+        class Other(Page): url = "https://" + PRIVATE + "/private"
+        facts = HARNESS.negative_dom_diagnostic(Other())
+        self.assertEqual("OTHER", facts["origin"]); self.assertEqual("OTHER", facts["path"])
+        class Broken(Page):
+            def locator(self, selector): raise RuntimeError(PRIVATE)
+        self.assertTrue(HARNESS.negative_dom_diagnostic(Broken())["inspection_failed"])
+        for url, category in (("about:blank", "ABOUT_BLANK"), ("chrome-error://chromewebdata/", "CHROME_ERROR")):
+            page = Page(); page.url = url
+            self.assertEqual(category, HARNESS.negative_dom_diagnostic(page)["browser_page"])
+
+    def test_navigation_failure_labels_never_copy_browser_error_or_url_text(self):
+        self.assertEqual("ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS", HARNESS.negative_network_failure("net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS"))
+        self.assertEqual("OTHER", HARNESS.negative_network_failure("net::ERR_FAILED " + PRIVATE))
+        self.assertEqual("OTHER", HARNESS.negative_network_failure({"private": PRIVATE}))
+        facts = HARNESS.negative_navigation_diagnostic("http://127.0.0.1:18766/observer-callback?state=" + PRIVATE)
+        self.assertEqual({"origin": "CALLBACK", "path": "CALLBACK"}, facts)
+        self.assertNotIn(PRIVATE, HARNESS.json.dumps(facts))
+
+    def test_unmarked_denial_accepts_only_original_bound_access_denied_callback(self):
+        base = "http://127.0.0.1:18766/observer-callback"
+        issuer = "http://sso-a:8080/realms/armoney"
+        state = "synthetic-original-state"
+        query = "?error=access_denied&state=" + state
+        self.assertEqual("BOUND_DENIAL", HARNESS.denied_callback_label(base + query, state, issuer))
+        self.assertEqual("BOUND_DENIAL", HARNESS.denied_callback_label(base + query + "&iss=" + HARNESS.urllib.parse.quote(issuer, safe=""), state, issuer))
+        for url in (base + "?code=secret-code&state=" + state, base + query + "&access_token=private",
+                    base + query + "&id_token=private", base + query + "&refresh_token=private", base + query + "&error=access_denied",
+                    base + query + "&state=" + state, base + query + "&iss=http://wrong.invalid", base + query + "#fragment",
+                    base + query + "%XX", base + query.replace(state, "wrong"), base + "?error=server_error&state=" + state,
+                    base.replace("127.0.0.1", "foreign.invalid") + query, base + "/extra" + query):
+            with self.subTest(kind="invalid_callback"):
+                self.assertEqual("INVALID", HARNESS.denied_callback_label(url, state, issuer))
+        self.assertEqual("INVALID", HARNESS.denied_callback_label(base + query, None, issuer))
+
+    def test_negative_callback_diagnostics_never_reveal_fields_values_or_state(self):
+        url = "http://127.0.0.1:18766/observer-callback?error=access_denied&state=original&error_description=" + PRIVATE + "&session_state=private&unknownprivate=secret"
+        facts = HARNESS.denied_callback_diagnostic(url, "original", "http://sso-a:8080/realms/armoney")
+        self.assertEqual("FIELDS", facts["reason"])
+        self.assertTrue(facts["error_description_present"])
+        self.assertTrue(facts["session_state_present"])
+        self.assertTrue(facts["access_denied"])
+        self.assertTrue(facts["state_matches"])
+        self.assertEqual(1, facts["other_key_count"])
+        for key, value in facts.items():
+            if key not in {"reason", "other_key_count"}: self.assertIs(type(value), bool)
+        serialized = HARNESS.json.dumps(facts)
+        for private in (PRIVATE, "original", "unknownprivate", "secret"):
+            self.assertNotIn(private, serialized)
+        for suffix, reason in (("&state=other", "DUPLICATE"), ("&code=private", "FIELDS"), ("%XX", "SYNTAX")):
+            observed = HARNESS.denied_callback_diagnostic("http://127.0.0.1:18766/observer-callback?error=access_denied&state=original" + suffix, "original", "issuer")
+            self.assertEqual(reason, observed["reason"])
+        self.assertTrue(HARNESS.denied_callback_diagnostic("http://127.0.0.1:18766/observer-callback?code=private&state=original", "original", "issuer")["code_or_token_present"])
+
+    def test_registration_flow_uses_real_creation_then_password_and_no_default_action(self):
+        calls = []
+        rows = [{"id": "00000000-0000-0000-0000-000000000001", "providerId": "registration-page-form"},
+                {"id": "00000000-0000-0000-0000-000000000002", "providerId": "armoney-registration-creation"},
+                {"id": "00000000-0000-0000-0000-000000000003", "providerId": "registration-password-action"}]
+        def request(method, url, body=None, headers=None):
+            calls.append((method, url, body))
+            if method == "GET":
+                return 200, [dict(x) for x in (rows[1:] if "registration-form/executions" in url else rows)], {}
+            return (201 if method == "POST" else 204), None, {}
+        with patch.object(HARNESS, "request", side_effect=request):
+            HARNESS.provision_registration_flow("http://sso-a:8080/admin/realms/armoney", {})
+        leaf_posts = [body["provider"] for method, url, body in calls if method == "POST" and url.endswith("/executions/execution")]
+        self.assertEqual(["armoney-registration-creation", "registration-password-action"], leaf_posts)
+        self.assertEqual(3, sum(method == "PUT" and url.endswith("/executions") and body["requirement"] == "REQUIRED" for method, url, body in calls))
+        self.assertEqual({"registrationFlow": "observer-genuine-registration"}, calls[-1][2])
+
+    def test_canonical_persisted_user_readback_rejects_other_username_or_noncanonical_id(self):
+        phone = "+971501234567"
+        valid = {"username": phone, "id": "00000000-0000-0000-0000-000000000001"}
+        with patch.object(HARNESS, "request", return_value=(200, [valid], {})):
+            self.assertEqual(valid["id"], HARNESS.canonical_user("http://sso-a:8080/users", {}, phone))
+        for rows in ([], [valid, valid], [{**valid, "username": "other"}], [{**valid, "id": "private-not-uuid"}]):
+            with self.subTest(rows=len(rows)), patch.object(HARNESS, "request", return_value=(200, rows, {})):
+                with self.assertRaises((AssertionError, ValueError)):
+                    HARNESS.canonical_user("http://sso-a:8080/users", {}, phone)
+
     def test_browser_submission_waits_for_complete_valid_http_response_before_baseline(self):
         for status, content_type in ((200, "text/html; charset=utf-8"), (503, "text/html"), (200, "application/json")):
             with self.subTest(status=status, content_type=content_type):
@@ -107,7 +244,8 @@ class DiagnosticsTest(unittest.TestCase):
     def test_each_failure_reports_only_the_frozen_phase(self):
         expected = {"START", "KEY_VALIDATION", "READINESS", "ADMIN_LOGIN", "REALM_SETUP", "CLIENT_SETUP",
                     "ACTION_SETUP", "ACTION_LIST", "ACTION_AVAILABLE", "ACTION_REGISTER", "ACTION_CONFIG",
-                    "USER_SETUP", "BROWSER_RENDER", "SEND_RPC", "CROSS_NODE", "READ_ONLY",
+                    "USER_SETUP", "BROWSER_RENDER", "NEGATIVE_AUTH_PAGE", "NEGATIVE_FORM_SUBMIT", "NEGATIVE_DENIAL_RESULT",
+                    "NEGATIVE_NO_SEND", "NEGATIVE_NO_RPC", "SEND_RPC", "CROSS_NODE", "READ_ONLY",
                     "READ_ONLY_RPC", "READ_ONLY_EXPIRY", "READ_ONLY_DTO", "READ_ONLY_INSPECT",
                     "READ_ONLY_TIMESTAMP", "READ_ONLY_HMAC_DENIAL", "READ_ONLY_SUBJECT_DENIAL", "READ_ONLY_KEY_DENIAL",
                     "EXPIRY", "TAB_REMOVAL", "ROOT_REMOVAL", "DISABLE_DELETE", "CLEANUP", "COMPLETE",
@@ -186,9 +324,11 @@ class DiagnosticsTest(unittest.TestCase):
 
     def test_pinned_admin_contract_registers_then_enables_only_installed_email_action(self):
         transport, calls, sequence = self.action_transport()
-        with patch.object(HARNESS, "request", side_effect=transport), contextlib.redirect_stdout(io.StringIO()):
+        with patch.object(HARNESS, "request", side_effect=transport), \
+                patch.object(HARNESS, "provision_registration_flow") as registration_flow, contextlib.redirect_stdout(io.StringIO()):
             HARNESS.provision_client_and_action("http://fixture.invalid", {"Authorization": "synthetic-private"})
         self.assertEqual(len(sequence), len(calls))
+        registration_flow.assert_called_once_with("http://fixture.invalid/admin/realms/armoney", {"Authorization": "synthetic-private"})
         self.assertEqual("ACTION_CONFIG", HARNESS.current_phase)
 
     def test_registration_rejects_unexpected_creation_status_without_configuration(self):

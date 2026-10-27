@@ -10,11 +10,11 @@ import org.testcontainers.containers.PostgreSQLContainer
 import spock.lang.Specification
 import java.sql.DriverManager
 
-/** Real populated V5 -> V6 primary database upgrade; synthetic legacy operator
+/** Real populated V5 -> V7 primary database upgrade; synthetic legacy operator
  * flags remain legacy data and are not auth receipts or ACTIVE eligibility.
  */
 class VerificationProjectionUpgradeIntegrationSpec extends Specification {
-    def 'V6 preserves published V5 phones physical profiles pinned placements audit and raw migration checksums'() {
+    def 'V6 and V7 preserve published V5 phones physical profiles pinned placements audit and raw migration checksums'() {
         given:
         def postgres = new PostgreSQLContainer('postgres:17.6-alpine')
         postgres.start()
@@ -52,10 +52,12 @@ class VerificationProjectionUpgradeIntegrationSpec extends Specification {
         def database = new Database(postgres.jdbcUrl, postgres.username, postgres.password)
         then:
         database.transaction { current ->
-            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '6'
-            assert current.fetch('select * from flyway_schema_history where version<>? order by installed_rank', '6').intoMaps() == history
+            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get('version') == '8'
+            assert current.fetch('select * from flyway_schema_history where version not in (?,?,?) order by installed_rank', '6', '7', '8').intoMaps() == history
             assert snapshots(current) == before
             assert metadata(current) == constraints
+            assert current.fetchOne("""select count(*) as n from pg_trigger where
+                tgrelid='profile_directory'::regclass and tgname='migration_directory_guard' and not tgisinternal""").get('n', Long) == 1
             ['verification_projection_current','verification_projection_operations','verification_projection_tombstones','verification_projection_writer_budgets'].each { table ->
                 assert current.fetchOne('select count(*) as n from ' + table).get('n', Long) == 0
             }
@@ -98,6 +100,7 @@ class VerificationProjectionUpgradeIntegrationSpec extends Specification {
         sql.fetch("""select tablename,indexname,indexdef from pg_indexes where schemaname='public'
             and tablename in ('profiles','profile_directory','registration_phone_claims') order by tablename,indexname""").intoMaps() +
         sql.fetch("""select tgname,pg_get_triggerdef(oid) as definition from pg_trigger
-            where tgrelid='profile_directory'::regclass and not tgisinternal order by tgname""").intoMaps()
+            where tgrelid='profile_directory'::regclass and not tgisinternal
+              and tgname<>'migration_directory_guard' order by tgname""").intoMaps()
     }
 }

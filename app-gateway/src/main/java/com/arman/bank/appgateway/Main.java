@@ -21,6 +21,11 @@ public final class Main {
         var wallets = URI.create(ServiceRuntime.required("WALLET_BASE_URL"));
         var payments = URI.create(ServiceRuntime.required("PAYMENT_BASE_URL"));
         var key = ServiceRuntime.required("INTERNAL_AUTH_KEY");
+        var migrationSettings = MigrationBrowserConfiguration.from(System.getenv(), auth);
+        MigrationBrowserProxy migration = null;
+        try {
+        if (migrationSettings.enabled()) migration = new MigrationBrowserProxy(migrationSettings);
+        final var migrationProxy = migration;
         String assistantUrl = System.getenv("ASSISTANT_URL");
         var assistantProxy = new AssistantProxy(auth, wallets, payments, key,
             assistantUrl == null || assistantUrl.isBlank() ? null : URI.create(assistantUrl),
@@ -34,13 +39,15 @@ public final class Main {
                 var runtime = ServiceRuntime.start("app-gateway", Integer.parseInt(System.getenv().getOrDefault("PORT", "8080")),
                     readiness, null, config -> {
                         proxy.configure(config); protectedProxy.configure(config); assistantProxy.configure(config);
+                        if (migrationProxy != null) migrationProxy.configure(config);
                         configureMetrics(config, System.getenv(), metrics, readiness);
                     });
                 Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                    try { runtime.close(); } finally { try { proxy.close(); } finally { try { protectedProxy.close(); } finally { assistantProxy.close(); } } }
+                    try { runtime.close(); } finally { try { proxy.close(); } finally { try { protectedProxy.close(); } finally { try { assistantProxy.close(); } finally { if (migrationProxy != null) migrationProxy.close(); } } } }
                 }, "gateway-shutdown"));
             } catch (Exception e) { protectedProxy.close(); throw e; }
         } catch (Exception e) { try { proxy.close(); } finally { assistantProxy.close(); } throw e; }
+        } catch (Exception e) { if (migration != null) migration.close(); throw e; }
     }
 }
 

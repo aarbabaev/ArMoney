@@ -1,8 +1,16 @@
 # P2P implementation contract
 
-Status: implemented source contract; not a deployment or completion claim. Optional Mailtrap transactional email is configured separately; no SMS, push service or broker is introduced.
+Status: implemented source contract; not a deployment or completion claim. Optional Mailtrap transactional email is configured separately; the P2P notification and transfer slice introduces no SMS, push service or broker.
 
 ## Identity and phone numbers
+
+The claim-only enrollment below describes compatibility
+operation with registration verification and managed admission disabled. The
+opt-in [verified registration flow](adr/0050-production-provider-code-intent.md)
+requires email and local SMS ownership confirmation before banking access;
+[migration](legacy-user-migration.md) preserves existing owners explicitly.
+These flows do not introduce general self-service contact replacement. Recipient
+resolution, payment eligibility and ledger checks below apply in both modes.
 
 New registration and recipient input uses canonical UAE mobile syntax `+9715[024568][0-9]{7}`. No other country, national format or country selector is supported. Auth reserves the phone uniquely across credential modes; Keycloak requires it as the username. Registration is a claim, not ownership proof. See [ADR 0014](adr/0014-uae-registration-phone.md) for bank enrollment completion, retries and historical migration limits.
 

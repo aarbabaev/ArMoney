@@ -37,6 +37,7 @@ public final class VerificationProjectionRoutes {
         if (configuration.enabled()) config.routes.post(PATH, this::handle);
     }
     private void handle(Context ctx) {
+        long originalStartedNanos=System.nanoTime();
         boolean acquired = false;
         ctx.header("Cache-Control", "no-store");
         try {
@@ -46,9 +47,9 @@ public final class VerificationProjectionRoutes {
             if (!store.admit(writer)) throw new VerificationProjectionStore.Rejected(429);
             String type = ctx.contentType();
             if (type == null || !type.split(";", 2)[0].strip().equalsIgnoreCase("application/json")) throw new IllegalArgumentException();
-            byte[] bytes = ctx.req().getInputStream().readNBytes(LIMIT + 1);
+            byte[] bytes = LiveUserCurrentRoutes.readBody(ctx,originalStartedNanos,LIMIT);
             if (bytes.length > LIMIT) throw new IllegalArgumentException();
-            VerificationProjection.Ack ack = store.commit(writer, parse(bytes));
+            VerificationProjection.Ack ack = store.commit(writer, parse(bytes),originalStartedNanos);
             reply(ctx, 200, Map.of("operation_id", ack.operationId().toString(), "identity_id", ack.identityId().toString(),
                 "version", ack.version(), "phone_contact_version", ack.phoneContactVersion(),
                 "verification_epoch", ack.verificationEpoch(), "payload_hash", ack.payloadHash()));

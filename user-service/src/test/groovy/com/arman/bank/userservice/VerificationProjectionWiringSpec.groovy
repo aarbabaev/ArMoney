@@ -47,7 +47,7 @@ class VerificationProjectionWiringSpec extends Specification {
         def accepted = send(PATH, 'POST', body, false, true, false)
         then:
         1 * projection.admit('auth') >> true
-        1 * projection.commit('auth', command) >> command.ack()
+        1 * projection.commit('auth', command, { long start -> long elapsed=System.nanoTime()-start; elapsed>=0&&elapsed<4_000_000_000L }) >> command.ack()
         accepted.statusCode() == 200
         when:
         def rejected = send(PATH, 'POST', body, true, false, true)
@@ -78,13 +78,24 @@ class VerificationProjectionWiringSpec extends Specification {
         1 * profiles.registerPhone(UUID.fromString(OWNER), '+971501234567')
         when:
         def ordinary = send('/v1/users/me', 'PUT', 'x' * 4097, true, true, true, true)
-        def oversized = send(PATH, 'POST', 'x' * 12289, false, true, false, true)
+        def oversized = oversizedProjectionSocket()
         then:
         ordinary.statusCode() == 413
-        oversized.statusCode() == 400
+        // The absolute guard physically aborts an authenticated oversized body;
+        // a response is optional, but peer closure must be observed, never inferred
+        // from an arbitrary HttpClient IOException or elapsed time.
+        oversized.closed
+        oversized.status == null || oversized.status in [400,413]
+        oversized.bytes <= 4096
         1 * projection.admit('auth') >> true
-        0 * projection.commit(_, _)
+        0 * projection.commit(_, _, _)
         0 * profiles._
+        when:
+        def recovered = send('/internal/registrations/me', 'PUT', '{"phone_number":"+971501234567"}', true, false, true)
+        then:
+        recovered.statusCode() == 204
+        1 * profiles.registerPhone(UUID.fromString(OWNER), '+971501234567')
+        0 * projection._
     }
 
     def 'default off registers no dedicated route and keeps ordinary profile lookup'() {
@@ -110,5 +121,41 @@ class VerificationProjectionWiringSpec extends Specification {
             new VerificationProjectionConfiguration(true, [auth:BUSINESS]), projection)
         then:
         thrown(IllegalArgumentException)
+    }
+
+    private Map oversizedProjectionSocket() {
+        def socket=new Socket('127.0.0.1',runtime.port())
+        socket.soTimeout=6500
+        try {
+            String header='POST '+PATH+' HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nX-ArMoney-Verification-Projection-Key: '+DEDICATED+'\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n'
+            String chunk=Integer.toHexString(12289)+'\r\n'+('x'*12289)+'\r\n0\r\n\r\n'
+            socket.outputStream.write((header+chunk).getBytes('US-ASCII'))
+            socket.outputStream.flush()
+            def response=new ByteArrayOutputStream()
+            boolean closed=false
+            try {
+                int next
+                while((next=socket.inputStream.read())!=-1) {
+                    response.write(next)
+                    if(response.size()>4096)throw new AssertionError('Oversized rejection response exceeded bound')
+                }
+                closed=true
+            } catch(SocketTimeoutException timeout) {
+                throw new AssertionError('Oversized projection peer did not physically close within bound')
+            } catch(SocketException reset) {
+                // The test has not closed its endpoint; this is a peer-observed reset.
+                closed=true
+            }
+            Integer status=null
+            if(response.size()>0) {
+                String first=response.toString('US-ASCII').split('\r\n',2)[0]
+                if(!(first==~ /HTTP\/1\.1 (400|413)( .*)?/))throw new AssertionError('Unexpected oversized projection response status')
+                status=Integer.parseInt(first.split(' ',3)[1])
+            }
+            [closed:closed,status:status,bytes:response.size()]
+        } finally {
+            // Runs only AFTER the peer EOF/reset assertion above.
+            socket.close()
+        }
     }
 }

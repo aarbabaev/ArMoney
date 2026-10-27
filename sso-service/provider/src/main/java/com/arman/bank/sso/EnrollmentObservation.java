@@ -12,6 +12,12 @@ import java.util.*;
 
 /** Read-only pre-token observations. Neither this DTO nor a provider attribute is a receipt. */
 final class EnrollmentObservation {
+    enum Rejection { ISSUER, CLIENT_ALLOWLIST, CLIENT_MISSING, CLIENT_DISABLED, CLIENT_STANDARD_FLOW,
+        ROOT_MISSING, ROOT_BINDING, TAB_MISSING, TAB_BINDING, TAB_CLIENT_MISSING, TAB_CLIENT_BINDING,
+        ACTION, USER_MISSING, SUBJECT, HMAC, PHONE, EMAIL, ROOT_TIMESTAMP, ROOT_FUTURE, USER_LIFESPAN,
+        CACHE_EXPIRY, DEADLINE_EXPIRED, DEADLINE_OVERFLOW, USER_ACTION_INACTIVE }
+    private static final org.jboss.logging.Logger LOG=org.jboss.logging.Logger.getLogger(EnrollmentObservation.class);
+    private static Bridge.Unavailable rejected(Rejection reason){LOG.warn(reason.name());return new Bridge.Unavailable();}
     private static final Set<String> CONTEXT = Set.of("issuer", "subject", "client_id",
             "provider_root_session_id", "provider_tab_id", "authentication_session_id");
     private static final Set<String> RESULT = Set.of("enrollment_id", "version", "state",
@@ -64,27 +70,35 @@ final class EnrollmentObservation {
     static Map<String, Object> observe(KeycloakSession session, Binding binding, String key) {
         RealmModel realm = session.getContext().getRealm();
         String issuer = Urls.realmIssuer(session.getContext().getUri().getBaseUri(), realm.getName());
-        if (!issuer.equals(binding.issuer()) || !CLIENTS.contains(binding.clientId())) throw new Bridge.Unavailable();
+        if (!issuer.equals(binding.issuer())) throw rejected(Rejection.ISSUER);
+        if (!CLIENTS.contains(binding.clientId())) throw rejected(Rejection.CLIENT_ALLOWLIST);
         ClientModel client = realm.getClientByClientId(binding.clientId());
-        if (client == null || !client.isEnabled() || !client.isStandardFlowEnabled()) throw new Bridge.Unavailable();
+        if (client == null) throw rejected(Rejection.CLIENT_MISSING);
+        if (!client.isEnabled()) throw rejected(Rejection.CLIENT_DISABLED);
+        if (!client.isStandardFlowEnabled()) throw rejected(Rejection.CLIENT_STANDARD_FLOW);
         var root = session.authenticationSessions().getRootAuthenticationSession(realm, binding.rootId());
-        if (root == null || !binding.rootId().equals(root.getId())) throw new Bridge.Unavailable();
+        if (root == null) throw rejected(Rejection.ROOT_MISSING);
+        if (!binding.rootId().equals(root.getId())) throw rejected(Rejection.ROOT_BINDING);
         AuthenticationSessionModel auth = root.getAuthenticationSession(client, binding.tabId());
-        if (auth == null || !binding.tabId().equals(auth.getTabId()) || auth.getClient() == null
-                || !client.getId().equals(auth.getClient().getId())
-                || !"REQUIRED_ACTIONS".equals(auth.getAction())) throw new Bridge.Unavailable();
+        if (auth == null) throw rejected(Rejection.TAB_MISSING);
+        if (!binding.tabId().equals(auth.getTabId())) throw rejected(Rejection.TAB_BINDING);
+        if (auth.getClient() == null) throw rejected(Rejection.TAB_CLIENT_MISSING);
+        if (!client.getId().equals(auth.getClient().getId())) throw rejected(Rejection.TAB_CLIENT_BINDING);
+        if (!"REQUIRED_ACTIONS".equals(auth.getAction())) throw rejected(Rejection.ACTION);
         UserModel user = auth.getAuthenticatedUser();
-        if (user == null || !binding.subject().equals(user.getId())) throw new Bridge.Unavailable();
+        if (user == null) throw rejected(Rejection.USER_MISSING);
+        if (!binding.subject().equals(user.getId())) throw rejected(Rejection.SUBJECT);
         String expected = SessionBinding.derive(key, realm.getId(), root.getId(), auth.getTabId(), client.getId());
-        if (!SessionBinding.matches(expected, binding.digest())) throw new Bridge.Unavailable();
+        if (!SessionBinding.matches(expected, binding.digest())) throw rejected(Rejection.HMAC);
         String phone = user.getUsername(), email = user.getEmail();
-        if (!canonicalPhone(phone) || !canonicalEmail(email)) throw new Bridge.Unavailable();
+        if (!canonicalPhone(phone)) throw rejected(Rejection.PHONE);
+        if (!canonicalEmail(email)) throw rejected(Rejection.EMAIL);
         int timestamp = root.getTimestamp();
         long now = Time.currentTime();
         long deadline = deadline(timestamp, now, realm.getAccessCodeLifespanUserAction(),
                 SessionExpiration.getAuthSessionExpiration(realm, timestamp));
         if (!new ClientSessionCode<AuthenticationSessionModel>(session, realm, auth)
-                .isActionActive(ClientSessionCode.ActionType.USER)) throw new Bridge.Unavailable();
+                .isActionActive(ClientSessionCode.ActionType.USER)) throw rejected(Rejection.USER_ACTION_INACTIVE);
         var result = binding.fields();
         result.put("username", phone); result.put("email", email); result.put("phone_number", phone);
         // A disabled existing account is a current negative fact only after all
@@ -97,12 +111,14 @@ final class EnrollmentObservation {
 
     static long deadline(long timestamp, long now, long userLifespan, long cacheExpiry) {
         try {
-            if (timestamp <= 0 || timestamp > now || userLifespan <= 0 || cacheExpiry <= timestamp)
-                throw new Bridge.Unavailable();
+            if (timestamp <= 0) throw rejected(Rejection.ROOT_TIMESTAMP);
+            if (timestamp > now) throw rejected(Rejection.ROOT_FUTURE);
+            if (userLifespan <= 0) throw rejected(Rejection.USER_LIFESPAN);
+            if (cacheExpiry <= timestamp) throw rejected(Rejection.CACHE_EXPIRY);
             long deadline = Math.min(cacheExpiry, Math.addExact(timestamp, userLifespan));
-            if (now >= deadline) throw new Bridge.Unavailable();
+            if (now >= deadline) throw rejected(Rejection.DEADLINE_EXPIRED);
             return deadline;
-        } catch (ArithmeticException invalid) { throw new Bridge.Unavailable(); }
+        } catch (ArithmeticException invalid) { throw rejected(Rejection.DEADLINE_OVERFLOW); }
     }
 
     static boolean canonicalPhone(String value) { return value != null && value.matches("\\+9715[024568][0-9]{7}"); }

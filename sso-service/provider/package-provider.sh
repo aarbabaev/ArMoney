@@ -53,19 +53,37 @@ bash "$repo_dir/gradlew" --project-dir "$module_dir" --no-daemon --max-workers=1
 artifact="$module_dir/build/libs/armoney-keycloak-provider-0.1.0.jar"
 test -s "$artifact"
 
-# Fail packaging if a future source edit registers a proof/default-protocol factory.
+# Exact production SPI allowlist: no historical proof factories, fixture providers or token mappers.
 services="$module_dir/src/main/resources/META-INF/services"
-test "$(find "$services" -type f | wc -l | tr -d ' ')" = 3
-printf '%s\n' com.arman.bank.sso.EmailVerificationFactory com.arman.bank.sso.PhoneVerificationFactory | cmp - "$services/org.keycloak.authentication.RequiredActionFactory"
+test "$(find "$services" -type f | wc -l | tr -d ' ')" = 8
+printf '%s\n' com.arman.bank.sso.EmailVerificationFactory com.arman.bank.sso.PhoneVerificationFactory com.arman.bank.sso.MigrationEmailVerificationFactory | cmp - "$services/org.keycloak.authentication.RequiredActionFactory"
+printf '%s\n' com.arman.bank.sso.StrictMailtrapEmailSenderFactory | cmp - "$services/org.keycloak.email.EmailSenderProviderFactory"
 printf '%s\n' com.arman.bank.sso.PasswordProofFactory | cmp - "$services/org.keycloak.authentication.AuthenticatorFactory"
 printf '%s\n' com.arman.bank.sso.StatusResourceFactory | cmp - "$services/org.keycloak.services.resource.RealmResourceProviderFactory"
+printf '%s\n' com.arman.bank.sso.CodeIntentLoginProtocolFactory | cmp - "$services/org.keycloak.protocol.LoginProtocolFactory"
+printf '%s\n' com.arman.bank.sso.CodeIntentTokenPolicyFactory | cmp - "$services/org.keycloak.services.clientpolicy.executor.ClientPolicyExecutorProviderFactory"
+printf '%s\n' com.arman.bank.sso.CodeIntentIntrospectionFactory | cmp - "$services/org.keycloak.protocol.oidc.TokenIntrospectionProviderFactory"
+printf '%s\n' com.arman.bank.sso.CodeIntentRegistrationFactory | cmp - "$services/org.keycloak.authentication.FormActionFactory"
 
 audit_dir="$(mktemp -d "$module_dir/build/package-audit.XXXXXX")"
 (cd -- "$audit_dir" && jar --extract --file "$artifact" META-INF/services)
-test "$(find "$audit_dir/META-INF/services" -type f | wc -l | tr -d ' ')" = 3
+test "$(find "$audit_dir/META-INF/services" -type f | wc -l | tr -d ' ')" = 8
 for descriptor in "$services"/*; do
   cmp "$descriptor" "$audit_dir/META-INF/services/${descriptor##*/}"
 done
+jar --list --file "$artifact" > "$audit_dir/classes.txt"
+for name in CodeIntentLoginProtocol CodeIntentLoginProtocolFactory CodeIntentTokenPolicy CodeIntentTokenPolicyFactory \
+  CodeIntentIntrospection CodeIntentIntrospectionFactory CodeIntentRegistrationAction CodeIntentRegistrationFactory \
+  CodeIntentRegistrationGuard CodeIntentRegistrationContinuation CodeIntentProviderConfiguration \
+  MigrationEmailVerificationFactory MigrationReadinessObservation StrictMailtrapEmailSenderFactory \
+  StrictMailtrapEmailSender StrictMailtrapSmtpTransport smtp/QuietSmtpTransport \
+  'smtp/QuietSmtpTransport$DataWriteObserver' 'smtp/QuietSmtpTransport$1'; do
+  grep -Fqx "com/arman/bank/sso/$name.class" "$audit_dir/classes.txt"
+done
+if grep -Eq '^com/arman/bank/sso/[^/]*(Fixture|Observer|Visibility)[^/]*\.class$|^com/arman/bank/sso/Proof[^/]*Factory\.class$' "$audit_dir/classes.txt"; then
+  printf '%s\n' 'Non-production provider class inventory rejected.' >&2
+  exit 1
+fi
 
 mkdir -p -- "$(dirname -- "$output")"
 mkdir -- "$output"
@@ -97,7 +115,9 @@ cp -R "$repo_dir/sso-service/themes/armoney/login/." "$output/themes/armoney/log
     'gradle_distribution_sha256=bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531' \
     'builder=gradle:8.14.3-jdk21@sha256:21bd311ed01360c189b8870c6b6e988199ff10f72d445d02fb39d3cff9da91d7' \
     'base=quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c' \
-    'proof_factories_registered=false' \
+    'historical_proof_factories_registered=false' \
+    'code_intent_production_factories_registered=true; runtime_enabled=false unless explicit validated configuration' \
+    'fixture_providers_packaged=false' \
     'realm_configuration_applied=false' \
     'source_revision=unrecorded; source-files.sha256 identifies actual input bytes' \
     'validation=standalone-provider check jar packageDependencyProvenance; not runtime acceptance'

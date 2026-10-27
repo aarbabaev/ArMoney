@@ -15,7 +15,11 @@ object Login {
     fun request(config: Configuration): AuthorizationRequest {
         val service = AuthorizationServiceConfiguration(Uri.parse(config.oidc("auth")), Uri.parse(config.oidc("token")))
         return AuthorizationRequest.Builder(service, "armoney-android", ResponseTypeValues.CODE, Uri.parse(Callback.REDIRECT))
-            .setScope("openid profile email").build()
+            .setScope("openid profile email")
+            // Request fresh interaction; the provider must independently enforce freshness.
+            .setPrompt("login")
+            .setAdditionalParameters(mapOf("max_age" to "0"))
+            .build()
     }
     fun start(activity: Activity, store: SecureStore, config: Configuration) {
         config.usable()

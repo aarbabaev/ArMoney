@@ -37,6 +37,19 @@ ERROR_TYPES = ('AuthorizationException', 'TopicAuthorizationException', 'GroupAu
                'ConfigException', 'IllegalArgumentException', 'AccessDeniedException')
 FORMAT_STAGES = frozenset(('CONFIG', 'CLUSTER_ID', 'METADATA', 'EMPTY_ROOT', 'OWNERSHIP',
                           'INITIAL_CONTROLLERS', 'STORAGE_TOOL'))
+# Diagnostic hints only: output always comes from these literals, never matched text.
+# Order favors specific resource/configuration failures over generic Java failures.
+STORAGE_TOOL_CATEGORIES = (
+    ('OOM', r'\bOutOfMemoryError\b|Cannot allocate memory|insufficient memory'),
+    ('DISK', r'No space left on device|Read-only file system|\bKafkaStorageException\b'),
+    ('PERMISSION', r'\bAccessDeniedException\b|Permission denied|Operation not permitted'),
+    ('UNSUPPORTED_FLAG', r'unrecognized arguments?:|unrecognized option|Unknown option|not a recognized option'),
+    ('INVALID_CONFIG', r'\bConfigException\b|\bConfigurationException\b|\bIllegalArgumentException\b'),
+    ('JAVA_RUNTIME', r'\b(?:UnsupportedClassVersionError|NoClassDefFoundError|ClassNotFoundException|'
+                     r'ExceptionInInitializerError|NullPointerException)\b|Could not create the Java Virtual Machine'),
+    ('IO', r'\b(?:IOException|FileSystemException|NoSuchFileException)\b'),
+    ('KAFKA', r'\b(?:KafkaException|TerseFailure|FormatterException)\b'),
+)
 FORMAT_REASONS = {
     'Invalid Kafka node identity': 'NODE_IDENTITY',
     'Required node configuration missing': 'NODE_CONFIGURATION',
@@ -110,9 +123,14 @@ def safe_docker_failure(args, result, phase, env=None):
     format_stage = stages[-1] if phase == 'format' and stages else 'UNKNOWN'
     reason = next((FORMAT_REASONS[line] for line in output.splitlines()
                    if phase == 'format' and line in FORMAT_REASONS), 'UNCLASSIFIED')
+    storage_category = next((category for category, pattern in STORAGE_TOOL_CATEGORIES
+                             if re.search(pattern, output)), 'UNKNOWN') if (
+                                 phase == 'format' and format_stage == 'STORAGE_TOOL') else 'UNKNOWN'
     return (f'Docker failure: phase={phase} operation={operation} subcommand={subcommand} '
             f'principal={principal} node={node} exit={code} errors=' + (','.join(errors) or 'unclassified')
-            + (f' format_stage={format_stage} format_reason={reason}' if phase == 'format' else ''))
+            + (f' format_stage={format_stage} format_reason={reason}' if phase == 'format' else '')
+            + (f' storage_tool_category={storage_category}'
+               if phase == 'format' and format_stage == 'STORAGE_TOOL' else ''))
 
 
 def safe_snapshot_failure(result, mode, node):

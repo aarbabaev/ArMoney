@@ -36,12 +36,11 @@ public interface SsoTokens {
         public static TokenContext absent(){return new TokenContext(Metadata.absent(),Metadata.absent(),Metadata.absent(),Metadata.absent(),Metadata.absent());}
         @Override public String toString(){return "AuthenticatedTokenContext[redacted]";}
     }
-    record Principal(String issuer, String subject, String phoneNumber, String email, boolean emailVerified,TokenContext tokenContext) {
-        public Principal(String issuer,String subject,String phoneNumber,String email,boolean emailVerified){
-            this(issuer,subject,phoneNumber,email,emailVerified,TokenContext.absent());
-        }
-        public Principal(String issuer, String subject, String phoneNumber) {
-            this(issuer, subject, phoneNumber, null, false);
+    /** Claim format is retained separately; legacy contact normalization never grants managed authority. */
+    record Principal(String issuer, String subject, String phoneNumber, String email, boolean emailVerified,
+                     boolean emailVerificationClaimKnown,TokenContext tokenContext) {
+        public Principal(String issuer,String subject,String phoneNumber,String email,boolean emailVerified,boolean emailVerificationClaimKnown){
+            this(issuer,subject,phoneNumber,email,emailVerified,emailVerificationClaimKnown,TokenContext.absent());
         }
         public Principal {
             Objects.requireNonNull(tokenContext);

@@ -1,0 +1,34 @@
+# DISPOSABLE TEST CONTROLLER ONLY. Never use this target for a persistent service.
+FROM gradle:8.14.3-jdk21@sha256:21bd311ed01360c189b8870c6b6e988199ff10f72d445d02fb39d3cff9da91d7 AS acceptance-build
+USER root
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+WORKDIR /workspace
+COPY settings.gradle build.gradle gradlew ./
+COPY gradle/wrapper/ ./gradle/wrapper/
+COPY platform-runtime/build.gradle ./platform-runtime/
+COPY platform-runtime/src/ ./platform-runtime/src/
+COPY auth-service/build.gradle ./auth-service/
+COPY auth-service/src/ ./auth-service/src/
+COPY auth-service/Dockerfile.production-provider-acceptance ./auth-service/
+RUN bash ./gradlew :auth-service:compileTestJava :auth-service:installDist --no-daemon --max-workers=1 \
+    && mkdir -p /acceptance/classes/com/arman/bank/authservice/infrastructure /acceptance/provenance \
+    && for family in Controller Delivery Evidence Main Policy Transport; do \
+         source=auth-service/build/classes/java/test/com/arman/bank/authservice/infrastructure/ProductionProviderAcceptance${family}; \
+         test -f "${source}.class"; \
+         cp "${source}.class" /acceptance/classes/com/arman/bank/authservice/infrastructure/; \
+         for nested in "${source}"\$*.class; do test ! -e "$nested" || cp "$nested" /acceptance/classes/com/arman/bank/authservice/infrastructure/; done; \
+       done \
+    && find /acceptance/classes -type f | sort > /acceptance/provenance/class-inventory.txt \
+    && ! grep -Ev '/ProductionProviderAcceptance(Controller|Delivery|Evidence|Main|Policy|Transport)(\$[^/]+)?\.class$' /acceptance/provenance/class-inventory.txt \
+    && ! find /acceptance/classes -type f | grep -E '(CodeIntentAuthorityFixture|RealWork|Spec|groovy)' \
+    && find /acceptance/classes auth-service/build/install/auth-service/lib -type f -print0 | sort -z | xargs -0 sha256sum > /acceptance/provenance/artifacts.sha256 \
+    && find settings.gradle build.gradle gradlew gradle/wrapper platform-runtime/build.gradle platform-runtime/src auth-service/build.gradle auth-service/src auth-service/Dockerfile.production-provider-acceptance -type f -print0 | sort -z | xargs -0 sha256sum > /acceptance/provenance/source.sha256
+
+FROM gradle:8.14.3-jdk21@sha256:21bd311ed01360c189b8870c6b6e988199ff10f72d445d02fb39d3cff9da91d7
+COPY --from=acceptance-build --chown=gradle:gradle /acceptance/ /opt/acceptance/
+COPY --from=acceptance-build --chown=gradle:gradle /workspace/auth-service/build/install/auth-service/lib/ /opt/auth/lib/
+USER gradle
+WORKDIR /tmp
+LABEL com.armoney.artifact.scope="disposable-production-provider-controller-only"
+ENTRYPOINT ["java", "-Xms32m", "-Xmx256m", "-cp", "/opt/acceptance/classes:/opt/auth/lib/*", "com.arman.bank.authservice.infrastructure.ProductionProviderAcceptanceMain"]
+# No default isolation flags, secrets, database addresses or host ports.

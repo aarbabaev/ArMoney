@@ -1,18 +1,97 @@
-# Disabled Keycloak verification provider
+# Keycloak verification provider under integration
 
-This standalone Java 21 module targets Keycloak **26.7.4**. It is implementation
-for integration and isolated acceptance, not an activated or end-to-end verified
-flow. Neither the existing realm export nor any persisted realm/user is changed.
+This standalone Java 21 module targets Keycloak **26.7.4**. Its default-off
+production composition has independently verified disposable registration and
+synthetic zero-balance LOCAL/historical-SSO acceptance. Exact-head CI, final review
+and deployment readiness remain separate gates; no persistent activation is
+claimed. Neither the existing realm export nor any persisted realm/user is changed
+by building this module.
 Its standalone settings avoid changing the root service dependency graph.
 
 ## Implemented adapters
 
+The current production source registers eight SPI descriptor types, including
+the code-intent OIDC protocol, token-response policy, introspection adapter and
+genuine registration-creation action. These replace neither the durable Auth
+authority nor its separate managed-session admission checks. Historical proof
+factories and acceptance/control resources are excluded from the production
+package inventory. An earlier dedicated-account checkpoint passed an isolated
+130-case provider suite and its then-seven-descriptor package check. Its optimized
+image and disabled-banking realm provisioning were scoped evidence for that
+revision. Current image and functional evidence are recorded in the delivery PR;
+earlier results do not clear subsequent source changes or authorize persistent
+activation.
+
+Production configuration uses `ARMONEY_LOGIN_PROOF_ENABLED` (default false),
+`ARMONEY_CODE_INTENT_CODE_HMAC_KEYS` and
+`ARMONEY_CODE_INTENT_PURPOSE_MANIFEST`, alongside the existing distinct transport,
+binding, actor and pair settings. The bounded key ring accepts canonical 32-byte
+keys and checks standard/URL Base64 aliases across roles. Unknown nonempty secret
+containers are rejected. The exact issuer/client/original-redirect manifest
+separates native banking, managed migration and legacy account migration.
+The dedicated public `armoney-migration-account` client is accepted only for the
+exact account callback's `MIGRATION_ACCOUNT` purpose and strict read-only code
+observation. It cannot enter managed banking, registration or verification
+allowlists. This configuration is implemented, with scoped historical-SSO
+acceptance; it does not authorize persistent activation.
+See [ADR 0050](../../../docs/adr/0050-production-provider-code-intent.md).
+The disposable dedicated client exposes its token only to the existing
+`armoney-auth` introspection reader. Its single inspection audience mapper does
+not add `armoney-api` or any banking proof and cannot grant banking admission.
+
+### Separate production-provider acceptance topology
+
+`compose.production-provider-acceptance.yaml` is an explicit disposable topology,
+not a persistent-stack overlay. Root must establish a fresh owned Docker daemon,
+verify image identities and inherited volume shadows, enforce an outer deadline,
+and stage service readiness before starting its opt-in controller and edge
+profiles. No host ports, host sockets or persistent volumes are declared.
+
+`scripts/production-provider-fixture-environment.py` generates eleven new private
+configuration files from fresh random material. It never reads the operator's
+`.env`. Caller assertions do not attest isolation. The provisioning helper refuses
+an existing realm; it does not import, reset or update the operator's realm.
+
+The separate disposable controller image includes only six explicitly selected
+test-class families and production Auth dependencies. It must never replace the
+production Auth service or be packaged into the provider JAR. Its version-2
+protocol reports a bounded, sorted inventory of genuine confirmed events, rather
+than selecting a latest event or treating multiple ordinary logins as ambiguous.
+Delivery observations come from actual SMTP/SMS transport and successful fenced
+outbox completion. The controller neither creates registration authority nor
+substitutes an acceptance response for a financial result.
+
+The browser driver under `acceptance-fixture` requires genuine registration,
+both OTP forms, projected completion and a subsequent fresh password login.
+Portable driver tests are not service acceptance. Full migration callbacks,
+pre-FINAL continuity, unknown-outcome recovery and device acceptance remain
+separate gates. No emulator is started by these checks.
+
 - `armoney-verify-email-code` and `armoney-verify-phone-code` are required-action
-  factories. They re-enroll/read auth state against the current server user on
+  factories selected only for genuine server-marked registration creation, never
+  blanket obligations for existing or migration users. They re-enroll/read auth state against the current server user on
   each request, issue/resend challenges and consume six ASCII digits. Only auth
   owns OTP receipts, expiry, attempts, cooldown, delivery and contact versions.
   Email completion requires the authoritative email receipt; the final phone
-  step requires both receipts and auth state `ACTIVE`, including projection ACK.
+  step requires both receipts and the strict `PROJECTED` wire state, including
+  projection ACK. This is registration projection completion, not banking ACTIVE
+  authority. A genuine new registration then shows a fixed sign-in page before
+  code issuance and requires a fresh password flow; no registration password
+  action return is treated as authentication proof. Production browser/restart
+  acceptance remains pending.
+- After confirmed email completion, a purpose-scoped authentication-session
+  routing marker prevents Keycloak's repeated trigger evaluation from scheduling
+  email again before phone. Suppression requires a fresh Auth observation and
+  the same enrollment, contact version, user, email and original flow binding.
+  Missing, changed or unavailable evidence requeues email. This marker grants no
+  verification or banking authority; phone still requires both receipts and
+  `PROJECTED`. See [ADR 0051](../../docs/adr/0051-registration-required-action-routing.md).
+- After phone consumption, a pending form exposes an explicit status-only POST.
+  It uses the original flow's protected consumption routing state and fresh Auth
+  contact versions and dual-verification facts. It neither issues nor consumes
+  another OTP. `PROJECTION_PENDING` remains pending; only `PROJECTED` reaches the
+  fixed sign-in page. Empty, unknown and duplicate operations are rejected.
+  Runtime acceptance of this continuation remains pending.
 - The flow binding is HMAC-SHA-256 over a domain-separated, length-prefixed tuple
   of realm ID, root authentication-session ID, tab ID and client internal ID.
   Both required actions derive the same opaque binding. No browser field selects
@@ -33,7 +112,14 @@ Its standalone settings avoid changing the root service dependency graph.
   These are observations, never OTP receipts or eligibility proof. Auth must
   compare them to its own verified candidate versions/epoch on all entry paths.
 
-## Live enrollment observation and disabled accounts
+## Historical component checkpoints
+
+The sections below retain evidence and limitations at their named earlier
+revisions. Statements about unwired components or three-descriptor packaging
+describe those snapshots, not the current production composition above. They do
+not establish a successful current image, enabled flow or native banking login.
+
+### Live enrollment observation and disabled accounts
 
 The separate enrollment observer keeps its exact twelve-field response. An
 existing disabled account may return `enabled: false` and `authentication_session_active: true`
@@ -254,6 +340,43 @@ receipt/current-contact validation. This module neither imports auth classes
 nor accesses an auth database.
 
 ## Configuration and integration requests
+
+The implemented migration email-readiness repair follows
+[ADR 0059](../../docs/adr/0059-migration-provider-email-readiness.md). Its trigger
+requires an enabled realm required-action model with alias/provider ID
+`armoney-migration-email-verification`, `defaultAction=false`. Stock `VERIFY_EMAIL`
+must also be enabled with `defaultAction=false`; keep realm `verifyEmail=false`.
+Do not assign the trigger itself as a user action. It selects only exact configured
+migration-purpose callbacks and enqueues the stock email action without changing
+the verified flag. Existing strict registration code actions remain separate.
+It evaluates during authenticated `AUTHENTICATE` and `REQUIRED_ACTIONS` phases,
+including Keycloak's trigger check before the first required-action redirect.
+
+Stock provider verification requires genuine private realm SMTP configuration
+with authenticated, verified STARTTLS. Never persist SMTP credentials in realm
+exports or templates. Complete it before starting Auth's bounded migration
+attempt. The private `armoney-status/code-session/v2` endpoint reuses
+`AUTH_TO_SSO_STATUS_KEY` and the enabled production purpose manifest; its exact
+versioned contract is in ADR 0059. Deploy the provider capability before enabling
+the consuming Auth migration configuration. V1 remains unchanged. Independent
+disposable tests verify old-link rejection after committed email replacement,
+Auth current-contact rejection and synthetic LOCAL/SSO delivered-link acceptance.
+Separate action-token negatives, CI and final review remain required. Atomicity
+with concurrent provider contact updates is not established; see ADR 0059 for
+the boundary.
+
+The default Docker build selects the stock email sender. The separate opt-in
+build argument `ARMONEY_EMAIL_SENDER_PROVIDER=armoney-strict-mailtrap` selects the
+strict sender during optimized Keycloak augmentation; a runtime environment
+variable is not a substitute for that build. The image records the selection in
+`io.armoney.email-sender`. The only other accepted build value is `default`.
+The strict sender preserves stock email templates and action tokens, restricts
+ArMoney SMTP to `sandbox.smtp.mailtrap.io:2525`, and requires verified STARTTLS
+before authentication. It delegates unrelated realms explicitly to stock.
+SMTP work has five-second phase limits and a fourteen-second attempt plus at most
+one second for cleanup; vault resolution and physical DNS cancellation are outside
+that guarantee. No automatic retry occurs after uncertain delivery. Real hostile
+TLS/logging/write-stall and runtime dependency acceptance remain required.
 
 `ARMONEY_VERIFICATION_ENABLED` defaults false. Enabled startup requires
 `ARMONEY_AUTH_BRIDGE_URL`, `SSO_VERIFICATION_BRIDGE_KEY` and separate

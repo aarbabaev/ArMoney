@@ -74,6 +74,90 @@ class VerificationDeliveryTransportSpec extends Specification {
         body.destination == '+971501234567' && body.purpose == 'REGISTRATION_PHONE' && body.text.contains('123456')
         0 * mail._
     }
+    def 'neutral SMS preserves exact closed purpose stable delivery UUID and bytes for initial and replay ACK: #purpose'() {
+        given:
+        UUID deliveryId = UUID.randomUUID()
+        String text = 'Your ArMoney migration verification code is 654321.'
+        expect:
+        transport.sendSms(deliveryId, '+971501234567', text, purpose)
+        when:
+        status = 200; response = ack(true)
+        then:
+        transport.sendSms(deliveryId, '+971501234567', text, purpose)
+        requests*.key == [deliveryId.toString()] * 2
+        requests*.authorization == ['Bearer ' + TOKEN] * 2
+        requests*.path == ['/api/messages'] * 2
+        requests*.method == ['POST'] * 2
+        requests[0].body == requests[1].body
+        new JsonSlurper().parseText(requests[0].body) ==
+            [destination: '+971501234567', text: text, purpose: purpose.name()]
+        0 * mail._
+        where:
+        purpose << VerificationDeliveryTransport.SmsPurpose.values()
+    }
+    def 'neutral SMS rejects absent purpose bad destination missing delivery UUID or body before network'() {
+        when:
+        boolean missingPurpose = transport.sendSms(UUID.randomUUID(), '+971501234567', 'synthetic code', null)
+        boolean missingDelivery = transport.sendSms(null, '+971501234567', 'synthetic code', VerificationDeliveryTransport.SmsPurpose.LEGACY_MIGRATION_PHONE)
+        boolean badDestination = transport.sendSms(UUID.randomUUID(), 'bad', 'synthetic code', VerificationDeliveryTransport.SmsPurpose.LEGACY_MIGRATION_PHONE)
+        boolean missingBody = transport.sendSms(UUID.randomUUID(), '+971501234567', null, VerificationDeliveryTransport.SmsPurpose.LEGACY_MIGRATION_PHONE)
+        boolean oversizedBody = transport.sendSms(UUID.randomUUID(), '+971501234567', 'x' * 2049, VerificationDeliveryTransport.SmsPurpose.LEGACY_MIGRATION_PHONE)
+        then:
+        !missingPurpose
+        !missingDelivery
+        !badDestination
+        !missingBody
+        !oversizedBody
+        VerificationDeliveryTransport.SmsPurpose.values()*.name() == ['REGISTRATION_PHONE', 'LEGACY_MIGRATION_PHONE']
+        requests.empty
+        0 * mail._
+    }
+    def 'neutral SMS preserves changed purpose or body and denies sandbox conflict without retry'() {
+        given:
+        UUID deliveryId = UUID.randomUUID()
+        expect:
+        transport.sendSms(deliveryId, '+971501234567', 'original', VerificationDeliveryTransport.SmsPurpose.REGISTRATION_PHONE)
+        when:
+        // Synthetic HTTP conflict response proves transport handling only;
+        // the actual sandbox owns digest comparison and persistent inbox behavior.
+        status = 409; response = '{}'
+        then:
+        !transport.sendSms(deliveryId, '+971501234567', 'original', VerificationDeliveryTransport.SmsPurpose.LEGACY_MIGRATION_PHONE)
+        !transport.sendSms(deliveryId, '+971501234567', 'changed', VerificationDeliveryTransport.SmsPurpose.REGISTRATION_PHONE)
+        requests.size() == 3
+        requests*.key == [deliveryId.toString()] * 3
+        requests.collect { new JsonSlurper().parseText(it.body).purpose } ==
+            ['REGISTRATION_PHONE', 'LEGACY_MIGRATION_PHONE', 'REGISTRATION_PHONE']
+        requests.collect { new JsonSlurper().parseText(it.body).text } == ['original', 'original', 'changed']
+        0 * mail._
+    }
+    def 'neutral migration email preserves supplied content and SMTP acceptance classification without registration lease'() {
+        when:
+        boolean accepted = transport.sendEmail('synthetic@example.test', 'ArMoney migration verification',
+            'Migration verification code: 654321', '<p>Migration verification code: 654321</p>')
+        then:
+        1 * mail.send('synthetic@example.test', 'ArMoney migration verification',
+            'Migration verification code: 654321', '<p>Migration verification code: 654321</p>') >> outcome
+        accepted == expected
+        requests.empty
+        where:
+        outcome                  | expected
+        Result.ACCEPTED          | true
+        Result.TRANSIENT_FAILURE | false
+        Result.PERMANENT_FAILURE | false
+    }
+    def 'neutral methods deny closed transport without invoking either provider'() {
+        given:
+        transport.close()
+        when:
+        boolean smsAccepted = transport.sendSms(UUID.randomUUID(), '+971501234567', 'synthetic', VerificationDeliveryTransport.SmsPurpose.LEGACY_MIGRATION_PHONE)
+        boolean emailAccepted = transport.sendEmail('synthetic@example.test', 'Synthetic', 'synthetic', null)
+        then:
+        !smsAccepted
+        !emailAccepted
+        requests.empty
+        0 * mail._
+    }
     def 'HTTP rejection redirects and invalid or oversized acknowledgements never count as delivery'() {
         given:
         status = code; response = body; type = contentType

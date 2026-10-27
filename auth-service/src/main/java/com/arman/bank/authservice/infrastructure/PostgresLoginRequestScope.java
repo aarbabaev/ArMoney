@@ -3,6 +3,7 @@ package com.arman.bank.authservice.infrastructure;
 import com.arman.bank.authservice.domain.LoginProof;
 import com.arman.bank.runtime.Database;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.function.Function;
 import org.jooq.DSLContext;
 
@@ -29,6 +30,7 @@ final class PostgresLoginRequestScope {
         private final String actor;
         private final PostgresLoginOperationGate.Permit permit;
         private final Thread owner = Thread.currentThread();
+        private final UUID requestId = UUID.randomUUID();
         private boolean closed;
         private Request(String actor, PostgresLoginOperationGate.Permit permit) { this.actor = actor; this.permit = permit; }
         void check() {
@@ -38,6 +40,7 @@ final class PostgresLoginRequestScope {
         /** Post-COMMIT verification on this same exclusive backend before external work. */
         void verify() { check(); permit.verify(); check(); }
         String actor() { check(); return actor; }
+        UUID requestId() { check(); return requestId; }
         <T> T transaction(Function<DSLContext,T> action) {
             check();
             return permit.transaction(sql -> {

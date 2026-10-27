@@ -140,6 +140,46 @@ public final class PostgresVerificationProjectionStore implements VerificationPr
         if(full==null)throw new Failure(Error.UNAVAILABLE);
         return status(full,tomb);
     }
+    /** Original Auth command custody only; caller owns the globally ordered transaction. No admission/I/O/borrow. */
+    record OriginalMutation(Command command,UUID enrollmentId,int emailContactVersion,UUID emailReceiptId,
+            UUID phoneReceiptId,Instant deadline) {
+        @Override public String toString(){return "OriginalProjectionMutation[redacted]";}
+    }
+    OriginalMutation requireOriginalMutation(DSLContext sql,String configuredProjectionWriter,UUID operation,UUID identity,
+            Map<String,Object> projection5) {
+        requireLocked(sql);VerificationProjection.writer(configuredProjectionWriter,policy);
+        var after=com.arman.bank.authservice.domain.LiveUserRevision.after(projection5);
+        var control=sql.fetchOne("select retention_key_fingerprint from auth_verification_projection_control where id=1");
+        if(control==null||control.get("retention_key_fingerprint")==null
+                ||!MessageDigest.isEqual(control.get("retention_key_fingerprint",byte[].class),keyFingerprint))throw new Failure(Error.UNAVAILABLE);
+        byte[] scope=writerHash(configuredProjectionWriter);
+        var matches=sql.fetch("select writer_hash from auth_verification_projection_commands where operation_id=? and identity_id=? and expected_version=? and version=? and phone_contact_version=? and verification_epoch=? and payload_hash=?",
+            operation,identity,((Number)after.get("expected_version")).longValue(),((Number)after.get("version")).longValue(),((Number)after.get("phone_contact_version")).longValue(),((Number)after.get("verification_epoch")).longValue(),after.get("projection_payload_hash"));
+        if(matches.size()!=1||!MessageDigest.isEqual(scope,matches.get(0).get("writer_hash",byte[].class)))throw new Failure(Error.UNAVAILABLE);
+        var full=sql.fetchOne("select * from auth_verification_projection_commands where writer_hash=? and operation_id=? for update",scope,operation);
+        var tomb=sql.fetchOne("select * from auth_verification_projection_tombstones where writer_hash=? and operation_id=? for update",scope,operation);
+        if(full==null||tomb==null||!identity.equals(full.get("identity_id",UUID.class)))throw new Failure(Error.UNAVAILABLE);
+        var command=command(full);VerificationProjection.validate(command);
+        if(!operation.equals(command.operationId())||command.expectedVersion()!=((Number)after.get("expected_version")).longValue()
+                ||command.version()!=((Number)after.get("version")).longValue()||command.phoneContactVersion()!=((Number)after.get("phone_contact_version")).longValue()
+                ||command.verificationEpoch()!=((Number)after.get("verification_epoch")).longValue()||!command.payloadHash().equals(after.get("projection_payload_hash"))
+                ||!Arrays.equals(full.get("request_body",byte[].class),HttpVerificationProjection.body(command))
+                ||!MessageDigest.isEqual(identityDigest(identity),tomb.get("identity_digest",byte[].class))
+                ||!command.payloadHash().equals(tomb.get("payload_hash"))||command.version()!=tomb.get("version",Integer.class)
+                ||command.phoneContactVersion()!=tomb.get("phone_contact_version",Integer.class)||command.verificationEpoch()!=tomb.get("verification_epoch",Long.class)
+                ||!Set.of("PENDING","ACKNOWLEDGED").contains(tomb.get("state",String.class))
+                ||("PENDING".equals(tomb.get("state"))!=Boolean.TRUE.equals(tomb.get("recovery_barrier",Boolean.class))))throw new Failure(Error.UNAVAILABLE);
+        Instant deadline=time(full,"expires_at").isBefore(time(tomb,"expires_at"))?time(full,"expires_at"):time(tomb,"expires_at");
+        if(!now(sql).isBefore(deadline))throw new Failure(Error.UNAVAILABLE);
+        Authority current=current(sql,command,now(sql));
+        if(!current.enrollmentId().equals(full.get("enrollment_id",UUID.class))||current.emailContactVersion()!=full.get("email_contact_version",Integer.class)
+                ||!current.emailReceiptId().equals(full.get("email_receipt_id",UUID.class))||!current.phoneReceiptId().equals(full.get("phone_receipt_id",UUID.class)))throw new Failure(Error.UNAVAILABLE);
+        var localBounds=sql.fetchOne("select a.expires_at as authority_deadline,e.expires_at as enrollment_deadline from verification_authorities a join verification_enrollments e on e.id=a.enrollment_id where a.enrollment_id=?",current.enrollmentId());
+        if(localBounds==null)throw new Failure(Error.UNAVAILABLE);
+        deadline=Collections.min(List.of(deadline,time(localBounds,"authority_deadline"),time(localBounds,"enrollment_deadline")));
+        if(!now(sql).isBefore(deadline))throw new Failure(Error.UNAVAILABLE);
+        return new OriginalMutation(command,current.enrollmentId(),current.emailContactVersion(),current.emailReceiptId(),current.phoneReceiptId(),deadline);
+    }
     @Override public Optional<Claim> claim(String writer) {
         VerificationProjection.writer(writer, policy);
         return transaction((sql, now) -> {
