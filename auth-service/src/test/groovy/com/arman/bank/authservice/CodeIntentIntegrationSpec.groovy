@@ -18,6 +18,9 @@ class CodeIntentIntegrationSpec extends Specification {
     UUID identity=UUID.randomUUID(), enrollment=UUID.randomUUID()
     def policy=Policy.defaults([ISSUER] as Set,[CLIENT] as Set,['code1'] as Set,[ACTOR] as Set)
     def key=Base64.encoder.encodeToString(new byte[32])
+    def records=new java.util.concurrent.CopyOnWriteArrayList<java.util.logging.LogRecord>()
+    def logger=java.util.logging.Logger.getLogger(PostgresCodeIntentStore.name)
+    def handler=new java.util.logging.Handler(){void publish(java.util.logging.LogRecord record){records.add(record)};void flush(){};void close(){}}
     def setup(){
         postgres=new PostgreSQLContainer('postgres:17.6-alpine');postgres.start()
         database=new Database(postgres.jdbcUrl,postgres.username,postgres.password)
@@ -32,8 +35,27 @@ class CodeIntentIntegrationSpec extends Specification {
         }
         store=makeStore(['original':key],'original')
         store.cleanup()
+        logger.addHandler(handler)
     }
-    def cleanup(){database?.close();postgres?.stop()}
+    def cleanup(){logger.removeHandler(handler);database?.close();postgres?.stop()}
+    def 'failed preparation reports only closed checkpoint cause and SQL state'(){
+        given:
+        def request=input()
+        if(sqlFault)database.transaction{it.execute('alter table sso_code_intent_cleanup rename to qa_hidden_stage_cleanup')}
+        else request=new Write(request.commandId(),request.codeDigest(),request.codeKeyId(),request.issuer(),'unknown-subject',request.clientId(),request.userSessionId(),request.authenticationSessionId(),request.issuedAt(),request.expiresAt(),request.kind(),request.eventId(),request.passwordAuthenticatedAt())
+        when:store.stage(ACTOR,request)
+        then:
+        def failure=thrown(LoginProof.Failure)
+        failure.error()==expected
+        records*.message==['armoney_auth_stage_store_failure checkpoint=PREPARE category='+category+' sqlstate='+state]
+        records.every{it.thrown==null && !it.parameters}
+        count('sso_code_intents')==0
+        count('sso_login_creation_reservations')==0
+        where:
+        sqlFault | expected | category | state
+        false | Error.CONFLICT | 'DOMAIN' | 'NONE'
+        true | Error.UNAVAILABLE | 'SQL' | '42P01'
+    }
     PostgresCodeIntentStore makeStore(Map ring,String current){new PostgresCodeIntentStore(database,policy,new CodeIntentRetentionKeys(current,ring),detailCrypto())}
     CodeIntentDetailCrypto detailCrypto(){new CodeIntentDetailCrypto('aead',['aead':Base64.encoder.encodeToString(([7]*32) as byte[])],[] as Set)}
     Write input(UUID command=UUID.randomUUID(),String digest='a'*64){
@@ -87,6 +109,7 @@ class CodeIntentIntegrationSpec extends Specification {
         count('sso_login_events')==0
         count('sessions')==0
         businessSnapshot()==businessBefore
+        records.empty
     }
     def 'concurrent lost ACK retries serialize to one immutable intent and one charge'(){
         given: def request=input();def pool=Executors.newFixedThreadPool(2)

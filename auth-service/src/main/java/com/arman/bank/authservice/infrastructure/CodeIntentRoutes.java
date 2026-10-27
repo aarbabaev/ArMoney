@@ -15,6 +15,7 @@ import java.util.*;
 
 /** Explicitly constructed private stage transport only. Optional default-off composition; no confirmation. */
 public final class CodeIntentRoutes {
+    private static final java.util.logging.Logger LOG=java.util.logging.Logger.getLogger(CodeIntentRoutes.class.getName());
     private static final ObjectMapper JSON = new ObjectMapper()
         .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
         .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
@@ -66,13 +67,14 @@ public final class CodeIntentRoutes {
             response.put("issued_at",result.issuedAt().toString());response.put("expires_at",result.expiresAt().toString());
             reply(ctx,200,response);
         } catch(Failure rejected) {
+            LOG.warning("armoney_auth_stage_failure category=DOMAIN_"+rejected.error().name());
             int status=switch(rejected.error()){
                 case BAD_INPUT->400;case UNAUTHORIZED->401;case CONFLICT->409;case EXPIRED->410;
                 case RATE_LIMITED->429;case MISSING,UNAVAILABLE->503;
             };
             if(status==429)ctx.header("Retry-After","60");
             reply(ctx,status,Map.of("error","code_intent_request_rejected"));
-        } catch(Exception unavailable){reply(ctx,503,Map.of("error","code_intent_request_rejected"));}
+        } catch(Exception unavailable){LOG.warning("armoney_auth_stage_failure category=INTERNAL");reply(ctx,503,Map.of("error","code_intent_request_rejected"));}
     }
     private static JsonNode body(Context ctx, LoginProofBodyDeadline deadline) {
         String type = ctx.contentType();

@@ -16,6 +16,12 @@ import java.io.ByteArrayOutputStream;
 /** Authenticated User PRIMARY observation only. No lease/clock authority; caller retains its original DB anchor.
  * HTTP cancellation does not establish physical DNS termination. No startup probe or default activation. */
 public final class HttpMigrationUserCurrent implements MigrationUserCurrentPort,AutoCloseable {
+    private static final java.util.logging.Logger LOG=java.util.logging.Logger.getLogger(HttpMigrationUserCurrent.class.getName());
+    private enum FailureCategory { TRANSPORT,TIMEOUT,INTERRUPTED,PROTOCOL,RESPONSE_PARSE,RESPONSE_BINDING,HTTP_400,HTTP_401,HTTP_403,HTTP_404,HTTP_409,HTTP_410,HTTP_429,HTTP_503,HTTP_OTHER }
+    private static FailureCategory statusCategory(int status){return switch(status){
+        case 400->FailureCategory.HTTP_400;case 401->FailureCategory.HTTP_401;case 403->FailureCategory.HTTP_403;case 404->FailureCategory.HTTP_404;
+        case 409->FailureCategory.HTTP_409;case 410->FailureCategory.HTTP_410;case 429->FailureCategory.HTTP_429;case 503->FailureCategory.HTTP_503;default->FailureCategory.HTTP_OTHER;
+    };}
     public static final String PATH="/v1/internal/migrations/legacy/user-current",HEADER="X-ArMoney-Migration-User-Current-Key";
     private static final ObjectMapper JSON=new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION).enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private final MigrationUserRevisionConfiguration configuration;private final URI endpoint;private final HttpClient http;private volatile boolean closed;
@@ -32,16 +38,25 @@ public final class HttpMigrationUserCurrent implements MigrationUserCurrentPort,
     @Override public Observation observe(Query query,Duration originalRemainingBudget){
         long started=System.nanoTime();long budget;try{budget=originalRemainingBudget.toNanos();if(budget<=0||budget>4_000_000_000L)throw unavailable();}catch(RuntimeException e){throw unavailable();}
         if(closed||Thread.currentThread().isInterrupted())throw unavailable();CompletableFuture<HttpResponse<byte[]>> pending=null;var body=new BoundedBody();
+        FailureCategory failureCategory=FailureCategory.TRANSPORT;
         try{
             var request=LiveUserRevision.current(configuration.currentWriter(),query.operationId(),query.identityId(),query.migrationId(),query.decisionId(),query.classificationGeneration(),query.epoch(),query.sourceRevision());
             byte[] bytes=JSON.writeValueAsBytes(request);if(bytes.length>4096)throw unavailable();remaining(started,budget);bodies.add(body);if(closed)throw unavailable();
             pending=http.sendAsync(HttpRequest.newBuilder(endpoint).timeout(Duration.ofNanos(remaining(started,budget))).header("Content-Type","application/json").header(HEADER,configuration.currentKey()).POST(HttpRequest.BodyPublishers.ofByteArray(bytes)).build(),info->body);
             pendingRequests.add(pending);body.attach(pending);if(closed)throw unavailable();
             var response=pending.get(remaining(started,budget),TimeUnit.NANOSECONDS);remaining(started,budget);
+            failureCategory=response.statusCode()==200?FailureCategory.PROTOCOL:statusCategory(response.statusCode());
             if(response.statusCode()!=200||!response.headers().firstValue("Content-Type").orElse("").split(";",2)[0].strip().equalsIgnoreCase("application/json"))throw unavailable();
-            var decoded=LiveUserRevision.currentResponse(request,parse(response.body()));remaining(started,budget);
+            failureCategory=FailureCategory.RESPONSE_PARSE;
+            var parsed=parse(response.body());
+            failureCategory=FailureCategory.RESPONSE_BINDING;
+            var decoded=LiveUserRevision.currentResponse(request,parsed);remaining(started,budget);
             return new Observation(query,LiveUserRevision.object(decoded.get("current"),false));
-        }catch(Exception e){if(e instanceof InterruptedException)Thread.currentThread().interrupt();throw unavailable();}
+        }catch(Exception e){
+            if(e instanceof InterruptedException){failureCategory=FailureCategory.INTERRUPTED;Thread.currentThread().interrupt();}
+            else if(e instanceof TimeoutException||e instanceof HttpTimeoutException||e instanceof ExecutionException execution&&execution.getCause() instanceof HttpTimeoutException)failureCategory=FailureCategory.TIMEOUT;
+            LOG.warning("armoney_auth_user_current_failure category="+failureCategory.name());throw unavailable();
+        }
         finally{if(pending!=null)pending.cancel(true);body.abort();bodies.remove(body);if(pending!=null)pendingRequests.remove(pending);}
     }
     static Map<String,Object> parse(byte[] bytes){

@@ -15,6 +15,19 @@ import org.jooq.Record;
 
 /** Dormant internal stage storage. No provider observation, confirmation or production route. */
 public final class PostgresCodeIntentStore implements CodeIntentStore {
+    private static final java.util.logging.Logger LOG=java.util.logging.Logger.getLogger(PostgresCodeIntentStore.class.getName());
+    private enum StageCheckpoint { ADMISSION,CURRENT_SOURCE,USER_OBSERVATION,PREPARE,NONCE_ENCRYPT,COMMIT }
+    private enum StageCause { DOMAIN,SQL,NULL_STATE,OTHER }
+    private static void stageFailure(StageCheckpoint checkpoint,RuntimeException failure){
+        StageCause cause=failure instanceof LoginProof.Failure||failure instanceof com.arman.bank.authservice.domain.LegacyMigrationFinalization.Failure?StageCause.DOMAIN:
+            failure instanceof org.jooq.exception.DataAccessException?StageCause.SQL:failure instanceof NullPointerException?StageCause.NULL_STATE:StageCause.OTHER;
+        String sqlState="NONE";
+        if(failure instanceof org.jooq.exception.DataAccessException sql){
+            String state=sql.sqlState();
+            sqlState=state!=null&&Set.of("42703","42P01","42883","42601","42501","57014","40001","08001","08006").contains(state)?state:"OTHER";
+        }
+        LOG.warning("armoney_auth_stage_store_failure checkpoint="+checkpoint.name()+" category="+cause.name()+" sqlstate="+sqlState);
+    }
     private final Database database;
     private final LoginProof.Policy policy;
     private final CodeIntentRetentionKeys keys;
@@ -54,26 +67,32 @@ public final class PostgresCodeIntentStore implements CodeIntentStore {
     private CodeIntent.Snapshot stage(PostgresLoginRequestScope.Request request,LoginProof.Write input){
         request.check();long monotonicStart=System.nanoTime(); String actor=request.actor();
         CodeIntent.validate(input,actor,policy);
+        StageCheckpoint checkpoint=StageCheckpoint.ADMISSION;
         try {
             if(crypto==null)fail(Error.UNAVAILABLE);
             boolean admitted=request.transaction(sql->admit(sql,actor,now(sql)));
             if(!admitted)fail(Error.RATE_LIMITED);
+            checkpoint=StageCheckpoint.CURRENT_SOURCE;
             var migration=request.transaction(sql->{
                 catalog.synchronize(sql,true);
                 if(sql.fetchOne("select identity_id from migration_banking_authority_current where issuer=? and subject=?",input.issuer(),input.subject())==null)return null;
                 if(userCurrent==null)fail(Error.UNAVAILABLE);
                 return new UserAdmission(SourceEligibilitySql.requireCurrent(sql,input.issuer(),input.subject(),migrationCrypto),now(sql));
             });
+            checkpoint=StageCheckpoint.USER_OBSERVATION;
             var liveUser=migration==null?null:SourceEligibilitySql.observeUser(request,migration.source(),input.commandId(),migration.startedAt(),monotonicStart,userCurrent);
+            checkpoint=StageCheckpoint.PREPARE;
             Outcome preparation=request.transaction(sql->stage(sql,actor,input,null,null,liveUser));
             if(preparation.snapshot()!=null)return preparation.snapshot();
             Prepared prepared=preparation.prepared();
             request.check();
             // Acknowledged nonce COMMIT precedes encryption; this operation still owns the same connection.
+            checkpoint=StageCheckpoint.NONCE_ENCRYPT;
             byte[] encrypted=crypto.encrypt(prepared.reservation().keyId(),prepared.reservation().nonce(),input.authenticationSessionId(),aad(prepared,input));
+            checkpoint=StageCheckpoint.COMMIT;
             return request.transaction(sql->stage(sql,actor,input,prepared,encrypted,liveUser)).snapshot();
-        } catch(LoginProof.Failure rejected){throw rejected;}
-        catch(RuntimeException unavailable){fail(Error.UNAVAILABLE);return null;}
+        } catch(LoginProof.Failure rejected){stageFailure(checkpoint,rejected);throw rejected;}
+        catch(RuntimeException unavailable){stageFailure(checkpoint,unavailable);fail(Error.UNAVAILABLE);return null;}
     }
     private record UserAdmission(SourceEligibilitySql.Current source,Instant startedAt){}
     private record Prepared(UUID id,String retentionKey,byte[] binding,byte[] payload,byte[] authority,Instant admittedAt,PostgresCodeIntentKeyCatalog.Reservation reservation){}
