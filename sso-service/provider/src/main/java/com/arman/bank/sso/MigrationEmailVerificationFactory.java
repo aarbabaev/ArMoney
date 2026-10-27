@@ -18,8 +18,9 @@ public final class MigrationEmailVerificationFactory implements RequiredActionFa
                 var configuration=settings.get();
                 if(configuration==null||!configuration.enabled())return;
                 var auth=context.getAuthenticationSession();var user=context.getUser();
+                // Keycloak evaluates first-login triggers before changing AUTHENTICATE to REQUIRED_ACTIONS.
                 if(auth==null||user==null||auth.getAuthenticatedUser()==null||!user.getId().equals(auth.getAuthenticatedUser().getId())
-                        ||!"REQUIRED_ACTIONS".equals(auth.getAction())||!user.isEnabled()||user.isEmailVerified()
+                        ||!("AUTHENTICATE".equals(auth.getAction())||"REQUIRED_ACTIONS".equals(auth.getAction()))||!user.isEnabled()||user.isEmailVerified()
                         ||!EnrollmentObservation.canonicalEmail(user.getEmail()))return;
                 if(CodeIntentRegistrationGuard.matches(configuration.environment().get("ARMONEY_PROVIDER_BINDING_KEY"),context.getRealm().getId(),auth,user.getId()))return;
                 String issuer=Urls.realmIssuer(context.getUriInfo().getBaseUri(),context.getRealm().getName());

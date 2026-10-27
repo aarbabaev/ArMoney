@@ -344,6 +344,8 @@ must also be enabled with `defaultAction=false`; keep realm `verifyEmail=false`.
 Do not assign the trigger itself as a user action. It selects only exact configured
 migration-purpose callbacks and enqueues the stock email action without changing
 the verified flag. Existing strict registration code actions remain separate.
+It evaluates during authenticated `AUTHENTICATE` and `REQUIRED_ACTIONS` phases,
+including Keycloak's trigger check before the first required-action redirect.
 
 Stock provider verification requires genuine private realm SMTP configuration
 with authenticated, verified STARTTLS. Never persist SMTP credentials in realm

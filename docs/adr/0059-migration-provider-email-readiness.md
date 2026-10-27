@@ -24,6 +24,10 @@ registration creation marker. For an enabled user with a canonical current email
 and a false provider verification flag, it enqueues stock Keycloak `VERIFY_EMAIL`.
 The trigger never writes the verification flag. Realm-wide `verifyEmail` remains
 false; registration code actions and already verified login retain their behavior.
+Trigger evaluation accepts the authenticated `AUTHENTICATE` phase as well as
+`REQUIRED_ACTIONS`: Keycloak evaluates triggers before selecting and redirecting
+to the first required action. Both phases retain the same subject and manifest
+checks; other phases cannot enqueue verification.
 
 The provider's signed email action-token flow completes before Auth starts its
 existing bounded migration attempt. This preflight proves only provider email

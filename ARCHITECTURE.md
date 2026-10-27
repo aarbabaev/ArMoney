@@ -1756,7 +1756,9 @@ keeps migration's provider-email admission requirement: a purpose-bound stock
 Keycloak email verification precedes the bounded Auth attempt, and a private V2
 provider observation supplies fresh current-contact readiness before receipt and
 FINAL. V1, Auth OTPs and existing source/session fences remain required. Provider
-old-link rejection after committed email replacement, Auth current-contact
+trigger evaluation covers authenticated `AUTHENTICATE` and `REQUIRED_ACTIONS`
+phases with the same subject and manifest guards, including the first login.
+Provider old-link rejection after committed email replacement, Auth current-contact
 rejection and complete LOCAL/SSO acceptance are unresolved gates;
 this contract description does not establish runtime readiness or activation.
 An explicitly built opt-in image selects the strict Mailtrap email sender for
