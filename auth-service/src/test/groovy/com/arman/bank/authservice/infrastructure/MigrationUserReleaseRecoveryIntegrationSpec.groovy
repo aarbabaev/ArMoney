@@ -14,6 +14,14 @@ import java.util.concurrent.atomic.*
 /** Real Auth/PostgreSQL and actual UserMain. Provider facts and OTP delivery remain synthetic.
  * The forwarding peer can withhold an actual User acknowledgement; it cannot create a release. */
 class MigrationUserReleaseRecoveryIntegrationSpec extends Specification {
+    private enum BrowserCheckpoint { PREPARE,BEGIN,STAGE,EMAIL_ISSUE,EMAIL_CONSUME,PHONE_ISSUE,PHONE_CONSUME,DECISION,PUBLICATION,FINAL_PREPARE,FIRST_FINAL,PENDING_STATUS,RESTARTED_FINAL,FINAL_REPLAY,COMPLETED_STATUS }
+    def browserStep(BrowserCheckpoint checkpoint,boolean diagnostics,Closure action){
+        try{return action.call()}
+        catch(B.Failure failure){
+            if(diagnostics)java.util.logging.Logger.getLogger(MigrationUserReleaseRecoveryIntegrationSpec.name).warning('armoney_test_browser_failure stage='+checkpoint.name()+' kind='+failure.kind().name())
+            throw failure
+        }
+    }
     MigrationSourcePromotionIntegrationSpec scenario
     HttpServer proxy
     HttpClient forwarding
@@ -114,7 +122,7 @@ class MigrationUserReleaseRecoveryIntegrationSpec extends Specification {
         new PostgresLegacyMigrationBrowserService(f.database,f.auth,f.local,f.account,f.managed,f.crypto,
             URI.create(f.account.settings().issuer()+'/protocol/openid-connect/auth'),URI.create(f.managed.settings().issuer()+'/protocol/openid-connect/auth'),true,services)
     }
-    def browserPrepared(){
+    def browserPrepared(boolean diagnostics=false){
         def original=scenario.fixture.admitted(false);def f=managed();def settings=scenario.fixture.user.syntheticPublicationSettings()
         int port=scenario.fixture.unavailableAuth.address.port;scenario.fixture.unavailableAuth.stop(0);scenario.fixture.unavailableAuth=null
         def routes=new LegacyMigrationFinalizationRoutes(scenario.fixture.journal,settings.decisionKey(),true)
@@ -124,18 +132,18 @@ class MigrationUserReleaseRecoveryIntegrationSpec extends Specification {
         forwardingPeer()
         String cookie=original.admission.ownerCapability();UUID migration=original.admission.migrationId()
         def commands=new PostgresLegacyMigrationBrowserCommandStore(f.crypto,f.custody,f.ACTOR)
-        def service=browser();def page=owned{request->commands.begin(request,migration,cookie)};def form=page.forms().first()
-        page=service.stage(cookie,form.csrf(),form.commandId())
+        def service=browser();def page=browserStep(BrowserCheckpoint.BEGIN,diagnostics){owned{request->commands.begin(request,migration,cookie)}};def form=page.forms().first()
+        page=browserStep(BrowserCheckpoint.STAGE,diagnostics){service.stage(cookie,form.csrf(),form.commandId())}
         [B.Action.EMAIL_ISSUE,B.Action.PHONE_ISSUE].each{action->
-            form=page.forms().find{it.action()==action};page=service.issue(cookie,form.csrf(),form.commandId())
+            form=page.forms().find{it.action()==action};page=browserStep(action==B.Action.EMAIL_ISSUE?BrowserCheckpoint.EMAIL_ISSUE:BrowserCheckpoint.PHONE_ISSUE,diagnostics){service.issue(cookie,form.csrf(),form.commandId())}
             def lease=scenario.fixture.otp.claimDelivery().orElseThrow();def payload=scenario.fixture.otpCrypto.decrypt(lease.envelope(),lease.encrypted())
             assert scenario.fixture.otp.finishDelivery(lease.deliveryId(),lease.fence(),true)
             form=page.forms().find{it.action() in [B.Action.EMAIL_CONSUME,B.Action.PHONE_CONSUME]}
-            page=service.consume(cookie,form.csrf(),form.commandId(),payload.code())
+            page=browserStep(action==B.Action.EMAIL_ISSUE?BrowserCheckpoint.EMAIL_CONSUME:BrowserCheckpoint.PHONE_CONSUME,diagnostics){service.consume(cookie,form.csrf(),form.commandId(),payload.code())}
         }
-        form=page.forms().first();page=service.authorizePublication(cookie,form.csrf(),form.commandId())
-        form=page.forms().first();page=service.publish(cookie,form.csrf(),form.commandId())
-        form=page.forms().first();page=service.prepareFinal(cookie,form.csrf(),form.commandId())
+        form=page.forms().first();page=browserStep(BrowserCheckpoint.DECISION,diagnostics){service.authorizePublication(cookie,form.csrf(),form.commandId())}
+        form=page.forms().first();page=browserStep(BrowserCheckpoint.PUBLICATION,diagnostics){service.publish(cookie,form.csrf(),form.commandId())}
+        form=page.forms().first();page=browserStep(BrowserCheckpoint.FINAL_PREPARE,diagnostics){service.prepareFinal(cookie,form.csrf(),form.commandId())}
         [original:original,browser:service,form:page.forms().first(),cookie:cookie]
     }
     void replaceProducer(URI origin){
@@ -208,17 +216,17 @@ class MigrationUserReleaseRecoveryIntegrationSpec extends Specification {
         where:missing << [true,false]
     }
     def 'browser final retry and read-only status remain pending until verified durable release'(){
-        given:def context=browserPrepared();responseMode='lost'
-        when:context.browser.finish(context.cookie,context.form.csrf(),context.form.commandId())
+        given:def context=browserStep(BrowserCheckpoint.PREPARE,true){browserPrepared(true)};responseMode='lost'
+        when:browserStep(BrowserCheckpoint.FIRST_FINAL,true){context.browser.finish(context.cookie,context.form.csrf(),context.form.commandId())}
         then:def failure=thrown(B.Failure);failure.kind()==B.Kind.UNAVAILABLE;!failure.clearCookies()
         count('legacy_migration_final_completions')==1;count('legacy_migration_user_release_acks')==0
-        when:def pending=context.browser.status(context.cookie)
+        when:def pending=browserStep(BrowserCheckpoint.PENDING_STATUS,true){context.browser.status(context.cookie)}
         then:pending.status()==B.Status.PENDING_RESULT;calls.get()==1
         when:
         responseMode='ok';replaceProducer(URI.create('http://127.0.0.1:'+proxy.address.port))
-        def restarted=browser();def completed=restarted.finish(context.cookie,context.form.csrf(),context.form.commandId())
+        def restarted=browser();def completed=browserStep(BrowserCheckpoint.RESTARTED_FINAL,true){restarted.finish(context.cookie,context.form.csrf(),context.form.commandId())}
         then:completed.status()==B.Status.COMPLETED;calls.get()==2;Arrays.equals(bodies[0],bodies[1])
-        when:def replay=restarted.finish(context.cookie,context.form.csrf(),context.form.commandId());def status=restarted.status(context.cookie)
+        when:def replay=browserStep(BrowserCheckpoint.FINAL_REPLAY,true){restarted.finish(context.cookie,context.form.csrf(),context.form.commandId())};def status=browserStep(BrowserCheckpoint.COMPLETED_STATUS,true){restarted.status(context.cookie)}
         then:replay==completed;status==completed;calls.get()==2;count('legacy_migration_final_completions')==1
     }
     def 'worker acknowledgement completes read-only browser status without a cached FINAL result or another POST'(){

@@ -4,6 +4,15 @@ Use the existing login request to obtain access_token. All requests below use
 Authorization: Bearer {{access_token}} against http://localhost:8080.
 Gateway adds internal service identity; clients do not supply it.
 
+This guide describes compatibility onboarding with registration verification and
+managed admission disabled. The opt-in flow uses UAE phone and password with
+both email and local SMS ownership verification before banking access; see
+[provider composition and readiness limits](adr/0050-production-provider-code-intent.md)
+and [existing-owner migration](legacy-user-migration.md). Its presence in source
+does not authorize activation on an existing stack. General self-service
+replacement of verified banking contacts is not provided; internal candidate
+and version operations do not expose a contact editor.
+
 New password registration requires `POST /v1/auth/register` with
 `{"email":"customer@example.test","password":"a-long-unique-password","phone_number":"+971501234567"}`.
 Use an available UAE mobile number; login still sends only email and password.
