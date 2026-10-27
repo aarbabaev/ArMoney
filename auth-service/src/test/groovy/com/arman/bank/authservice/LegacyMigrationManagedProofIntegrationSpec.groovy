@@ -173,6 +173,36 @@ class LegacyMigrationManagedProofIntegrationSpec extends Specification {
         assert Instant.now().epochSecond>created.epochSecond
     }
     MigrationManagedProofPort.Callback callback(MigrationManagedProofStore.Redirect redirect){String code='synthetic-'+redirect.attemptId();callbackNonces.put(code,redirect.nonce());callbackSubjects.put(code,signedSubject);new MigrationManagedProofPort.Callback(code,redirect.state(),redirect.attemptCookie())}
+    def 'production resources wire the same owned V2 readiness into managed producer and store and close it'(){
+        given:
+        def configuration=LegacyMigrationConfiguration.from(LegacyMigrationConfigurationSpec.environment(),[:])
+        // Borrow this fixture's genuine isolated PostgreSQL/Auth dependencies. No worker is started,
+        // no provider response or business authority is fabricated, and construction sends no HTTP.
+        def resources=LegacyMigrationResources.open(database,auth,configuration).orElseThrow()
+        def field={Object target,String name->
+            def member=target.getClass().getDeclaredField(name);member.accessible=true;member.get(target)
+        }
+        def owners=field(resources,'owned') as List
+        def readinessOwners=owners.findAll{it instanceof HttpMigrationProviderReadiness}
+        def service=field(resources.routes(),'service')
+        def wiredStore=field(service,'managed')
+        def wiredProvider=field(wiredStore,'provider')
+        def v1=owners.find{it instanceof LegacyMigrationResources.OwnedObservations}
+        expect:
+        readinessOwners.size()==1
+        v1!=null
+        !v1.is(readinessOwners.first())
+        field(wiredStore,'readiness').is(readinessOwners.first())
+        field(wiredProvider,'readiness').is(readinessOwners.first())
+        field(field(service,'account'),'provider') instanceof LegacyMigrationLegacyAccountProviderClient
+        field(field(field(service,'account'),'provider'),'observations').is(v1)
+        !field(readinessOwners.first(),'closed')
+        when:resources.close()
+        then:field(readinessOwners.first(),'closed')
+        when:resources.close()
+        then:noExceptionThrown()
+        cleanup:resources?.close()
+    }
     def 'actual signed local managed proof persists original target and replay observes fresh without second exchange or bank authority'(){
         given:
         def original=localOwner()

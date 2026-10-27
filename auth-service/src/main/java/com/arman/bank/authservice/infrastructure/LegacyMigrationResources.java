@@ -45,7 +45,7 @@ public final class LegacyMigrationResources implements AutoCloseable {
             var as=new PostgresLegacyMigrationManagedProofStore.Settings(c.actor,c.account.issuer().toString(),c.account.clientId(),c.account.redirect().toString());
             var ms=new PostgresLegacyMigrationManagedProofStore.Settings(c.actor,c.managed.issuer().toString(),c.managed.clientId(),c.managed.redirect().toString());
             var account=new PostgresLegacyMigrationAccountProofStore(database,custody,proof,accountProvider,as,true);
-            var managed=new PostgresLegacyMigrationManagedProofStore(database,custody,proof,managedProvider,observer,ms,true);
+            var managed=new PostgresLegacyMigrationManagedProofStore(database,custody,proof,managedProvider,readiness,ms,true);
             var store=new PostgresLegacyMigrationOtpStore(database,custody,crypto,c.actor,true,managed);
             var otp=new LegacyMigrationOtpService(store,user);
             var journal=new PostgresLegacyMigrationFinalizationStore(database,store,managed,proof,c.actor,true);
