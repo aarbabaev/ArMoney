@@ -4,6 +4,7 @@ import com.arman.bank.authservice.application.*
 import com.arman.bank.authservice.domain.LegacyMigrationFinalization as F
 import com.arman.bank.authservice.domain.LoginProof
 import com.arman.bank.authservice.domain.CodeConfirmation
+import com.arman.bank.authservice.application.LegacyMigrationBrowserService as B
 import java.time.*
 import spock.lang.Specification
 
@@ -29,6 +30,58 @@ class MigrationSourcePromotionIntegrationSpec extends Specification {
         currentUser=new HttpMigrationUserCurrent(config,settings.origin(),HttpCodeSessionObservations.privateClient())
     }
     def cleanup(){currentUser?.close();producer?.close();authRead?.stop();fixture?.cleanup()}
+
+    def 'browser FINAL releases genuine User baseline before reporting completed in either account mode'(){
+        given:
+        def original=fixture.admitted(sso)
+        def managed=fixture.fixture
+        UUID migration=original.admission.migrationId()
+        String cookie=original.admission.ownerCapability()
+        def settings=fixture.user.syntheticPublicationSettings()
+        int port=fixture.unavailableAuth.address.port
+        fixture.unavailableAuth.stop(0);fixture.unavailableAuth=null
+        def routes=new LegacyMigrationFinalizationRoutes(fixture.journal,settings.decisionKey(),true)
+        authRead=io.javalin.Javalin.create{config->routes.configure(config)}.start(port)
+        consumer=new PostgresMigrationBankingEligibilityStore(managed.crypto)
+        producer=PostgresMigrationFinalAckStore.synthetic(managed.database,managed.custody,managed.crypto,fixture.journal,fixture.otp,managed.managed,consumer,managed.ACTOR,settings.publicationKey(),settings.origin())
+        def services=new PostgresLegacyMigrationBrowserService.ContinuationServices(fixture.otp,fixture.user.stagePort(),fixture.journal,producer,consumer,managed.custody)
+        def browser=new PostgresLegacyMigrationBrowserService(managed.database,managed.auth,managed.local,managed.account,managed.managed,managed.crypto,
+            URI.create(managed.account.settings().issuer()+'/protocol/openid-connect/auth'),URI.create(managed.managed.settings().issuer()+'/protocol/openid-connect/auth'),true,services)
+        def commands=new PostgresLegacyMigrationBrowserCommandStore(managed.crypto,managed.custody,managed.ACTOR)
+        def page=new PostgresLoginRequestScope(managed.database).inRequest(managed.ACTOR){owned->commands.begin(owned,migration,cookie)}
+        def command=page.forms().first()
+        page=browser.stage(cookie,command.csrf(),command.commandId())
+        [B.Action.EMAIL_ISSUE,B.Action.PHONE_ISSUE].each{action->
+            command=page.forms().find{it.action()==action}
+            assert command!=null
+            page=browser.issue(cookie,command.csrf(),command.commandId())
+            def lease=fixture.otp.claimDelivery().orElseThrow()
+            def payload=fixture.otpCrypto.decrypt(lease.envelope(),lease.encrypted())
+            assert fixture.otp.finishDelivery(lease.deliveryId(),lease.fence(),true) // synthetic delivery only
+            command=page.forms().find{it.action() in [B.Action.EMAIL_CONSUME,B.Action.PHONE_CONSUME]}
+            page=browser.consume(cookie,command.csrf(),command.commandId(),payload.code())
+        }
+        command=page.forms().first();page=browser.authorizePublication(cookie,command.csrf(),command.commandId())
+        command=page.forms().first();page=browser.publish(cookie,command.csrf(),command.commandId())
+        command=page.forms().first();page=browser.prepareFinal(cookie,command.csrf(),command.commandId())
+        def finalForm=page.forms().first()
+        assert managed.auth.me('Bearer '+original.token).id()==original.identityId
+        assert managed.count('legacy_migration_final_completions')==0
+
+        when:
+        def completed=browser.finish(cookie,finalForm.csrf(),finalForm.commandId())
+        // Unlike promote(), this path must not call the fixture's manual resolveUser helper.
+        nativeEvidence(nativeBinding([original:original]))
+
+        then:
+        completed.status()==B.Status.COMPLETED
+        browser.finish(cookie,finalForm.csrf(),finalForm.commandId())==completed
+        managed.count('legacy_migration_final_completions')==1
+        managed.count('migration_banking_authorities')==1
+        managed.count('migration_banking_grants')==1
+        new PostgresAuthStore(managed.database,true).findSession(AuthService.digest(original.token),Instant.now()).empty
+        where:sso << [false,true]
+    }
 
     private Map prepared(boolean sso,boolean distinctAssociation=false){
         def original
