@@ -1,5 +1,7 @@
 .git
 .gradle
+**/__pycache__
+**/*.pyc
 **/build
 **/bin
 **/obj
