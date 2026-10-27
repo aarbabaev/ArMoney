@@ -1,6 +1,6 @@
 # ADR 0050: Production provider code-intent composition
 
-Status: Proposed; implementation and independent acceptance pending. No activation authorization is implied.
+Status: Production factories and packaging are implemented in source; complete independent runtime acceptance and deployment readiness remain pending. No activation authorization is implied.
 
 ## Context
 
@@ -10,7 +10,7 @@ provider adapters and fixture-only SPI registrations cannot establish production
 registration or migrated-owner banking admission. Passing component tests with
 these features disabled is not evidence that native sign-in works with them enabled.
 
-## Decision under implementation
+## Decision
 
 Retain standard OIDC authorization-code endpoints, public native clients, exact
 redirect URIs and S256 PKCE. Android continues to send only the provider access

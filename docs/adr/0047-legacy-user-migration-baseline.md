@@ -1,12 +1,12 @@
 # ADR 0047: Durable User baseline for legacy migration
 
-Status: User V7 implementation present; integration verification and complete Auth migration remain pending. Feature activation is not authorized by this decision.
+Status: User V7 baseline and default-off Auth migration composition are implemented in source; complete runtime acceptance and deployment readiness remain pending. Feature activation is not authorized by this decision.
 
 ## Context
 
 Existing owners must keep their identity and profile UUIDs, immutable shard placement, local credentials, wallets, account ownership, balances and history when moving to a managed login. Contact equality cannot select or link an owner. A previously unversioned legacy profile also cannot be treated as historical verified projection version 1.
 
-The reviewed design inputs are legacy dual-proof contract Revision 4.2 (SHA256 `3b9a1711c89303558c4da67a1911aa4d8ae807c4348ced5a88e5a3f21bb086c5`) and its User U2 contract (SHA256 `adc5d85bc0be5afee68f86c65160bdb7be4def1b8e399e571616124c9f10b5f7`). These are design inputs; this ADR distinguishes the delivered User subset from future Auth orchestration. The separate [managed banking consumer](0046-managed-banking-session-consumer.md) does not itself implement legacy migration.
+The reviewed design inputs are legacy dual-proof contract Revision 4.2 (SHA256 `3b9a1711c89303558c4da67a1911aa4d8ae807c4348ced5a88e5a3f21bb086c5`) and its User U2 contract (SHA256 `adc5d85bc0be5afee68f86c65160bdb7be4def1b8e399e571616124c9f10b5f7`). These are design inputs; this ADR records the User boundary, while later Auth decisions and the migration guide describe the integrated composition. The separate [managed banking consumer](0046-managed-banking-session-consumer.md) does not itself implement legacy migration.
 
 ## Decision
 
@@ -20,10 +20,10 @@ Publication requires the original Auth PRIMARY decision and a validated immutabl
 
 State progression is irreversible: `RESERVED` can become `PUBLISHED` or `ABORTED`; only a published record with an ACK and an authoritative Auth `COMPLETED` decision can become `RELEASED_AFTER_COMPLETION`. Unknown, unreachable or missing decisions fail unavailable. Exact publication replay returns the retained ACK without incrementing publication revision. A result read does not infer success from an absent ACK.
 
-Runtime wiring is explicitly default off through `USER_MIGRATION_BASELINE_ENABLED=false`. Enabling it creates the dedicated User client/store/routes; it does not create the missing Auth decision service or enable login migration. Existing durable database fences are not erased by disabling routes.
+Runtime wiring is explicitly default off through `USER_MIGRATION_BASELINE_ENABLED=false`. Enabling it creates the dedicated User client/store/routes; Auth migration requires its separate configuration and readiness gates. Existing durable database fences are not erased by disabling routes.
 
 ## Consequences and limits
 
-User publication is not successful end-to-end migration, provider ACTIVE status, OTP issuance or banking-session authority. Auth V15–V17 now provide restricted admission, provider-proof and OTP persistence components in source; integrated acceptance remains incomplete and Main does not yet expose the migration flow. Durable final decision/evidence endpoints, recovery, the login cutoff and completed cutover remain pending. Final successful Auth migration must recheck the User publication ACK and account/provider state and atomically revoke old sessions; pending failures must not revoke them merely because migration started. Those final Auth behaviors remain requirements, not claims about this User implementation. [ADR 0048](0048-passwordless-migration-contact-binding.md) records the separate candidate and verified-contact namespaces.
+User publication is not successful end-to-end migration, provider ACTIVE status, OTP issuance or banking-session authority. Auth Main now composes the default-off migration resources, including durable decision/evidence endpoints, recovery, restricted admission and final cutover. The implemented FINAL transaction rechecks the User publication ACK and account/provider state before completing migration and revoking old sessions; pending failures must not revoke them merely because migration started. These Auth behaviors are separate from the User V7 boundary and still require complete isolated runtime acceptance and independent verification before activation. [ADR 0048](0048-passwordless-migration-contact-binding.md) records the separate candidate and verified-contact namespaces; the [migration guide](../legacy-user-migration.md) records the current composition and release gates.
 
 No wallet, ledger, balance, identity UUID or existing session is rewritten by User V7. Deployment rollback must preserve migration history, unresolved fences and immutable placement. Do not delete reservations, fabricate ABORT, backfill verified history or edit a published Flyway migration to recover availability. Full deployment/readiness remains blocked until Auth integration, independent security/QA review and actual isolated acceptance are complete. See the [migration guide](../legacy-user-migration.md) for implemented routes and remaining gates.
