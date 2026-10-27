@@ -42,10 +42,16 @@ public final class ManagedBankingService {
     }
     public UUID validate(String authorization){
         requireEnabled();String digest=digest(authorization);
-        var result=store.inRequest(request->{
-            var admission=request.admitValidation(digest);
-            return request.validate(admission,observations.observe(admission.binding(),admission.startedAt()));
-        });
+        com.arman.bank.authservice.domain.ManagedBankingAccess.Decision result;
+        try {
+            result=store.inRequest(request->{
+                var admission=request.admitValidation(digest);
+                return request.validate(admission,observations.observe(admission.binding(),admission.startedAt()));
+            });
+        } catch(LoginProof.Failure rejected) {
+            if(rejected.error()==LoginProof.Error.CONFLICT)deny();
+            throw rejected;
+        }
         if(result.deniedCommitted())deny();return result.identityId();
     }
     public void logout(String authorization){requireEnabled();store.revoke(digest(authorization));}

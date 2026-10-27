@@ -579,6 +579,44 @@ class AuthIntegrationSpec extends Specification {
         then:first.statusCode()==204;again.statusCode()==204;0 * unused._;0 * observer._
         database.transaction{sql->sql.fetchOne('select count(*) from sessions').get(0,Long)}==0L
     }
+    def 'enabled managed validation denies unknown revoked and expired legacy bearers over HTTP'(){
+        given:
+        service.register('session.denial@example.test',PASSWORD,'+971501234567')
+        def token=service.login('session.denial@example.test',PASSWORD).accessToken()
+        assert request('GET','/v1/auth/me',null,token).statusCode()==200
+        runtime.close()
+        database=new Database(postgres.jdbcUrl,postgres.username,postgres.password)
+        def observer=Mock(CodeConfirmationObservations)
+        def pairs={issuer,client->true} as ManagedBankingService.PairScope
+        def keys=new ManagedBankingKeys('test',[test:Base64.encoder.encodeToString(([61]*32) as byte[])])
+        def managed=new ManagedBankingService(true,new PostgresManagedBankingStore(database,keys,pairs,'fixture-auth'),observer,pairs)
+        service=new AuthService(new PostgresAuthStore(database),new Argon2Passwords(),clock,profiles,managed,{issuer,client->true} as java.util.function.BiPredicate)
+        def routes=new AuthRoutes(service,KEY)
+        runtime=ServiceRuntime.start('auth-service',0,database,routes::configure)
+        assert request('GET','/v1/auth/me',null,token).statusCode()==200
+        if(state=='revoked')new PostgresAuthStore(database).revokeOwnerSessions(service.me('Bearer '+token).id())
+        if(state=='expired')clock.current=clock.current.plusSeconds(1860)
+        if(state=='unknown')token='a'*43
+
+        when:def response=request('GET','/v1/auth/me',null,token)
+        then:
+        response.statusCode()==401
+        parsed(response)==[error:'invalid_credentials']
+        0 * observer._
+        database.transaction{it.fetchOne('select count(*) from managed_banking_sessions').get(0,Long)}==0L
+        database.transaction{it.fetchOne('select count(*) from managed_banking_operations').get(0,Long)}==0L
+        where:state << ['unknown','revoked','expired']
+    }
+
+    def 'session HTTP validation keeps actual database unavailability distinct from credential denial'(){
+        given:
+        database.close()
+        when:def response=request('GET','/v1/auth/me',null,'a'*43)
+        then:
+        response.statusCode()==503
+        parsed(response)==[error:'service_unavailable']
+    }
+
     static class SyntheticManagedResponseStore implements ManagedBankingStore {
         final Instant expiry
         final Instant started
