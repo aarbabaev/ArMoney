@@ -30,6 +30,8 @@ class PhoneUiTest {
         }
         compose.onNodeWithText("+971501234567").assertIsDisplayed().assertHasNoClickAction()
         compose.onNodeWithText("Ownership not verified").assertIsDisplayed()
+        compose.onNodeWithText("Phone changes are unavailable here. Phone changes here do not verify ownership. Registration and sign-in verification follow the secure browser flow.").assertIsDisplayed()
+        compose.onNodeWithText("Transfers do not require phone verification.", substring = true).assertDoesNotExist()
         compose.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsActions.SetText)).assertCountEquals(0)
         compose.onNodeWithText("Save phone").assertDoesNotExist()
     }

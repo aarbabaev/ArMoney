@@ -87,10 +87,11 @@ fi
 
 mkdir -p -- "$(dirname -- "$output")"
 mkdir -- "$output"
-mkdir -p "$output/providers" "$output/themes/armoney/login" "$output/provenance"
+mkdir -p "$output/providers" "$output/themes/armoney/login" "$output/themes/armoney/email" "$output/provenance"
 cp "$artifact" "$output/providers/armoney-keycloak-provider.jar"
 cp "$module_dir/build/package-dependencies.sha256" "$output/provenance/dependency-files.sha256"
 cp -R "$repo_dir/sso-service/themes/armoney/login/." "$output/themes/armoney/login/"
+cp -R "$repo_dir/sso-service/themes/armoney/email/." "$output/themes/armoney/email/"
 
 # Hash precisely the allowlisted build inputs; no .git, credentials, realm exports or sibling service files.
 (
@@ -98,7 +99,7 @@ cp -R "$repo_dir/sso-service/themes/armoney/login/." "$output/themes/armoney/log
   find gradlew gradle/wrapper sso-service/Dockerfile \
     sso-service/provider/build.gradle sso-service/provider/settings.gradle \
     sso-service/provider/package-provider.sh sso-service/provider/src \
-    sso-service/themes/armoney/login -type f -print0 |
+    sso-service/themes/armoney/login sso-service/themes/armoney/email -type f -print0 |
     sort -z | xargs -0 sha256sum
 ) > "$output/provenance/source-files.sha256"
 (

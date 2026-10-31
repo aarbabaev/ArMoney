@@ -28,6 +28,7 @@ public final class Main {
         var bankingEligibilityConfig = new com.arman.bank.authservice.infrastructure.BankingEligibilityConfiguration(System.getenv());
         var loginProofConfig = new com.arman.bank.authservice.infrastructure.LoginProofConfiguration(System.getenv());
         var managedBankingConfig = new com.arman.bank.authservice.infrastructure.ManagedBankingConfiguration(System.getenv());
+        new com.arman.bank.authservice.infrastructure.LoginNotificationConfiguration(System.getenv());
         var historicalAuthMode = historicalAuthMode(managedBankingConfig, System.getenv());
         var confirmationConfig = new com.arman.bank.authservice.infrastructure.CodeConfirmationConfiguration(System.getenv());
         var migrationConfig = com.arman.bank.authservice.infrastructure.LegacyMigrationConfiguration.from(System.getenv(), java.util.Map.of());
@@ -197,10 +198,13 @@ public final class Main {
             observer = com.arman.bank.authservice.infrastructure.HttpCodeSessionObservations.open(confirmation)
                     .orElseThrow(() -> new IllegalStateException("Managed observer unavailable"));
             var store = new com.arman.bank.authservice.infrastructure.PostgresManagedBankingStore(database,
-                    configuration.keys(), scope, environment.get("SSO_LOGIN_PROOF_WRITER_ID"), migrationCrypto, userCurrent);
+                    configuration.keys(), scope, environment.get("SSO_LOGIN_PROOF_WRITER_ID"), migrationCrypto, userCurrent,
+                    "true".equals(environment.get("AUTH_LOGIN_NOTIFICATIONS_ENABLED")));
             var service = new com.arman.bank.authservice.application.ManagedBankingService(true, store, observer, scope);
             var ownedObserver = observer;
-            return new ManagedResources(service, store::cleanup, ownedObserver::close);
+            var notices=com.arman.bank.authservice.infrastructure.LoginNotificationResources.open(database,
+                    new com.arman.bank.authservice.infrastructure.LoginNotificationConfiguration(environment),configuration.keys(),migrationCrypto).orElse(null);
+            return new ManagedResources(service, store::cleanup, ownedObserver::close,notices);
         } catch (RuntimeException | Error failure) {
             if (observer != null) try { observer.close(); }
             catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
@@ -212,9 +216,15 @@ public final class Main {
     static final class ManagedResources implements AutoCloseable {
         private final com.arman.bank.authservice.application.ManagedBankingService service;
         private final Runnable cleanup, closeObserver;
+        private final com.arman.bank.authservice.infrastructure.LoginNotificationResources notices;
         private java.util.concurrent.ScheduledExecutorService executor;
         private boolean closed;
         ManagedResources(com.arman.bank.authservice.application.ManagedBankingService service, Runnable cleanup, Runnable closeObserver) {
+            this(service,cleanup,closeObserver,null);
+        }
+        ManagedResources(com.arman.bank.authservice.application.ManagedBankingService service,Runnable cleanup,Runnable closeObserver,
+                         com.arman.bank.authservice.infrastructure.LoginNotificationResources notices) {
+            this.notices=notices;
             this.service = java.util.Objects.requireNonNull(service);
             this.cleanup = cleanup; this.closeObserver = closeObserver;
             if ((cleanup == null) != (closeObserver == null)) throw new IllegalArgumentException("Incomplete managed resources");
@@ -223,6 +233,7 @@ public final class Main {
         synchronized void start() {
             if (closed) throw new IllegalStateException("Managed resources closed");
             if (cleanup == null || executor != null) return;
+            if(notices!=null)notices.start();
             executor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(action -> {
                 var thread = new Thread(action, "managed-banking-cleanup"); thread.setDaemon(true); return thread;
             });
@@ -234,7 +245,7 @@ public final class Main {
         @Override public synchronized void close() {
             if (closed) return; closed = true;
             var worker = executor; executor = null;
-            closeResources(null, () -> {
+            closeResources(null, () -> {if(notices!=null)notices.close();}, () -> {
                 if (worker == null) return;
                 worker.shutdownNow();
                 try {

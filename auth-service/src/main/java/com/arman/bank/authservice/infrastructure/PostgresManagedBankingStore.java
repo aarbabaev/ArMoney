@@ -20,10 +20,14 @@ public final class PostgresManagedBankingStore implements ManagedBankingStore {
     private final String actor;
     private final LegacyMigrationManagedProofCrypto migrationCrypto;
     private final MigrationUserCurrentPort userCurrent;
+    private final boolean loginNotices;
     public PostgresManagedBankingStore(Database database,ManagedBankingKeys keys,ManagedBankingService.PairScope pairs,String actor){this(database,keys,pairs,actor,null);}
     public PostgresManagedBankingStore(Database database,ManagedBankingKeys keys,ManagedBankingService.PairScope pairs,String actor,LegacyMigrationManagedProofCrypto migrationCrypto){this(database,keys,pairs,actor,migrationCrypto,null);}
     public PostgresManagedBankingStore(Database database,ManagedBankingKeys keys,ManagedBankingService.PairScope pairs,String actor,LegacyMigrationManagedProofCrypto migrationCrypto,MigrationUserCurrentPort userCurrent){
-        this.userCurrent=userCurrent;this.migrationCrypto=migrationCrypto;this.database=Objects.requireNonNull(database);this.keys=Objects.requireNonNull(keys);this.pairs=Objects.requireNonNull(pairs);
+        this(database,keys,pairs,actor,migrationCrypto,userCurrent,false);
+    }
+    public PostgresManagedBankingStore(Database database,ManagedBankingKeys keys,ManagedBankingService.PairScope pairs,String actor,LegacyMigrationManagedProofCrypto migrationCrypto,MigrationUserCurrentPort userCurrent,boolean loginNotices){
+        this.loginNotices=loginNotices;this.userCurrent=userCurrent;this.migrationCrypto=migrationCrypto;this.database=Objects.requireNonNull(database);this.keys=Objects.requireNonNull(keys);this.pairs=Objects.requireNonNull(pairs);
         if(actor==null||!actor.matches("[A-Za-z0-9_-]{1,64}"))throw new IllegalArgumentException("Invalid managed actor");this.actor=actor;
     }
     @Override public <T>T inRequest(Function<Request,T> action){
@@ -147,6 +151,12 @@ public final class PostgresManagedBankingStore implements ManagedBankingStore {
                 sql.execute("insert into managed_banking_completions values(?,cast(? as timestamptz),'ACCEPTED')",anchor.id(),now(sql).toString());
                 recheck(sql,anchor);finalTime(sql,anchor,deadline);
                 if(liveUser!=null)liveUser.require(sql,true,migrationCrypto);
+                if(newDigest!=null&&loginNotices){
+                    var noticeProof=proof(sql,anchor.binding(),anchor.event(),anchor.local());
+                    PostgresLoginNotificationOutbox.enqueue(sql,keys,anchor.binding().issuer(),anchor.event(),anchor.local().identity(),anchor.binding().subject(),anchor.local().email(),anchor.local().stamp(),noticeProof.row(),noticeProof.event());
+                    recheck(sql,anchor);finalTime(sql,anchor,deadline);
+                    if(liveUser!=null)liveUser.require(sql,true,migrationCrypto);
+                }
                 return new Decision(anchor.local().identity(),anchor.expiresAt(),false);
             });
             owned.verify();return result;

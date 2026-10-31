@@ -56,6 +56,19 @@ tests exercise both OIDC clients, retaining their SSO contracts while native iOS
 development and CI are paused by owner instruction (see ADR 0016). Physical-device
 and LAN certificate/browser validation are separate evidence.
 
+On 2026-10-31 the owner explicitly authorized API36 emulator validation for #27.
+The configured debug APK was installed while preserving existing app data. The
+design fixture renders the actual composables with separate temporary storage
+and a visible synthetic-data banner: 57 screenshots cover light/dark themes and
+1.5x dark text, all tabs, review/cancel, pending, empty, loading and error states.
+It submits no payment or other network command and does not load the existing
+user session. Four emulator tests, 31 JVM tests, assembly and lint passed (zero
+lint errors). Large-text navigation uses one-line ellipsis while retaining full
+semantic labels and at least 48dp targets. These are UI fixture and installation
+results; live Android authentication/TLS, system-bar contrast, TalkBack and
+physical-device acceptance are not established by this matrix. Exact source/APK
+hashes and independent visual assessment belong in the delivery PR evidence.
+
 Currency policy: AED only for new wallets and transfers, with amounts in integer
 fils (100 fils = 1 AED). There is no currency selector or FX. Existing encrypted
 uncertain commands retain their original currency, key and payload; the client

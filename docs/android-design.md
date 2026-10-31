@@ -58,12 +58,16 @@ including action, accent, card, status, error and supporting text roles. This is
 numerical palette evidence, not a full accessibility audit. APK assembly, existing
 JVM financial/session regressions and Android lint are the automated checks.
 
-No emulator, device instrumentation, screenshots, browser sign-in or TalkBack
-validation was run for this change. Owner authorization is required to start an
-emulator. Visual acceptance remains unverified on small devices, large font
-settings, landscape, keyboard transitions and real light/dark system bars. There
-is no host Compose screenshot-rendering harness in this module; no mockup is
-presented as a rendered application screenshot.
+The original PR #42 increment ran no emulator, device instrumentation, screenshots,
+browser sign-in or TalkBack validation. On 2026-10-31 the owner authorized API36
+emulator validation: the actual composables were captured in 57 explicitly
+synthetic UI fixtures across light/dark and 1.5x dark text, with final corrected
+profile captures recorded separately. See [Android contract](android-contract.md)
+and the delivery PR for exact source/APK evidence. This matrix checks navigation,
+scrolling and review/cancel layouts without loading a user session or submitting
+financial commands. Small devices, landscape, real browser sign-in, TalkBack,
+physical devices and production light/dark system-bar contrast remain separate
+acceptance; no mockup is presented as a rendered application screenshot.
 
 No HTTP, financial, identity, storage, recovery, schema or backend runtime contract
 changes. `MainActivity.kt` consumes the existing model and callbacks. Architecture

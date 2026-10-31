@@ -29,7 +29,7 @@ class LegacyMigrationManagedProofUpgradeIntegrationSpec extends Specification {
         then:
         database.transaction{current->
             before.each{table,rows->assert current.fetch('select row_to_json(t)::text from '+table+' t order by 1').getValues(0,String)==rows}
-            assert current.fetch('select * from flyway_schema_history where version not in (?,?,?,?,?,?,?) order by installed_rank','17','18','19','20','21','22','23').intoMaps()==history
+            assert current.fetch('select * from flyway_schema_history where version not in (?,?,?,?,?,?,?,?) order by installed_rank','17','18','19','20','21','22','23','24').intoMaps()==history
             assert current.fetchOne('select count(*) from identities').get(0,Long)==200L
             assert current.fetchOne('select count(*) from sessions').get(0,Long)==200L
             assert current.fetchOne('select count(*) from identities where password_hash is null').get(0,Long)==100L

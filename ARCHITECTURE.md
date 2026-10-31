@@ -72,9 +72,39 @@ exact-revision CI and independent review; source implementation is not deploymen
 | Operational metrics (#22) | Source: six-service private readiness, payment backlog counts/oldest unresolved ages, process-local worker failure counters, optional named-replica observations and local collector | Baseline and replica observations deployed with bounded independent audits on 2026-10-16; age local checks passed 272 tests; worker/age exact-head CI and rollout remain pending; counters reset and are unknown until first failure |
 | Kafka infrastructure | Optional source-defined three-controller/three-broker KRaft cluster, mutual TLS, exact service ACLs and cold snapshot helper | Real-cluster acceptance and deployment pending; service adapters and financial Saga recovery remain planned |
 
-A payment email presentation candidate adds HTML/plain text and a frozen optional
-profile display name; it is not yet validated on current CI or deployed. Auth
-remains the destination-verification authority. See [ADR 0030](docs/adr/0030-transaction-email-presentation.md).
+Payment emails have HTML/plain text and a frozen optional owner-matched profile
+display name. The transaction and Auth registration-verification template slices
+are included in deployed revision `201fdef`; that deployment does not establish
+mailbox visual acceptance for every message type. Auth remains the destination
+verification authority. See [ADR 0030](docs/adr/0030-transaction-email-presentation.md).
+
+The current login-email integration adds a separately gated, encrypted durable
+intent at successful managed interactive-session commit, with fenced delivery,
+current Auth contact checks and optional User-owned display-name presentation.
+Validation, refresh, reuse and migration-purpose authentication are excluded.
+The provider email theme separately styles its existing verification link email.
+Source, exact-revision tests, mailbox rendering and deployment are separate gates;
+the delivery PR records their actual results. See
+[ADR 0060](docs/adr/0060-managed-login-email-notifications.md).
+
+```mermaid
+sequenceDiagram
+    participant A as Auth managed admission
+    participant D as Auth PostgreSQL
+    participant W as Auth login notice worker
+    participant U as User profile service
+    participant M as Mailtrap Sandbox SMTP
+    A->>D: Commit new session, event consumption and encrypted notice atomically
+    W->>D: Claim eligible notice with fenced lease and current contact check
+    W->>U: Optional owner-matched display name outside transaction
+    W->>D: Freeze presentation and recheck recipient authority
+    W->>M: Send plain text and HTML over verified STARTTLS
+    W->>D: Record outcome or bounded retry; erase terminal payload
+```
+
+The worker path is opt-in and does not create an additional authentication
+factor. SMTP acknowledgement loss can duplicate delivery; it cannot change
+ledger balances or roll back an already committed login.
 
 Auth contains default-off registration verification delivery, encrypted
 intent/challenge storage and separately gated authority/proof resources. Main

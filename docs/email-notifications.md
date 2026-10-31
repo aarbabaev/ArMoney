@@ -198,3 +198,48 @@ switching configuration must not turn an existing Sandbox retry into real mail.
 ## Registration verification presentation
 
 The Auth registration verification email renderer supplies a plain-text part followed by an HTML alternative using the existing Mailtrap Sandbox SMTP transport. It accepts only a six-digit code and uses a generic greeting; it does not infer a profile or legal name before identity verification. SMS content is unchanged. This source change retains the existing default-off delivery gate. Sixty focused renderer/transport/SMTP tests and thirteen isolated SMTP/TLS/PostgreSQL acceptance tests passed. Full Auth checks passed 633 tests across 37 suites with no failures, errors or skips. Exact-head CI and runtime/mailbox rendering remain unverified, and it does not add or activate login notification persistence or workers.
+
+The paragraph above records the original registration-template increment. The
+current integration adds the separate managed-login producer described below;
+its delivery PR records fresh tests and deployment evidence.
+
+## Managed interactive login presentation and delivery
+
+See [ADR 0060](adr/0060-managed-login-email-notifications.md).
+`AUTH_LOGIN_NOTIFICATIONS_ENABLED=false` is the default. Enabling it requires
+the existing managed banking key ring and Mailtrap Sandbox SMTP credentials.
+This switch gates capture and dispatch together; it does not enable OTP, change
+authentication factors or backfill historical login events.
+
+Only a newly accepted managed bank-native interactive login captures a notice,
+atomically with its session and trusted event consumption. Ordinary validation,
+refresh, reused/replayed events, failed login and migration-purpose authentication
+do not produce mail. A later genuine bank-native login by a migrated owner can
+qualify. Historical unmanaged paths without interactive evidence remain outside
+this producer's scope.
+
+Auth supplies the verified recipient and checks current local contact/authority
+and originating session eligibility before delivery. Stale work is retired,
+never redirected to a new address. An optional owner-matched User profile display
+name is presentation only; malformed/unavailable data falls back to a generic
+greeting. Registration and provider verification use generic greetings because
+verified legal names are not available at that stage.
+
+The login message contains genuine UTC event time, equivalent HTML/plain content
+and a safe sign-in description. No password, token, OTP, invented IP/location or
+device, tracking pixel or remote image is included. Encrypted delivery payloads,
+fenced retries and privacy expiry are separate from login success. Retain key
+versions needed by pending work during rotation. Terminal outcomes erase delivery
+payloads immediately; the worker expires pending payloads after 24 hours and
+cleans seven-day pseudonymous deduplication tombstones. Stopping or disabling the
+worker delays physical cleanup, since no autonomous database timer runs it.
+Use normal operational key rotation to bound encryption volume; random 96-bit
+nonces are not claimed globally unique over a key's lifetime. SMTP ambiguity can duplicate
+delivery; a pre-send contact check cannot prevent a contact change immediately
+after the check. An SMTP outage cannot undo an already committed login.
+
+The packaged Keycloak `armoney` email theme separately styles stock verification
+email without changing its generated action link or expiration. Activation needs
+a sparse realm update setting only `emailTheme` to `armoney`, followed by readback;
+do not import/reset a realm or replace SMTP configuration for this styling edit.
+It does not create a new-login notification.

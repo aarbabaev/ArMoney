@@ -9,6 +9,7 @@ COPY sso-service/Dockerfile ./sso-service/Dockerfile
 COPY sso-service/provider/build.gradle sso-service/provider/settings.gradle sso-service/provider/package-provider.sh ./sso-service/provider/
 COPY sso-service/provider/src/ ./sso-service/provider/src/
 COPY sso-service/themes/armoney/login/ ./sso-service/themes/armoney/login/
+COPY sso-service/themes/armoney/email/ ./sso-service/themes/armoney/email/
 RUN bash sso-service/provider/package-provider.sh /provider-package
 
 FROM quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c AS keycloak-build

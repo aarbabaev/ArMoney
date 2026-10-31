@@ -23,6 +23,11 @@ public final class ManagedBankingKeys {
             copy.put(id,bytes.clone());
         });this.current=current;this.keys=Map.copyOf(copy);
     }
+    byte[] noticeKey(String id){
+        byte[] root=keys.get(id);if(root==null)throw invalid();
+        try{Mac mac=Mac.getInstance("HmacSHA256");mac.init(new SecretKeySpec(root,"HmacSHA256"));return mac.doFinal("armoney-login-notice-aead-v1".getBytes(StandardCharsets.US_ASCII));}
+        catch(java.security.GeneralSecurityException failed){throw new IllegalStateException("Notice key unavailable");}
+    }
     public String currentId(){return current;}
     public void require(String id){if(!keys.containsKey(id))throw new LoginProof.Failure(LoginProof.Error.UNAVAILABLE);}
     public byte[] fingerprint(String id,Token token){

@@ -14,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.*
 
@@ -36,7 +37,7 @@ class MainActivity : ComponentActivity() {
     val tabs = listOf("Wallets", "Transfers", "Inbox", "Profile", "Assistant")
     Scaffold(bottomBar = {
         if (model.session != null) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) { tabs.forEachIndexed { index, title ->
-            NavigationBarItem(selected = index == tab, onClick = { tab = index }, icon = { Text(listOf("◉", "↗", "✉", "●", "?")[index], Modifier.clearAndSetSemantics { }) }, label = { Text(title) })
+            NavigationBarItem(selected = index == tab, onClick = { tab = index }, icon = { Text(listOf("◉", "↗", "✉", "●", "?")[index], Modifier.clearAndSetSemantics { }) }, label = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) })
         } }
     }) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().imePadding().padding(horizontal = BankDesign.Page).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(BankDesign.Space)) {
@@ -166,7 +167,7 @@ class MainActivity : ComponentActivity() {
     Text(profile?.phone_number ?: "No phone number available")
     if (profile?.phone_number != null) {
         StatusLabel(if (profile.phone_verified) "Phone verified" else "Ownership not verified")
-        Text("Phone changes are unavailable here. No SMS verification is provided. Transfers do not require phone verification.")
+        Text("Phone changes are unavailable here. Phone changes here do not verify ownership. Registration and sign-in verification follow the secure browser flow.")
     }
 }
 

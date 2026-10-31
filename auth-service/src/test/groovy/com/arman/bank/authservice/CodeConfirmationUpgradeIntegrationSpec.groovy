@@ -39,8 +39,8 @@ class CodeConfirmationUpgradeIntegrationSpec extends Specification {
             ['legacy_migration_managed_attempts','legacy_migration_managed_claims','legacy_migration_managed_receipts','legacy_migration_managed_targets','legacy_migration_managed_completions','legacy_migration_managed_observations','legacy_migration_account_attempts','legacy_migration_account_claims','legacy_migration_account_receipts','legacy_migration_account_completions','legacy_migration_browser_forms','legacy_migration_browser_accounts','legacy_migration_browser_consumptions'].each { table -> assert current.fetchOne('select count(*) from '+table).get(0,Long)==0L }
             ['legacy_migration_otp_stages','legacy_migration_otp_stage_acks','legacy_migration_otp_candidates','legacy_migration_otp_challenges','legacy_migration_otp_receipts','legacy_migration_otp_outbox','legacy_migration_otp_commands','auth_otp_issuance_reservations'].each { table -> assert current.fetchOne('select count(*) from '+table).get(0,Long)==0L }
             assert current.fetchOne('select count(*) from legacy_migration_intents').get(0,Long)==0L
-            assert current.fetch('select * from flyway_schema_history where version not in (?,?,?,?,?,?,?,?,?,?,?) order by installed_rank','13','14','15','16','17','18','19','20','21','22','23').intoMaps()==history
-            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get(0,String)=='23'
+            assert current.fetch('select * from flyway_schema_history where version not in (?,?,?,?,?,?,?,?,?,?,?,?) order by installed_rank','13','14','15','16','17','18','19','20','21','22','23','24').intoMaps()==history
+            assert current.fetchOne('select version from flyway_schema_history order by installed_rank desc limit 1').get(0,String)=='24'
             ['sso_code_confirmation_anchors','sso_code_confirmation_results','sso_code_confirmation_anchor_completions'].each{table->assert current.fetchOne('select count(*) from '+table).get(0,Integer)==0}
             true
         }

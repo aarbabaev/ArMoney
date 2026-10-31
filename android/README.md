@@ -65,9 +65,13 @@ country selector. Enter nine local mobile digits beginning with 50, 52, 54, 55,
 trunk prefixes and malformed input are rejected without silent normalization.
 Registration happens in the hosted browser form. The profile displays the
 phone number and its actual verification state without implying that historical
-profiles have a registration binding. New registration numbers are immutable. Registration
-does not prove phone ownership; no SMS or operator verification is required to
-resolve an enrolled recipient with a profile. Transfers still require ready AED wallets.
+profiles have a registration binding. New registration numbers are immutable.
+Historical compatibility registration recorded a claim without proving ownership;
+the opt-in managed registration/admission flow separately requires verified
+contacts. The client shows the server's actual verification flag and delegates
+registration/sign-in verification to the secure browser flow. Recipient resolution
+does not itself prove ownership. Transfers still require ready AED wallets and
+the server's applicable current eligibility checks.
 
 Keystore AES-GCM encrypts atomic records in no-backup storage. Saved transfer
 keys and payloads are scoped to origin and verified identity, and an attempt
